@@ -32,7 +32,7 @@ impl fmt::Display for ProtectError {
             Self::Io(message) => write!(formatter, "I/O: {message}"),
             Self::Tool(message) => write!(formatter, "tool failure: {message}"),
             Self::Internal(message) => write!(formatter, "internal error: {message}"),
-            Self::Context(context, _) => formatter.write_str(context),
+            Self::Context(context, source) => write!(formatter, "{context}: {source}"),
         }
     }
 }

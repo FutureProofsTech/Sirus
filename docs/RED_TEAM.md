@@ -110,7 +110,20 @@ MBA, decoys, finite fuel, data-dependent transitions.
 **Local evidence:** payload entropy `shannon=7.990`, `min=7.589`, 256 distinct
 bytes; static string scan passes.
 
-**Not automated:** a live-process memory snapshot scan. This is an open test gap.
+**Live snapshot evidence:** `scripts/memory-dump.sh` attaches to a long-running
+protected VM, dumps process memory, and checks for the original native body and a
+unique secret constant.
+
+```text
+PASS original protected body absent from live memory
+RESIDUAL sensitive constant observed in transient VM register state
+PASS original body absent from protected file
+```
+
+The constant is used every loop iteration; a safe-Rust VM stores its virtual
+registers in memory, so repeated use makes a transient snapshot observable. The
+bytecode itself is not cached in decrypted form. This remains a residual, not a
+claim of zero plaintext data in live memory.
 
 ---
 

@@ -68,7 +68,7 @@ Sirus raises cost; it does not prove impossibility.
 | Dynamic tracing | encrypted byte-at-a-time decode, per-build state ids, decoy paths | DBI can still record semantics |
 | Taint analysis | args influence flags, state selection, and rolling decode geometry | taint depth is not formally proven |
 | Symbolic execution | large random states, encrypted manifest, MBA, finite fuel | path explosion is probabilistic, not proven |
-| Memory dumping | no decrypted body cache; instructions live in locals only | live debugger can still inspect instruction semantics |
+| Memory dumping | no decrypted body cache; instructions live in locals only | live dump can observe transient VM register values (including repeated constants) |
 | Forced return | host consumes derived data, not only a boolean | caller-side patch remains possible |
 | Differential analysis | new seed changes every payload field and much code/data layout | full `.sirus` segment equality measured at 25.2% |
 | VM fuzzing | checks and fuel prevent panic/OOB/hang | semantic garbage may still produce a value |

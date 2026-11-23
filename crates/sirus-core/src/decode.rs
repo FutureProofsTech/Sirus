@@ -452,8 +452,13 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
                 operand_override = true;
                 index = index.saturating_add(1);
             }
-            0x67 | 0xf0 | 0x2e | 0x36 | 0x3e | 0x26 | 0x64 | 0x65 => {
+            0x67 | 0xf0 | 0x64 | 0x65 => {
                 return Err(decode_error(offset, DecodeReason::UnsupportedPrefix));
+            }
+            // In 64-bit mode CS/DS/ES/SS overrides do not change addressing;
+            // accept and ignore them so compiler-emitted `cs nop` padding lifts.
+            0x2e | 0x36 | 0x3e | 0x26 => {
+                index = index.saturating_add(1);
             }
             0xf2 | 0xf3 => {
                 rep_prefix = Some(byte);
@@ -1497,7 +1502,6 @@ mod tests {
             &[0xff, 0xe0][..],
             &[0x67, 0x48, 0x8b, 0x00][..],
             &[0xf0, 0x48, 0x8b, 0x00][..],
-            &[0x2e, 0x48, 0x8b, 0x00][..],
             &[0x88, 0xe0][..],
             &[0x48, 0x8b, 0x04, 0x25, 0, 0, 0, 0][..],
             &[0xc5, 0xf8, 0x77][..],
@@ -1510,6 +1514,16 @@ mod tests {
         ] {
             assert!(rejected(bytes), "accepted {bytes:02x?}");
         }
+    }
+
+    #[test]
+    fn ignores_cs_ds_es_ss_overrides_in_long_mode() {
+        let instruction = decode_at(&[0x2e, 0x48, 0x8b, 0x00], 0x1000);
+        assert_eq!(instruction.mnemonic, Mnemonic::Mov);
+        assert_eq!(instruction.length, 4);
+        assert_eq!(decode_at(&[0x36, 0x90], 0).mnemonic, Mnemonic::Nop);
+        assert!(rejected(&[0x64, 0x48, 0x8b, 0x00]));
+        assert!(rejected(&[0x65, 0x48, 0x8b, 0x00]));
     }
 
     #[test]

@@ -192,7 +192,7 @@ See `docs/CODE_STANDARD_COMPLIANCE.md` and ADR-001.
 | 3 | Uniform handlers, mutate state, detect DBI | partial | per-build geometry; no DBI detection |
 | 4 | Taint explosion/laundering | partial | data flow/deep binding; no taint tool |
 | 5 | Symbolic explosion | partial | design; angr not run |
-| 6 | No decrypted bytecode in memory | partial | no cache by design; live scan open |
+| 6 | No decrypted bytecode in memory | partial | no body cache; live dump finds transient constants in VM registers |
 | 7 | Deep binding / bypass fails | implemented | tamper and forced-return tests |
 | 8 | Hypervisor/debug-register resistance | **not feasible safely** | documented |
 | 9 | Differential builds mutate everything | partial | payload 0.36% equal; full segment 25.2% |

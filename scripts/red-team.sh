@@ -172,7 +172,8 @@ for function_name in ('sirus_demo_check', 'sirus_demo_loop'):
     assert patched[jump_at] == 0xE9, f'{function_name} not patched'
     changed = sum(1 for a, b in zip(original, patched) if a != b)
     assert changed >= min(size, 8), f'{function_name} body not scrubbed'
-    print(f'PASS patch/scrub {function_name}: changed={changed}/{size}')
+    assert protected_a.find(original) < 0, f'{function_name} original body still present in protected file'
+    print(f'PASS patch/scrub {function_name}: changed={changed}/{size}; original body absent')
 
 counts = Counter(payload_a)
 total = len(payload_a)
@@ -236,5 +237,8 @@ if command -v valgrind >/dev/null 2>&1; then
     fi
     echo "PASS valgrind"
 fi
+
+echo "== live memory-dump diagnostic =="
+./scripts/memory-dump.sh
 
 echo "== red-team gates passed =="

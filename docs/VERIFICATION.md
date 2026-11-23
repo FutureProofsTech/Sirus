@@ -39,7 +39,7 @@ Result: **exit 0**. The script runs:
 `cargo nextest run --workspace`:
 
 ```text
-Summary [0.590s] 144 tests run: 144 passed, 0 skipped
+Summary [0.590s] 145 tests run: 145 passed, 0 skipped
 ```
 
 Breakdown:
@@ -48,7 +48,7 @@ Breakdown:
 |---|---:|
 | `sirus-binfmt` unit tests | 14 |
 | `sirus-binfmt` real-loader test | 1 |
-| `sirus-core` unit tests | 73 |
+| `sirus-core` unit tests | 74 |
 | `sirus-protector` unit tests | 19 |
 | `sirus-protector` end-to-end | 1 |
 | `sirus-protector` pipeline errors | 1 |
@@ -61,6 +61,16 @@ Breakdown:
 The end-to-end tests compile a real victim, protect it, compare outputs, check
 body scrubbing, compare two seeds, tamper payload, forced-return bypass, and run
 the real protected binary.
+
+### Release profile build
+
+```sh
+cargo build --release --workspace
+```
+
+Result: exit 0; `target/release/sirus` is a stripped 593 KiB PIE with the
+documented release profile. A real victim protected with the release binary
+matched native output for the branch/loop sample.
 
 ---
 
@@ -141,7 +151,7 @@ cargo tarpaulin --workspace --all-targets --engine Llvm \
   --out Xml --out Lcov --output-dir target/coverage-all --timeout 120
 ```
 
-Result: **87.63% line coverage (4812 / 5491 lines)**.
+Result: **87.64% line coverage (4814 / 5493 lines)**.
 
 Per file at that run:
 
@@ -149,7 +159,7 @@ Per file at that run:
 sirus-binfmt/src/elf.rs       666/781
 sirus-binfmt/src/lib.rs        56/66
 sirus-binfmt/src/pe.rs        286/317
-sirus-core/src/decode.rs      716/777
+sirus-core/src/decode.rs      718/779
 sirus-core/src/encode.rs      360/380
 sirus-core/src/error.rs         3/52  (coverage mapping anomaly; tests execute Display)
 sirus-core/src/ir.rs          166/189
@@ -202,7 +212,10 @@ Additional measured facts:
 - original function bodies are gone after the jump;
 - payload tamper yields deterministic wrong output without crash/hang;
 - forced-return bypass changes output;
-- valgrind reports no runtime memory errors on the protected sample.
+- valgrind reports no runtime memory errors on the protected sample;
+- live memory dump: original protected body absent, plaintext `.sirus` body not
+  cached, but a repeatedly used sensitive constant was observed transiently in
+  VM register state (`scripts/memory-dump.sh`; residual, not a full pass).
 
 ---
 
@@ -239,7 +252,7 @@ cargo asm -p sirus-core --lib 1
 
 | Gap | Status |
 |---|---|
-| 100% line/branch coverage | open; measured 87.63% lines |
+| 100% line/branch coverage | open; measured 87.64% lines |
 | Ghidra / IDA / Binary Ninja headless validation | tools not installed |
 | GAMBA / SiMBA / MBA-Blast | tools not installed |
 | angr / KLEE / Triton symbolic run | not installed/run |

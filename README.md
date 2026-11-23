@@ -27,7 +27,7 @@ known limits are in [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md).
 | Shared VM for multiple protected functions | working |
 | Safe Rust / no external crates | enforced |
 | Kani proofs, Miri, libFuzzer, differential/tamper/bypass tests | run locally |
-| 100% line coverage | **not reached; current measured total is 87.63%** |
+| 100% line coverage | **not reached; current measured total is 87.64%** |
 
 ---
 

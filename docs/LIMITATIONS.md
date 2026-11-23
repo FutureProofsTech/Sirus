@@ -97,9 +97,11 @@ of these controls.
 - Full `.sirus` segment differential equality is 25.2% between two seeds; handler
   code skeleton is reused. Payload equality is 0.36%.
 - No formal proof that MBA expressions resist GAMBA/SiMBA/angr.
-- No live-process memory dump scan was automated; the design keeps plaintext
-  instructions local by construction and the static injected segment has no
-  obvious strings.
+- No whole decrypted bytecode is cached, and the static injected segment has no
+  obvious strings. However, the live-memory diagnostic shows that a sensitive
+  constant used repeatedly can be observed transiently in VM register state.
+  Virtual registers are memory-resident in the safe-Rust VM; this is inherent,
+  not hidden.
 - Payload integrity is not a MAC against an attacker who can rewrite both
   expected hash and key shares; it detects accidental/naive patching, not an
   unlimited local adversary.
@@ -112,7 +114,7 @@ of these controls.
 
 ## 6. Verification gaps
 
-- Measured line coverage with all targets: **87.63%**, not 100%. The proof script enforces an 85% regression floor; 100% remains a release target.
+- Measured line coverage with all targets: **87.64%**, not 100%. The proof script enforces an 85% regression floor; 100% remains a release target.
 - Kani proofs cover bounded primitives and memory bounds; the full decoder is too
   large for CBMC and is covered by tests/fuzzing instead.
 - Miri covers core and VM unit/execution suites; it is very slow.
