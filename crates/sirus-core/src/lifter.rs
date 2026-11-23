@@ -1,0 +1,1162 @@
+//! Lifts the supported x86-64 subset into Sirus IR and a validated CFG.
+//!
+//! Policy: decode only reachable instructions, reject overlapping or malformed
+//! control flow, never guess a semantic, and reset flag knowledge at every basic
+//! block boundary so cross-block flag liveness fails closed.
+
+use crate::decode::{decode, Condition, Instruction, MemoryOperand, Mnemonic, Operand};
+use crate::error::{CoreError, DecodeError, DecodeReason, Result};
+use crate::ir::{
+    Block, BoundedVec, IrOp, LiftedFunction, Terminator, Width, MAX_BLOCKS, MAX_FUNCTION_BYTES,
+    MAX_IR_OPS,
+};
+use crate::shared::format::{
+    REG_CF, REG_OF, REG_ONE, REG_RAX, REG_RBP, REG_RSP, REG_SF, REG_TMP0, REG_TMP1, REG_TMP2,
+    REG_TMP3, REG_ZERO, REG_ZF,
+};
+
+const FLAG_ZF: u8 = 1;
+const FLAG_CF: u8 = 2;
+const FLAG_SF: u8 = 4;
+const FLAG_OF: u8 = 8;
+const FLAG_ALL: u8 = FLAG_ZF | FLAG_CF | FLAG_SF | FLAG_OF;
+const MAX_QUEUE: usize = 1024;
+const INSTRUCTION_LIMIT: usize = MAX_FUNCTION_BYTES;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FlagKind {
+    Add,
+    Sub,
+    Bitwise,
+    Test,
+    Inc,
+    Dec,
+}
+
+struct Lifter {
+    code_len: usize,
+    base_va: u64,
+    leaders: BoundedVec<u32, MAX_BLOCKS>,
+    blocks: BoundedVec<Block, MAX_BLOCKS>,
+    ops: BoundedVec<IrOp, MAX_IR_OPS>,
+    error_offset: u64,
+}
+
+impl Lifter {
+    fn new(code_len: usize, base_va: u64) -> Self {
+        Self {
+            code_len,
+            base_va,
+            leaders: BoundedVec::new(),
+            blocks: BoundedVec::new(),
+            ops: BoundedVec::new(),
+            error_offset: base_va,
+        }
+    }
+
+    #[inline]
+    fn emit(&mut self, operation: IrOp) -> Result<()> {
+        self.ops.push(operation)
+    }
+
+    #[inline]
+    fn mov(&mut self, dst: u8, src: u8) -> Result<()> {
+        self.emit(IrOp::Mov { dst, src })
+    }
+
+    #[inline]
+    fn mov_imm(&mut self, dst: u8, value: u64) -> Result<()> {
+        self.emit(IrOp::MovImm { dst, value })
+    }
+
+    #[inline]
+    fn add(&mut self, dst: u8, src: u8) -> Result<()> {
+        self.emit(IrOp::Add { dst, src })
+    }
+
+    #[inline]
+    fn sub(&mut self, dst: u8, src: u8) -> Result<()> {
+        self.emit(IrOp::Sub { dst, src })
+    }
+
+    #[inline]
+    fn and(&mut self, dst: u8, src: u8) -> Result<()> {
+        self.emit(IrOp::And { dst, src })
+    }
+
+    #[inline]
+    fn or(&mut self, dst: u8, src: u8) -> Result<()> {
+        self.emit(IrOp::Or { dst, src })
+    }
+
+    #[inline]
+    fn xor(&mut self, dst: u8, src: u8) -> Result<()> {
+        self.emit(IrOp::Xor { dst, src })
+    }
+
+    #[inline]
+    fn add_imm(&mut self, dst: u8, value: u64) -> Result<()> {
+        self.emit(IrOp::AddImm { dst, value })
+    }
+
+    #[inline]
+    fn sub_imm(&mut self, dst: u8, value: u64) -> Result<()> {
+        self.emit(IrOp::SubImm { dst, value })
+    }
+
+    #[inline]
+    fn and_imm(&mut self, dst: u8, value: u64) -> Result<()> {
+        self.emit(IrOp::AndImm { dst, value })
+    }
+
+    #[inline]
+    fn xor_imm(&mut self, dst: u8, value: u64) -> Result<()> {
+        self.emit(IrOp::XorImm { dst, value })
+    }
+
+    #[inline]
+    fn shl_imm(&mut self, dst: u8, value: u64) -> Result<()> {
+        self.emit(IrOp::ShlImm { dst, value })
+    }
+
+    #[inline]
+    fn shr_u_imm(&mut self, dst: u8, value: u64) -> Result<()> {
+        self.emit(IrOp::ShrUImm { dst, value })
+    }
+
+    #[inline]
+    fn shr_s_imm(&mut self, dst: u8, value: u64) -> Result<()> {
+        self.emit(IrOp::ShrSImm { dst, value })
+    }
+
+    #[inline]
+    fn cmp_eq(&mut self, dst: u8, lhs: u8, rhs: u8) -> Result<()> {
+        self.emit(IrOp::CmpEq { dst, lhs, rhs })
+    }
+
+    #[inline]
+    fn cmp_lt_u(&mut self, dst: u8, lhs: u8, rhs: u8) -> Result<()> {
+        self.emit(IrOp::CmpLtU { dst, lhs, rhs })
+    }
+
+    #[inline]
+    fn apply_mask(&mut self, register: u8, width: Width) -> Result<()> {
+        if width == Width::W64 {
+            Ok(())
+        } else {
+            self.and_imm(register, width.mask())
+        }
+    }
+
+    fn sign_extend(&mut self, register: u8, bits: u32) -> Result<()> {
+        if bits >= 64 {
+            return Ok(());
+        }
+        let shift = 64_u32.saturating_sub(bits);
+        self.shl_imm(register, u64::from(shift))?;
+        self.shr_s_imm(register, u64::from(shift))
+    }
+
+    fn compute_address(&mut self, memory: &MemoryOperand) -> Result<()> {
+        if memory.rip_relative {
+            return Err(CoreError::Decode(DecodeError {
+                offset: self.error_offset,
+                reason: DecodeReason::RipRelativeMemory,
+            }));
+        }
+        let Some(base) = memory.base else {
+            return Err(CoreError::Decode(DecodeError {
+                offset: self.error_offset,
+                reason: DecodeReason::AbsoluteMemory,
+            }));
+        };
+        self.mov(REG_TMP3, base)?;
+        if let Some(index) = memory.index {
+            self.mov(REG_TMP2, index)?;
+            match memory.scale {
+                1 => {}
+                2 => self.shl_imm(REG_TMP2, 1)?,
+                4 => self.shl_imm(REG_TMP2, 2)?,
+                8 => self.shl_imm(REG_TMP2, 3)?,
+                _ => {
+                    return Err(CoreError::Decode(DecodeError {
+                        offset: self.error_offset,
+                        reason: DecodeReason::UnsupportedAddressing,
+                    }));
+                }
+            }
+            self.add(REG_TMP3, REG_TMP2)?;
+        }
+        if memory.disp != 0 {
+            self.add_imm(
+                REG_TMP3,
+                u64::from_ne_bytes(memory.disp.to_ne_bytes()),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn read_operand_into(
+        &mut self,
+        operand: Operand,
+        width: Width,
+        target: u8,
+    ) -> Result<()> {
+        match operand {
+            Operand::Reg { index, .. } => {
+                self.mov(target, index)?;
+                self.apply_mask(target, width)
+            }
+            Operand::Imm { value, .. } => self.mov_imm(target, value & width.mask()),
+            Operand::Mem(memory) => {
+                self.compute_address(&memory)?;
+                self.emit(IrOp::Load {
+                    dst: target,
+                    addr: REG_TMP3,
+                    width,
+                })
+            }
+            _ => Err(CoreError::Decode(DecodeError {
+                offset: self.error_offset,
+                reason: DecodeReason::UnsupportedForm,
+            })),
+        }
+    }
+
+    fn write_register(&mut self, dst: u8, width: Width, value: u8) -> Result<()> {
+        if width == Width::W64 {
+            if dst != value {
+                self.mov(dst, value)?;
+            }
+            return Ok(());
+        }
+        if width == Width::W32 {
+            self.apply_mask(value, Width::W32)?;
+            if dst != value {
+                self.mov(dst, value)?;
+            }
+            return Ok(());
+        }
+        self.apply_mask(value, width)?;
+        let scratch = if REG_TMP3 != value && REG_TMP3 != dst {
+            REG_TMP3
+        } else if REG_TMP2 != value && REG_TMP2 != dst {
+            REG_TMP2
+        } else {
+            REG_TMP1
+        };
+        self.mov(scratch, dst)?;
+        self.and_imm(scratch, !width.mask())?;
+        self.or(scratch, value)?;
+        self.mov(dst, scratch)
+    }
+
+    fn write_operand(&mut self, operand: Operand, width: Width, value: u8) -> Result<()> {
+        match operand {
+            Operand::Reg { index, .. } => self.write_register(index, width, value),
+            Operand::Mem(memory) => {
+                if value != REG_TMP0 {
+                    self.mov(REG_TMP0, value)?;
+                }
+                self.compute_address(&memory)?;
+                self.emit(IrOp::Store {
+                    addr: REG_TMP3,
+                    src: REG_TMP0,
+                    width,
+                })
+            }
+            _ => Err(CoreError::Decode(DecodeError {
+                offset: self.error_offset,
+                reason: DecodeReason::UnsupportedForm,
+            })),
+        }
+    }
+
+    fn set_flags(
+        &mut self,
+        kind: FlagKind,
+        width: Width,
+        left: u8,
+        right: u8,
+        result: u8,
+    ) -> Result<()> {
+        self.cmp_eq(REG_ZF, result, REG_ZERO)?;
+        self.mov(REG_SF, result)?;
+        self.shr_u_imm(REG_SF, u64::from(width.sign_bit()))?;
+        self.and_imm(REG_SF, 1)?;
+
+        match kind {
+            FlagKind::Add => {
+                self.cmp_lt_u(REG_CF, result, left)?;
+            }
+            FlagKind::Sub => {
+                self.cmp_lt_u(REG_CF, left, right)?;
+            }
+            FlagKind::Inc | FlagKind::Dec => {}
+            FlagKind::Bitwise | FlagKind::Test => {
+                self.mov_imm(REG_CF, 0)?;
+            }
+        }
+
+        match kind {
+            FlagKind::Bitwise | FlagKind::Test => {
+                self.mov_imm(REG_OF, 0)?;
+            }
+            FlagKind::Add | FlagKind::Inc => {
+                self.mov(REG_TMP3, left)?;
+                self.xor(REG_TMP3, right)?;
+                self.emit(IrOp::Not { dst: REG_TMP3 })?;
+                self.mov(REG_TMP1, left)?;
+                self.xor(REG_TMP1, result)?;
+                self.and(REG_TMP3, REG_TMP1)?;
+                self.shr_u_imm(REG_TMP3, u64::from(width.sign_bit()))?;
+                self.and_imm(REG_TMP3, 1)?;
+                self.mov(REG_OF, REG_TMP3)?;
+            }
+            FlagKind::Sub | FlagKind::Dec => {
+                self.mov(REG_TMP3, left)?;
+                self.xor(REG_TMP3, right)?;
+                self.mov(REG_TMP1, left)?;
+                self.xor(REG_TMP1, result)?;
+                self.and(REG_TMP3, REG_TMP1)?;
+                self.shr_u_imm(REG_TMP3, u64::from(width.sign_bit()))?;
+                self.and_imm(REG_TMP3, 1)?;
+                self.mov(REG_OF, REG_TMP3)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn required_flags(condition: Condition) -> Option<u8> {
+        match condition {
+            Condition::Overflow | Condition::NoOverflow => Some(FLAG_OF),
+            Condition::Below | Condition::AboveOrEqual => Some(FLAG_CF),
+            Condition::Equal | Condition::NotEqual => Some(FLAG_ZF),
+            Condition::BelowOrEqual | Condition::Above => Some(FLAG_CF | FLAG_ZF),
+            Condition::Sign | Condition::NoSign => Some(FLAG_SF),
+            Condition::Less | Condition::GreaterOrEqual => Some(FLAG_SF | FLAG_OF),
+            Condition::LessOrEqual | Condition::Greater => Some(FLAG_SF | FLAG_OF | FLAG_ZF),
+            Condition::Parity | Condition::NoParity => None,
+        }
+    }
+
+    fn compute_condition(
+        &mut self,
+        condition: Condition,
+        known: u8,
+        offset: u64,
+    ) -> Result<u8> {
+        let required = Self::required_flags(condition)
+            .ok_or(CoreError::UnsupportedCondition { offset })?;
+        if known & required != required {
+            return Err(CoreError::UnknownFlags { offset });
+        }
+        match condition {
+            Condition::Overflow => self.mov(REG_TMP0, REG_OF)?,
+            Condition::NoOverflow => {
+                self.mov(REG_TMP0, REG_OF)?;
+                self.xor_imm(REG_TMP0, 1)?;
+            }
+            Condition::Below => self.mov(REG_TMP0, REG_CF)?,
+            Condition::AboveOrEqual => {
+                self.mov(REG_TMP0, REG_CF)?;
+                self.xor_imm(REG_TMP0, 1)?;
+            }
+            Condition::Equal => self.mov(REG_TMP0, REG_ZF)?,
+            Condition::NotEqual => {
+                self.mov(REG_TMP0, REG_ZF)?;
+                self.xor_imm(REG_TMP0, 1)?;
+            }
+            Condition::BelowOrEqual => {
+                self.mov(REG_TMP0, REG_CF)?;
+                self.or(REG_TMP0, REG_ZF)?;
+            }
+            Condition::Above => {
+                self.mov(REG_TMP0, REG_CF)?;
+                self.or(REG_TMP0, REG_ZF)?;
+                self.xor_imm(REG_TMP0, 1)?;
+            }
+            Condition::Sign => self.mov(REG_TMP0, REG_SF)?,
+            Condition::NoSign => {
+                self.mov(REG_TMP0, REG_SF)?;
+                self.xor_imm(REG_TMP0, 1)?;
+            }
+            Condition::Less => {
+                self.mov(REG_TMP0, REG_SF)?;
+                self.xor(REG_TMP0, REG_OF)?;
+            }
+            Condition::GreaterOrEqual => {
+                self.mov(REG_TMP0, REG_SF)?;
+                self.xor(REG_TMP0, REG_OF)?;
+                self.xor_imm(REG_TMP0, 1)?;
+            }
+            Condition::LessOrEqual => {
+                self.mov(REG_TMP0, REG_SF)?;
+                self.xor(REG_TMP0, REG_OF)?;
+                self.or(REG_TMP0, REG_ZF)?;
+            }
+            Condition::Greater => {
+                self.mov(REG_TMP0, REG_SF)?;
+                self.xor(REG_TMP0, REG_OF)?;
+                self.or(REG_TMP0, REG_ZF)?;
+                self.xor_imm(REG_TMP0, 1)?;
+            }
+            Condition::Parity | Condition::NoParity => {
+                return Err(CoreError::UnsupportedCondition { offset });
+            }
+        }
+        Ok(REG_TMP0)
+    }
+
+    fn lower_alu(
+        &mut self,
+        instruction: &Instruction,
+        operation: Mnemonic,
+    ) -> Result<()> {
+        let width = instruction.width;
+        self.read_operand_into(instruction.dst, width, REG_TMP0)?;
+        self.read_operand_into(instruction.src, width, REG_TMP1)?;
+        self.mov(REG_TMP2, REG_TMP0)?;
+        let kind = match operation {
+            Mnemonic::Add => {
+                self.add(REG_TMP2, REG_TMP1)?;
+                FlagKind::Add
+            }
+            Mnemonic::Sub => {
+                self.sub(REG_TMP2, REG_TMP1)?;
+                FlagKind::Sub
+            }
+            Mnemonic::And => {
+                self.and(REG_TMP2, REG_TMP1)?;
+                FlagKind::Bitwise
+            }
+            Mnemonic::Or => {
+                self.or(REG_TMP2, REG_TMP1)?;
+                FlagKind::Bitwise
+            }
+            Mnemonic::Xor => {
+                self.xor(REG_TMP2, REG_TMP1)?;
+                FlagKind::Bitwise
+            }
+            _ => {
+                return Err(CoreError::Decode(DecodeError {
+                    offset: instruction.offset,
+                    reason: DecodeReason::UnsupportedForm,
+                }));
+            }
+        };
+        self.apply_mask(REG_TMP2, width)?;
+        self.set_flags(kind, width, REG_TMP0, REG_TMP1, REG_TMP2)?;
+        self.write_operand(instruction.dst, width, REG_TMP2)
+    }
+
+    fn lower_instruction(
+        &mut self,
+        instruction: &Instruction,
+        known: &mut u8,
+    ) -> Result<Option<Terminator>> {
+        self.error_offset = instruction.offset;
+        match instruction.mnemonic {
+            Mnemonic::Nop | Mnemonic::Endbr => Ok(None),
+            Mnemonic::Mov => {
+                let width = instruction.width;
+                self.read_operand_into(instruction.src, width, REG_TMP0)?;
+                self.write_operand(instruction.dst, width, REG_TMP0)?;
+                Ok(None)
+            }
+            Mnemonic::Movzx | Mnemonic::Movsx | Mnemonic::Movsxd => {
+                let source_width = operand_width(instruction.src)
+                    .ok_or(CoreError::Decode(DecodeError {
+                        offset: instruction.offset,
+                        reason: DecodeReason::UnsupportedForm,
+                    }))?;
+                self.read_operand_into(instruction.src, source_width, REG_TMP0)?;
+                if instruction.mnemonic != Mnemonic::Movzx {
+                    self.sign_extend(REG_TMP0, source_width.bits())?;
+                }
+                match instruction.dst {
+                    Operand::Reg { index, .. } => {
+                        self.write_register(index, instruction.width, REG_TMP0)?;
+                        Ok(None)
+                    }
+                    _ => Err(CoreError::Decode(DecodeError {
+                        offset: instruction.offset,
+                        reason: DecodeReason::UnsupportedForm,
+                    })),
+                }
+            }
+            Mnemonic::Lea => {
+                let Operand::Mem(memory) = instruction.src else {
+                    return Err(CoreError::Decode(DecodeError {
+                        offset: instruction.offset,
+                        reason: DecodeReason::UnsupportedForm,
+                    }));
+                };
+                self.compute_address(&memory)?;
+                match instruction.dst {
+                    Operand::Reg { index, .. } => {
+                        self.write_register(index, instruction.width, REG_TMP3)?;
+                        Ok(None)
+                    }
+                    _ => Err(CoreError::Decode(DecodeError {
+                        offset: instruction.offset,
+                        reason: DecodeReason::UnsupportedForm,
+                    })),
+                }
+            }
+            Mnemonic::Add | Mnemonic::Sub | Mnemonic::And | Mnemonic::Or | Mnemonic::Xor => {
+                self.lower_alu(instruction, instruction.mnemonic)?;
+                *known |= FLAG_ALL;
+                Ok(None)
+            }
+            Mnemonic::Cmp => {
+                self.read_operand_into(instruction.dst, instruction.width, REG_TMP0)?;
+                self.read_operand_into(instruction.src, instruction.width, REG_TMP1)?;
+                self.mov(REG_TMP2, REG_TMP0)?;
+                self.sub(REG_TMP2, REG_TMP1)?;
+                self.apply_mask(REG_TMP2, instruction.width)?;
+                self.set_flags(
+                    FlagKind::Sub,
+                    instruction.width,
+                    REG_TMP0,
+                    REG_TMP1,
+                    REG_TMP2,
+                )?;
+                *known |= FLAG_ALL;
+                Ok(None)
+            }
+            Mnemonic::Test => {
+                self.read_operand_into(instruction.dst, instruction.width, REG_TMP0)?;
+                self.read_operand_into(instruction.src, instruction.width, REG_TMP1)?;
+                self.mov(REG_TMP2, REG_TMP0)?;
+                self.and(REG_TMP2, REG_TMP1)?;
+                self.apply_mask(REG_TMP2, instruction.width)?;
+                self.set_flags(
+                    FlagKind::Test,
+                    instruction.width,
+                    REG_TMP0,
+                    REG_TMP1,
+                    REG_TMP2,
+                )?;
+                *known |= FLAG_ALL;
+                Ok(None)
+            }
+            Mnemonic::Inc | Mnemonic::Dec => {
+                let width = instruction.width;
+                self.read_operand_into(instruction.dst, width, REG_TMP0)?;
+                self.mov(REG_TMP1, REG_ONE)?;
+                self.apply_mask(REG_TMP1, width)?;
+                self.mov(REG_TMP2, REG_TMP0)?;
+                if instruction.mnemonic == Mnemonic::Inc {
+                    self.add(REG_TMP2, REG_TMP1)?;
+                } else {
+                    self.sub(REG_TMP2, REG_TMP1)?;
+                }
+                self.apply_mask(REG_TMP2, width)?;
+                if instruction.mnemonic == Mnemonic::Inc {
+                    self.set_flags(FlagKind::Inc, width, REG_TMP0, REG_TMP1, REG_TMP2)?;
+                } else {
+                    self.set_flags(FlagKind::Dec, width, REG_TMP0, REG_TMP1, REG_TMP2)?;
+                }
+                self.write_operand(instruction.dst, width, REG_TMP2)?;
+                *known = (*known & FLAG_CF) | FLAG_ZF | FLAG_SF | FLAG_OF;
+                Ok(None)
+            }
+            Mnemonic::Neg => {
+                let width = instruction.width;
+                self.read_operand_into(instruction.dst, width, REG_TMP0)?;
+                self.mov(REG_TMP2, REG_ZERO)?;
+                self.sub(REG_TMP2, REG_TMP0)?;
+                self.apply_mask(REG_TMP2, width)?;
+                self.set_flags(FlagKind::Sub, width, REG_ZERO, REG_TMP0, REG_TMP2)?;
+                self.write_operand(instruction.dst, width, REG_TMP2)?;
+                *known |= FLAG_ALL;
+                Ok(None)
+            }
+            Mnemonic::Not => {
+                self.read_operand_into(instruction.dst, instruction.width, REG_TMP0)?;
+                self.emit(IrOp::Not { dst: REG_TMP0 })?;
+                self.write_operand(instruction.dst, instruction.width, REG_TMP0)?;
+                Ok(None)
+            }
+            Mnemonic::Imul => {
+                let width = instruction.width;
+                let has_immediate = matches!(instruction.aux, Operand::Imm { .. });
+                if has_immediate {
+                    self.read_operand_into(instruction.src, width, REG_TMP0)?;
+                    self.read_operand_into(instruction.aux, width, REG_TMP1)?;
+                } else {
+                    self.read_operand_into(instruction.dst, width, REG_TMP0)?;
+                    self.read_operand_into(instruction.src, width, REG_TMP1)?;
+                }
+                self.mov(REG_TMP2, REG_TMP0)?;
+                self.emit(IrOp::Mul {
+                    dst: REG_TMP2,
+                    src: REG_TMP1,
+                })?;
+                self.apply_mask(REG_TMP2, width)?;
+                self.write_operand(instruction.dst, width, REG_TMP2)?;
+                *known = 0;
+                Ok(None)
+            }
+            Mnemonic::Shl | Mnemonic::Shr | Mnemonic::Sar | Mnemonic::Rol | Mnemonic::Ror => {
+                let width = instruction.width;
+                self.read_operand_into(instruction.dst, width, REG_TMP0)?;
+                self.mov(REG_TMP2, REG_TMP0)?;
+                match instruction.src {
+                    Operand::Imm { value, .. } => match instruction.mnemonic {
+                        Mnemonic::Shl => self.shl_imm(REG_TMP2, value)?,
+                        Mnemonic::Shr => self.shr_u_imm(REG_TMP2, value)?,
+                        Mnemonic::Sar => self.emit(IrOp::ShrSImm {
+                            dst: REG_TMP2,
+                            value,
+                        })?,
+                        Mnemonic::Rol => self.emit(IrOp::RotLImm {
+                            dst: REG_TMP2,
+                            value,
+                        })?,
+                        _ => self.emit(IrOp::RotRImm {
+                            dst: REG_TMP2,
+                            value,
+                        })?,
+                    },
+                    _ => {
+                        self.read_operand_into(instruction.src, Width::W8, REG_TMP1)?;
+                        match instruction.mnemonic {
+                            Mnemonic::Shl => self.emit(IrOp::Shl {
+                                dst: REG_TMP2,
+                                src: REG_TMP1,
+                            })?,
+                            Mnemonic::Shr => self.emit(IrOp::ShrU {
+                                dst: REG_TMP2,
+                                src: REG_TMP1,
+                            })?,
+                            Mnemonic::Sar => self.emit(IrOp::ShrS {
+                                dst: REG_TMP2,
+                                src: REG_TMP1,
+                            })?,
+                            Mnemonic::Rol => self.emit(IrOp::RotL {
+                                dst: REG_TMP2,
+                                src: REG_TMP1,
+                            })?,
+                            _ => self.emit(IrOp::RotR {
+                                dst: REG_TMP2,
+                                src: REG_TMP1,
+                            })?,
+                        }
+                    }
+                }
+                self.apply_mask(REG_TMP2, width)?;
+                self.write_operand(instruction.dst, width, REG_TMP2)?;
+                *known = 0;
+                Ok(None)
+            }
+            Mnemonic::Push => {
+                self.read_operand_into(instruction.dst, Width::W64, REG_TMP0)?;
+                self.sub_imm(REG_RSP, 8)?;
+                self.emit(IrOp::Store {
+                    addr: REG_RSP,
+                    src: REG_TMP0,
+                    width: Width::W64,
+                })?;
+                Ok(None)
+            }
+            Mnemonic::Pop => {
+                let Operand::Reg { index, .. } = instruction.dst else {
+                    return Err(CoreError::Decode(DecodeError {
+                        offset: instruction.offset,
+                        reason: DecodeReason::UnsupportedForm,
+                    }));
+                };
+                self.emit(IrOp::Load {
+                    dst: REG_TMP0,
+                    addr: REG_RSP,
+                    width: Width::W64,
+                })?;
+                self.add_imm(REG_RSP, 8)?;
+                self.write_register(index, Width::W64, REG_TMP0)?;
+                Ok(None)
+            }
+            Mnemonic::Leave => {
+                self.mov(REG_RSP, REG_RBP)?;
+                self.emit(IrOp::Load {
+                    dst: REG_RBP,
+                    addr: REG_RSP,
+                    width: Width::W64,
+                })?;
+                self.add_imm(REG_RSP, 8)?;
+                Ok(None)
+            }
+            Mnemonic::Cdqe => {
+                self.read_operand_into(
+                    Operand::Reg {
+                        index: REG_RAX,
+                        width: Width::W32,
+                    },
+                    Width::W32,
+                    REG_TMP0,
+                )?;
+                self.sign_extend(REG_TMP0, 32)?;
+                self.write_register(REG_RAX, Width::W64, REG_TMP0)?;
+                Ok(None)
+            }
+            Mnemonic::Cmov(condition) => {
+                let Operand::Reg { index, .. } = instruction.dst else {
+                    return Err(CoreError::Decode(DecodeError {
+                        offset: instruction.offset,
+                        reason: DecodeReason::UnsupportedForm,
+                    }));
+                };
+                let condition_register =
+                    self.compute_condition(condition, *known, instruction.offset)?;
+                self.read_operand_into(instruction.src, instruction.width, REG_TMP1)?;
+                self.mov(REG_TMP2, index)?;
+                self.emit(IrOp::Select {
+                    dst: REG_TMP2,
+                    cond: condition_register,
+                    when_true: REG_TMP1,
+                    when_false: REG_TMP2,
+                })?;
+                self.mov(index, REG_TMP2)?;
+                Ok(None)
+            }
+            Mnemonic::Setcc(condition) => {
+                let Operand::Reg { index, .. } = instruction.dst else {
+                    return Err(CoreError::Decode(DecodeError {
+                        offset: instruction.offset,
+                        reason: DecodeReason::UnsupportedForm,
+                    }));
+                };
+                let condition_register =
+                    self.compute_condition(condition, *known, instruction.offset)?;
+                self.mov(REG_TMP1, index)?;
+                self.and_imm(REG_TMP1, !0xff)?;
+                self.or(REG_TMP1, condition_register)?;
+                self.mov(index, REG_TMP1)?;
+                Ok(None)
+            }
+            Mnemonic::Jmp => {
+                let target = instruction
+                    .target
+                    .ok_or(CoreError::InvalidBranchTarget {
+                        offset: instruction.offset,
+                        target: instruction.offset,
+                    })?;
+                let target_index = self.branch_target(target, instruction.offset)?;
+                Ok(Some(Terminator::Jump {
+                    target: target_index,
+                }))
+            }
+            Mnemonic::Jcc(condition) => {
+                let condition_register =
+                    self.compute_condition(condition, *known, instruction.offset)?;
+                let target = instruction
+                    .target
+                    .ok_or(CoreError::InvalidBranchTarget {
+                        offset: instruction.offset,
+                        target: instruction.offset,
+                    })?;
+                let true_index = self.branch_target(target, instruction.offset)?;
+                let fallthrough = self
+                    .base_va
+                    .checked_add(
+                        instruction
+                            .offset
+                            .checked_sub(self.base_va)
+                            .ok_or(CoreError::ArithmeticOverflow)?
+                            .checked_add(u64::from(instruction.length))
+                            .ok_or(CoreError::ArithmeticOverflow)?,
+                    )
+                    .ok_or(CoreError::ArithmeticOverflow)?;
+                let false_index = self.branch_target(fallthrough, instruction.offset)?;
+                Ok(Some(Terminator::Branch {
+                    cond: condition_register,
+                    when_true: true_index,
+                    when_false: false_index,
+                }))
+            }
+            Mnemonic::Ret => Ok(Some(Terminator::Return { value: REG_RAX })),
+        }
+    }
+
+    fn branch_target(&self, target: u64, offset: u64) -> Result<u16> {
+        let relative = target
+            .checked_sub(self.base_va)
+            .ok_or(CoreError::InvalidBranchTarget { offset, target })?;
+        let relative = usize::try_from(relative)
+            .map_err(|_| CoreError::InvalidBranchTarget { offset, target })?;
+        if relative >= self.code_len {
+            return Err(CoreError::InvalidBranchTarget { offset, target });
+        }
+        let wanted = u32::try_from(relative)
+            .map_err(|_| CoreError::InvalidBranchTarget { offset, target })?;
+        let mut index = 0_usize;
+        while index < self.leaders.len() {
+            if self.leaders.get(index) == Some(&wanted) {
+                return u16::try_from(index).map_err(|_| CoreError::InvalidBlock {
+                    block: u16::MAX,
+                });
+            }
+            index = index.saturating_add(1);
+        }
+        Err(CoreError::InvalidBranchTarget { offset, target })
+    }
+
+    fn add_leader(&mut self, relative: usize) -> Result<()> {
+        if relative >= self.code_len {
+            return Err(CoreError::InvalidFunctionSize {
+                size: u64::try_from(relative).unwrap_or(u64::MAX),
+            });
+        }
+        let value = u32::try_from(relative).map_err(|_| CoreError::ArithmeticOverflow)?;
+        if !self.leaders.contains(&value) {
+            self.leaders
+                .insert_sorted_by(value, |left, right| left < right)?;
+        }
+        Ok(())
+    }
+
+    fn relative_target(&self, target: u64, offset: u64) -> Result<usize> {
+        let relative = target
+            .checked_sub(self.base_va)
+            .ok_or(CoreError::InvalidBranchTarget { offset, target })?;
+        let relative = usize::try_from(relative)
+            .map_err(|_| CoreError::InvalidBranchTarget { offset, target })?;
+        if relative >= self.code_len {
+            return Err(CoreError::InvalidBranchTarget { offset, target });
+        }
+        Ok(relative)
+    }
+
+    fn discover(&mut self, code: &[u8]) -> Result<()> {
+        let mut owners = [u16::MAX; MAX_FUNCTION_BYTES];
+        let mut queue = BoundedVec::<u32, MAX_QUEUE>::new();
+        self.add_leader(0)?;
+        queue.push(0)?;
+        let mut decoded_count = 0_usize;
+        while let Some(start_value) = queue.pop() {
+            let start = usize::try_from(start_value)
+                .map_err(|_| CoreError::ArithmeticOverflow)?;
+            let mut cursor = start;
+            loop {
+                if cursor >= self.code_len {
+                    return Err(CoreError::MissingTerminator {
+                        offset: self.base_va.wrapping_add(
+                            u64::try_from(cursor).unwrap_or(u64::MAX),
+                        ),
+                    });
+                }
+                if cursor != start {
+                    let current = u32::try_from(cursor)
+                        .map_err(|_| CoreError::ArithmeticOverflow)?;
+                    if self.leaders.contains(&current) {
+                        break;
+                    }
+                }
+                if let Some(owner) = owners.get(cursor).copied() {
+                    if owner != u16::MAX {
+                        if usize::from(owner) == cursor {
+                            break;
+                        }
+                        return Err(CoreError::OverlappingInstruction {
+                            offset: self.base_va.wrapping_add(
+                                u64::try_from(cursor).unwrap_or(u64::MAX),
+                            ),
+                        });
+                    }
+                } else {
+                    return Err(CoreError::ArithmeticOverflow);
+                }
+                let slice = code.get(cursor..).ok_or(CoreError::MalformedBinary)?;
+                let instruction = decode(
+                    slice,
+                    self.base_va
+                        .wrapping_add(u64::try_from(cursor).unwrap_or(u64::MAX)),
+                )?;
+                let length = usize::from(instruction.length);
+                let end = cursor.checked_add(length).ok_or(CoreError::ArithmeticOverflow)?;
+                if end > self.code_len {
+                    return Err(CoreError::Decode(DecodeError {
+                        offset: instruction.offset,
+                        reason: DecodeReason::Truncated,
+                    }));
+                }
+                let mut mark = cursor;
+                while mark < end {
+                    let owner = owners.get_mut(mark).ok_or(CoreError::ArithmeticOverflow)?;
+                    if *owner != u16::MAX && usize::from(*owner) != cursor {
+                        return Err(CoreError::OverlappingInstruction {
+                            offset: self.base_va.wrapping_add(
+                                u64::try_from(mark).unwrap_or(u64::MAX),
+                            ),
+                        });
+                    }
+                    *owner = u16::try_from(cursor).map_err(|_| CoreError::ArithmeticOverflow)?;
+                    mark = mark.saturating_add(1);
+                }
+                decoded_count = decoded_count.saturating_add(1);
+                if decoded_count > INSTRUCTION_LIMIT {
+                    return Err(CoreError::CapacityExceeded);
+                }
+                match instruction.mnemonic {
+                    Mnemonic::Jcc(_) => {
+                        let target = instruction.target.ok_or(
+                            CoreError::InvalidBranchTarget {
+                                offset: instruction.offset,
+                                target: instruction.offset,
+                            },
+                        )?;
+                        let target_relative =
+                            self.relative_target(target, instruction.offset)?;
+                        if end >= self.code_len {
+                            return Err(CoreError::InvalidBranchTarget {
+                                offset: instruction.offset,
+                                target: self.base_va.wrapping_add(
+                                    u64::try_from(end).unwrap_or(u64::MAX),
+                                ),
+                            });
+                        }
+                        self.add_leader(target_relative)?;
+                        self.add_leader(end)?;
+                        queue.push(
+                            u32::try_from(target_relative)
+                                .map_err(|_| CoreError::ArithmeticOverflow)?,
+                        )?;
+                        queue.push(
+                            u32::try_from(end).map_err(|_| CoreError::ArithmeticOverflow)?,
+                        )?;
+                        break;
+                    }
+                    Mnemonic::Jmp => {
+                        let target = instruction.target.ok_or(
+                            CoreError::InvalidBranchTarget {
+                                offset: instruction.offset,
+                                target: instruction.offset,
+                            },
+                        )?;
+                        let target_relative =
+                            self.relative_target(target, instruction.offset)?;
+                        self.add_leader(target_relative)?;
+                        queue.push(
+                            u32::try_from(target_relative)
+                                .map_err(|_| CoreError::ArithmeticOverflow)?,
+                        )?;
+                        break;
+                    }
+                    Mnemonic::Ret => break,
+                    _ => {
+                        cursor = end;
+                    }
+                }
+            }
+        }
+        self.leaders.sort_unstable_by(|left, right| left < right);
+        self.leaders.dedup();
+        let mut index = 0_usize;
+        while index < self.leaders.len() {
+            let Some(value) = self.leaders.get(index).copied() else {
+                return Err(CoreError::ArithmeticOverflow);
+            };
+            let relative = usize::try_from(value).map_err(|_| CoreError::ArithmeticOverflow)?;
+            let Some(owner) = owners.get(relative).copied() else {
+                return Err(CoreError::ArithmeticOverflow);
+            };
+            if owner == u16::MAX || usize::from(owner) != relative {
+                return Err(CoreError::InvalidBranchTarget {
+                    offset: self
+                        .base_va
+                        .wrapping_add(u64::try_from(relative).unwrap_or(u64::MAX)),
+                    target: self
+                        .base_va
+                        .wrapping_add(u64::try_from(relative).unwrap_or(u64::MAX)),
+                });
+            }
+            index = index.saturating_add(1);
+        }
+        Ok(())
+    }
+
+    fn build(&mut self, code: &[u8]) -> Result<()> {
+        let count = self.leaders.len();
+        let mut block_index = 0_usize;
+        while block_index < count {
+            let start_value = self
+                .leaders
+                .get(block_index)
+                .copied()
+                .ok_or(CoreError::ArithmeticOverflow)?;
+            let start = usize::try_from(start_value).map_err(|_| CoreError::ArithmeticOverflow)?;
+            let limit = match self.leaders.get(block_index.saturating_add(1)).copied() {
+                Some(next) => usize::try_from(next).map_err(|_| CoreError::ArithmeticOverflow)?,
+                None => self.code_len,
+            };
+            let ops_start = self.ops.len();
+            if block_index == 0 {
+                self.mov_imm(REG_ZERO, 0)?;
+                self.mov_imm(REG_ONE, 1)?;
+                self.mov_imm(REG_ZF, 0)?;
+                self.mov_imm(REG_CF, 0)?;
+                self.mov_imm(REG_SF, 0)?;
+                self.mov_imm(REG_OF, 0)?;
+            }
+            let mut flags_known = 0_u8;
+            let mut cursor = start;
+            let terminator = loop {
+                if cursor == limit {
+                    if block_index.saturating_add(1) < count {
+                        let target = u16::try_from(block_index.saturating_add(1))
+                            .map_err(|_| CoreError::InvalidBlock { block: u16::MAX })?;
+                        break Terminator::Jump { target };
+                    }
+                    return Err(CoreError::MissingTerminator {
+                        offset: self
+                            .base_va
+                            .wrapping_add(u64::try_from(cursor).unwrap_or(u64::MAX)),
+                    });
+                }
+                if cursor > limit {
+                    return Err(CoreError::OverlappingInstruction {
+                        offset: self
+                            .base_va
+                            .wrapping_add(u64::try_from(cursor).unwrap_or(u64::MAX)),
+                    });
+                }
+                let slice = code.get(cursor..).ok_or(CoreError::MalformedBinary)?;
+                let instruction = decode(
+                    slice,
+                    self.base_va
+                        .wrapping_add(u64::try_from(cursor).unwrap_or(u64::MAX)),
+                )?;
+                let length = usize::from(instruction.length);
+                let end = cursor.checked_add(length).ok_or(CoreError::ArithmeticOverflow)?;
+                if end > limit {
+                    return Err(CoreError::OverlappingInstruction {
+                        offset: instruction.offset,
+                    });
+                }
+                match self.lower_instruction(&instruction, &mut flags_known)? {
+                    Some(terminator) => break terminator,
+                    None => cursor = end,
+                }
+            };
+            let ops_len = self.ops.len().saturating_sub(ops_start);
+            let ops_start = u16::try_from(ops_start)
+                .map_err(|_| CoreError::InvalidBlock { block: u16::MAX })?;
+            let ops_len = u16::try_from(ops_len)
+                .map_err(|_| CoreError::InvalidBlock { block: u16::MAX })?;
+            self.blocks.push(Block {
+                start_va: self
+                    .base_va
+                    .wrapping_add(u64::try_from(start).unwrap_or(u64::MAX)),
+                ops_start,
+                ops_len,
+                terminator,
+            })?;
+            block_index = block_index.saturating_add(1);
+        }
+        Ok(())
+    }
+}
+
+#[inline]
+fn operand_width(operand: Operand) -> Option<Width> {
+    match operand {
+        Operand::Reg { width, .. }
+        | Operand::Imm { width, .. }
+        | Operand::Mem(MemoryOperand { width, .. }) => Some(width),
+        _ => None,
+    }
+}
+
+/// Lifts one bounded native function.
+///
+/// Returns a fully validated CFG. Any unsupported, ambiguous, overlapping, or
+/// out-of-range instruction rejects the whole function.
+#[inline]
+pub fn lift_function(code: &[u8], base_va: u64) -> Result<LiftedFunction> {
+    if code.is_empty() || code.len() > MAX_FUNCTION_BYTES {
+        return Err(CoreError::InvalidFunctionSize {
+            size: u64::try_from(code.len()).unwrap_or(u64::MAX),
+        });
+    }
+    let mut lifter = Lifter::new(code.len(), base_va);
+    lifter.discover(code)?;
+    lifter.build(code)?;
+    if lifter.blocks.is_empty() {
+        return Err(CoreError::InvalidFunctionSize { size: 0 });
+    }
+    Ok(LiftedFunction {
+        entry_block: 0,
+        blocks: lifter.blocks,
+        ops: lifter.ops,
+        byte_len: u64::try_from(code.len()).unwrap_or(u64::MAX),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{lift_function, FlagKind, Lifter};
+    use crate::error::CoreError;
+    use crate::ir::Terminator;
+    use crate::shared::format::{REG_RAX, REG_RDI, REG_RSI};
+
+    #[test]
+    fn lifts_straight_line_add() {
+        let code = [0x48, 0x89, 0xf8, 0x48, 0x01, 0xf0, 0xc3];
+        let function = lift_function(&code, 0x1000);
+        assert!(function.is_ok());
+        if let Ok(function) = function {
+            assert_eq!(function.entry_block, 0);
+            assert_eq!(function.blocks.len(), 1);
+            let block = function.blocks.get(0);
+            assert!(block.is_some());
+            if let Some(block) = block {
+                assert_eq!(block.terminator, Terminator::Return { value: REG_RAX });
+                assert!(block.ops_len > 0);
+            }
+        }
+        let _ = (REG_RDI, REG_RSI, FlagKind::Add, Lifter::new(1, 0));
+    }
+
+    #[test]
+    fn lifts_conditional_branch() {
+        let code = [
+            0x48, 0x39, 0xf7, 0x76, 0x05, 0x48, 0x89, 0xf8, 0xc3, 0x48, 0x89, 0xf0, 0xc3,
+        ];
+        let function = lift_function(&code, 0);
+        assert!(function.is_ok());
+        if let Ok(function) = function {
+            assert_eq!(function.blocks.len(), 3);
+            let entry = function.blocks.get(0);
+            assert!(matches!(
+                entry.map(|block| block.terminator),
+                Some(Terminator::Branch { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn rejects_call_inside_protected_range() {
+        let code = [0x48, 0x89, 0xf8, 0xe8, 0, 0, 0, 0, 0xc3];
+        let result = lift_function(&code, 0);
+        assert!(result.is_err());
+        if let Err(error) = result {
+            assert!(matches!(error, CoreError::Decode(_)));
+        }
+    }
+
+    #[test]
+    fn rejects_riprelative_memory() {
+        let code = [0x48, 0x8b, 0x05, 0, 0, 0, 0, 0xc3];
+        let result = lift_function(&code, 0);
+        assert!(result.is_err());
+        if let Err(error) = result {
+            assert!(matches!(error, CoreError::Decode(_)));
+        }
+    }
+
+    #[test]
+    fn rejects_empty_function() {
+        assert!(lift_function(&[], 0).is_err());
+    }
+}

@@ -204,6 +204,14 @@ impl<T: Copy + Default, const N: usize> BoundedVec<T, N> {
         self.len = 0;
     }
 
+    /// Shrinks the initialized prefix.
+    #[inline]
+    pub fn truncate(&mut self, length: usize) {
+        if length < self.len {
+            self.len = length;
+        }
+    }
+
     /// Iterates over items.
     #[inline]
     pub fn iter(&self) -> BoundedIter<'_, T, N> {
@@ -339,6 +347,120 @@ impl<T: Copy + Default, const N: usize> BoundedVec<T, N> {
 }
 
 impl<T: Copy + Default, const N: usize> Default for BoundedVec<T, N> {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Fixed-capacity byte buffer with checked operations and no allocation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ByteBuf<const N: usize> {
+    data: [u8; N],
+    len: usize,
+}
+
+impl<const N: usize> ByteBuf<N> {
+    /// Creates an empty buffer.
+    #[inline]
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            data: [0_u8; N],
+            len: 0,
+        }
+    }
+
+    /// Returns the number of initialized bytes.
+    #[inline]
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Returns whether the buffer is empty.
+    #[inline]
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Returns the fixed capacity.
+    #[inline]
+    #[must_use]
+    pub const fn capacity(&self) -> usize {
+        N
+    }
+
+    /// Appends one byte.
+    #[inline]
+    pub fn push(&mut self, byte: u8) -> Result<()> {
+        if self.len >= N {
+            return Err(crate::error::CoreError::PayloadTooLarge);
+        }
+        if let Some(slot) = self.data.get_mut(self.len) {
+            *slot = byte;
+            self.len = self.len.saturating_add(1);
+            Ok(())
+        } else {
+            Err(crate::error::CoreError::PayloadTooLarge)
+        }
+    }
+
+    /// Appends a slice.
+    #[inline]
+    pub fn extend_from_slice(&mut self, bytes: &[u8]) -> Result<()> {
+        for byte in bytes {
+            self.push(*byte)?;
+        }
+        Ok(())
+    }
+
+    /// Gets one byte.
+    #[inline]
+    #[must_use]
+    pub fn get(&self, index: usize) -> Option<u8> {
+        if index < self.len {
+            self.data.get(index).copied()
+        } else {
+            None
+        }
+    }
+
+    /// Gets one byte mutably.
+    #[inline]
+    #[must_use]
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut u8> {
+        if index < self.len {
+            self.data.get_mut(index)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the initialized contents.
+    #[inline]
+    #[must_use]
+    pub fn as_slice(&self) -> &[u8] {
+        self.data.get(..self.len).unwrap_or(&[])
+    }
+
+    /// Clears the buffer.
+    #[inline]
+    pub fn clear(&mut self) {
+        self.len = 0;
+    }
+
+    /// Shrinks the buffer.
+    #[inline]
+    pub fn truncate(&mut self, length: usize) {
+        if length < self.len {
+            self.len = length;
+        }
+    }
+}
+
+impl<const N: usize> Default for ByteBuf<N> {
     #[inline]
     fn default() -> Self {
         Self::new()
@@ -742,5 +864,16 @@ mod tests {
     fn capacity_is_declared() {
         let vector = BoundedVec::<u8, MAX_IR_OPS>::new();
         assert_eq!(vector.capacity(), MAX_IR_OPS);
+    }
+
+    #[test]
+    fn byte_buffer_is_checked() {
+        let mut buffer = super::ByteBuf::<2>::new();
+        assert_eq!(buffer.push(1), Ok(()));
+        assert_eq!(buffer.push(2), Ok(()));
+        assert_eq!(buffer.push(3), Err(CoreError::PayloadTooLarge));
+        assert_eq!(buffer.as_slice(), &[1, 2]);
+        buffer.truncate(1);
+        assert_eq!(buffer.as_slice(), &[1]);
     }
 }

@@ -67,6 +67,31 @@ pub struct VmInput<'a> {
     pub fuel: u64,
 }
 
+impl<'a> VmInput<'a> {
+    /// Constructs the complete runtime input in one checked shape.
+    #[inline]
+    #[must_use]
+    pub const fn new(
+        payload: &'a [u8],
+        seed: &'a Seed,
+        expected_hash: u64,
+        base_a: u64,
+        base_b: u64,
+        entry_states: &'a [[u64; 2]],
+        fuel: u64,
+    ) -> Self {
+        Self {
+            payload,
+            seed,
+            expected_hash,
+            base_a,
+            base_b,
+            entry_states,
+            fuel,
+        }
+    }
+}
+
 /// Control-flow result of one semantic operation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Flow {

@@ -39,4 +39,8 @@
 pub mod decode;
 pub mod error;
 pub mod ir;
+pub(crate) mod encode;
+pub mod lifter;
+pub(crate) mod mba;
+pub mod program;
 pub mod shared;
