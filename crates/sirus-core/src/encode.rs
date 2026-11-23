@@ -587,7 +587,7 @@ mod tests {
 
     #[test]
     fn encodes_a_return_block() {
-        let tables = Tables::derive(&seed()).expect("tables");
+        let tables = Tables::derive(&seed());
         let mut rng = BuildRng::new(&seed(), 1);
         let states = [0x1111_2222_3333_4444_u64];
         let ops = [IrOp::MovImm {
@@ -616,7 +616,7 @@ mod tests {
 
     #[test]
     fn survives_high_mba_configuration() {
-        let tables = Tables::derive(&seed()).expect("tables");
+        let tables = Tables::derive(&seed());
         let mut rng = BuildRng::new(&seed(), 2);
         let states = [1_u64];
         let ops = [
@@ -647,7 +647,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_target_state() {
-        let tables = Tables::derive(&seed()).expect("tables");
+        let tables = Tables::derive(&seed());
         let mut rng = BuildRng::new(&seed(), 3);
         let states = [1_u64];
         let result = encode_block(

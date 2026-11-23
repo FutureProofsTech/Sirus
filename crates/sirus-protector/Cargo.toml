@@ -20,5 +20,44 @@ sirus-core.workspace = true
 sirus-vm.workspace = true
 sirus-binfmt.workspace = true
 
-[lints]
-workspace = true
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+unused_must_use = "deny"
+unused_qualifications = "deny"
+trivial_numeric_casts = "deny"
+unused_lifetimes = "deny"
+single_use_lifetimes = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+noop_method_call = "warn"
+meta_variable_misuse = "deny"
+
+# Tier B build-time CLI: Level 2 core isolation is intentionally waived because
+# safe filesystem/process access requires std and editing requires alloc.
+[lints.clippy]
+all = "deny"
+pedantic = "deny"
+nursery = "deny"
+cargo = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+indexing_slicing = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+as_conversions = "deny"
+cast_lossless = "deny"
+cast_possible_truncation = "deny"
+cast_possible_wrap = "deny"
+float_arithmetic = "deny"
+missing_inline_in_public_items = "deny"
+exhaustive_structs = "deny"
+exit = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+dbg_macro = "deny"
+mem_forget = "deny"
+panic_in_result_fn = "deny"

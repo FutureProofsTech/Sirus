@@ -558,9 +558,7 @@ fn read_manifest_u32_at(payload: &[u8], key: u64, start: usize, big_endian: bool
 pub fn execute(input: VmInput<'_>, entry_index: usize, args: [u64; 6]) -> Run {
     let mut steps = 0_u64;
     let mut fuel = input.fuel;
-    let Some(tables) = Tables::derive(input.seed) else {
-        return halt(Status::BadPayload, steps);
-    };
+    let tables = Tables::derive(input.seed);
     let actual_hash = payload_hash(input.seed, input.payload);
     let key = effective_key(input.base_a, input.base_b, actual_hash, input.expected_hash);
     let Some(entry) = input.entry_states.get(entry_index) else {
@@ -568,7 +566,9 @@ pub fn execute(input: VmInput<'_>, entry_index: usize, args: [u64; 6]) -> Run {
     };
     let [entry_a, entry_b] = *entry;
     let mut state = entry_a ^ entry_b;
-    let mut registers = [0_u64; VM_REGISTERS];
+    let fill_key = key ^ 0x9e37_79b9_7f4a_7c15;
+    let mut registers: [u64; VM_REGISTERS] =
+        core::array::from_fn(|index| fill_key.rotate_left(u32::try_from(index & 63).unwrap_or(0)));
     let [
         argument0,
         argument1,
@@ -585,7 +585,9 @@ pub fn execute(input: VmInput<'_>, entry_index: usize, args: [u64; 6]) -> Run {
     let _ = set_reg_value_raw(&mut registers, REG_R9, argument5);
     let _ = set_reg_value_raw(&mut registers, REG_RSP, VM_STACK_TOP);
     let _ = set_reg_value_raw(&mut registers, REG_RAX, 0);
-    let mut memory = [0_u8; VM_MEMORY_SIZE];
+    let fill_byte = u8::try_from(fill_key & 0xff).unwrap_or(0);
+    let mut memory: [u8; VM_MEMORY_SIZE] =
+        core::array::from_fn(|index| u8::try_from(index & 0xff).unwrap_or(0) ^ fill_byte);
 
     'dispatch: loop {
         let Some(count_value) =

@@ -17,11 +17,13 @@ use crate::error::{ProtectError, Result};
 /// Linux uses `/dev/urandom`. Other platforms fall back to `RandomState`, wall
 /// time, process id, and argument-derived mixing. The fallback is documented as
 /// non-cryptographic; production Linux builds always use the OS source.
-pub fn seed() -> Result<Seed> {
+pub fn seed() -> Seed {
     let mut seed = [0_u8; 32];
-    match File::open("/dev/urandom").and_then(|mut file| file.read_exact(&mut seed)) {
-        Ok(()) => return Ok(seed),
-        Err(_) => {}
+    if File::open("/dev/urandom")
+        .and_then(|mut file| file.read_exact(&mut seed))
+        .is_ok()
+    {
+        return seed;
     }
     let random_state = RandomState::new();
     let mut hasher = random_state.build_hasher();
@@ -50,13 +52,15 @@ pub fn seed() -> Result<Seed> {
             }
         }
     }
-    Ok(seed)
+    seed
 }
 
 /// Parses a 64-character hexadecimal seed.
 pub fn parse_seed(text: &str) -> Result<Seed> {
     if text.len() != 64 {
-        return Err(ProtectError::usage("seed must be exactly 64 hex characters"));
+        return Err(ProtectError::usage(
+            "seed must be exactly 64 hex characters",
+        ));
     }
     let mut seed = [0_u8; 32];
     let mut index = 0_usize;
@@ -107,7 +111,11 @@ pub fn build_id(seed: &Seed, payload_hash: u64, payload_len: usize) -> String {
     let second_word = payload_hash
         .rotate_left(31)
         .wrapping_add(u64::try_from(payload_len).unwrap_or(u64::MAX))
-        ^ u64::from_le_bytes(seed.get(8..16).and_then(|slice| <[u8; 8]>::try_from(slice).ok()).unwrap_or(second));
+        ^ u64::from_le_bytes(
+            seed.get(8..16)
+                .and_then(|slice| <[u8; 8]>::try_from(slice).ok())
+                .unwrap_or(second),
+        );
     for (index, byte) in second_word.to_le_bytes().iter().enumerate() {
         if let Some(slot) = second.get_mut(index) {
             *slot = *byte;
@@ -141,9 +149,7 @@ pub fn parse_hex_bytes(text: &str) -> Result<Vec<u8>> {
     for character in text.chars() {
         if character.is_ascii_hexdigit() {
             digits.push(character);
-        } else if character.is_whitespace() || character == '_' || character == ':' {
-            continue;
-        } else {
+        } else if !(character.is_whitespace() || character == '_' || character == ':') {
             return Err(ProtectError::usage("invalid hex byte pattern"));
         }
     }

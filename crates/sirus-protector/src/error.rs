@@ -19,6 +19,8 @@ pub enum ProtectError {
     Tool(String),
     /// Internal invariant violation.
     Internal(String),
+    /// Context wrapper around another error.
+    Context(String, Box<Self>),
 }
 
 impl fmt::Display for ProtectError {
@@ -30,6 +32,7 @@ impl fmt::Display for ProtectError {
             Self::Io(message) => write!(formatter, "I/O: {message}"),
             Self::Tool(message) => write!(formatter, "tool failure: {message}"),
             Self::Internal(message) => write!(formatter, "internal error: {message}"),
+            Self::Context(context, _) => formatter.write_str(context),
         }
     }
 }
@@ -48,7 +51,24 @@ impl From<sirus_core::error::CoreError> for ProtectError {
     }
 }
 
+impl std::error::Error for ProtectError {
+    #[inline]
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Context(_, source) => Some(source.as_ref()),
+            _ => None,
+        }
+    }
+}
+
 impl ProtectError {
+    /// Adds operation context to another error.
+    #[inline]
+    #[must_use]
+    pub fn context(context: impl fmt::Display, source: Self) -> Self {
+        Self::Context(format!("{context}"), Box::new(source))
+    }
+
     /// Builds a contextual I/O error.
     #[inline]
     #[must_use]

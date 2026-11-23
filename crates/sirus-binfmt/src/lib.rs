@@ -76,6 +76,8 @@ pub enum FormatError {
     JumpOutOfRange,
     /// The payload range lies outside the VM image.
     PayloadOutsideVm,
+    /// A target range lies outside an executable segment.
+    RangeOutsideExecutable,
     /// An alignment requirement was violated.
     BadAlignment,
     /// Section metadata is missing or inconsistent.
@@ -99,6 +101,7 @@ impl core::fmt::Display for FormatError {
             Self::Overlap => "new mapping overlaps an existing mapping",
             Self::JumpOutOfRange => "relative jump out of range",
             Self::PayloadOutsideVm => "payload lies outside the VM image",
+            Self::RangeOutsideExecutable => "range lies outside an executable segment",
             Self::BadAlignment => "misaligned region",
             Self::SectionTableInvalid => "invalid section table",
             Self::AlreadyProtected => "binary is already protected",

@@ -400,7 +400,7 @@ pub fn compile(
             size: u64::try_from(functions.len()).unwrap_or(u64::MAX),
         });
     }
-    let tables = Tables::derive(&seed).ok_or(CoreError::DerivationFailed)?;
+    let tables = Tables::derive(&seed);
     let mut state_rng = BuildRng::new(&seed, DOMAIN_STATE);
     let mut used_states = BoundedVec::<u64, MAX_BLOCKS>::new();
     let mut states = [[0_u64; MAX_BLOCKS]; MAX_FUNCTIONS];

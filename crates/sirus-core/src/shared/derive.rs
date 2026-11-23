@@ -1,16 +1,23 @@
 //! Deterministic derivation of per-build ISA tables from a 256-bit seed.
 //!
 //! The tables are never serialized into the runtime. Both the build-time
-//! encoder and the injected VM call this module with the same seed.
+//! encoder and the injected VM call this module with the same seed. Alias
+//! operand layouts are derived on demand, which keeps the runtime table small
+//! enough to initialize without libc bulk-memory helpers.
 
 use crate::shared::format::{
-    ALIASES_PER_SEMANTIC, INVALID_OPCODE, MAX_OPERANDS, SEMANTIC_COUNT, SEMANTIC_IDS, VM_REGISTERS,
-    format,
+    ALIASES_PER_SEMANTIC, MAX_OPERANDS, SEMANTIC_COUNT, SEMANTIC_IDS, VM_REGISTERS, format,
 };
 use crate::shared::sip::SipHasher24;
 
 /// 256-bit plan seed.
 pub type Seed = [u8; 32];
+
+/// Total number of opcode aliases.
+pub const ALIAS_COUNT: usize = SEMANTIC_COUNT * ALIASES_PER_SEMANTIC;
+
+/// Marker used for unassigned table entries.
+pub const INVALID_ENTRY: u8 = 0xff;
 
 /// Description of one opcode alias.
 #[non_exhaustive]
@@ -30,24 +37,16 @@ pub struct AliasSpec {
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Tables {
-    /// Aliases for every semantic operation.
-    pub aliases: [[AliasSpec; ALIASES_PER_SEMANTIC]; SEMANTIC_COUNT],
-    /// Opcode byte to semantic, or `INVALID_OPCODE`.
-    pub semantic_of_opcode: [u8; 256],
-    /// Opcode byte to alias index, or `INVALID_OPCODE`.
-    pub alias_of_opcode: [u8; 256],
-    /// Encoded register byte to logical register, or `INVALID_OPCODE`.
-    pub reg_decode: [[u8; 256]; 2],
-    /// Logical register to encoded register byte.
-    pub reg_encode: [[u8; VM_REGISTERS]; 2],
+    seed: Seed,
+    opcodes: [u8; 256],
+    semantic_of_opcode: [u8; 256],
+    alias_of_opcode: [u8; 256],
+    reg_decode: [[u8; 256]; 2],
+    reg_encode: [[u8; VM_REGISTERS]; 2],
     /// Whether manifest integers use big-endian byte order.
     pub manifest_big_endian: bool,
 }
 
-/// Small deterministic expander built from `SipHash`. It is not a general
-/// cryptographic random generator; build entropy comes from `ChaCha20` and the
-/// operating system. This expander only converts one secret seed into
-/// reproducible structural tables.
 #[derive(Clone, Debug)]
 struct Expander {
     k0: u64,
@@ -60,7 +59,7 @@ impl Expander {
     fn new(seed: &Seed) -> Self {
         Self {
             k0: load_u64(seed, 0),
-            k1: load_u64(seed, 8),
+            k1: load_u64(seed, 8).rotate_left(17),
             counter: 0,
         }
     }
@@ -73,18 +72,47 @@ impl Expander {
     }
 
     #[inline]
-    fn next_bool(&mut self) -> bool {
-        self.next_u64() & 1 == 1
+    fn below(&mut self, bound: usize) -> usize {
+        if bound == 0 {
+            return 0;
+        }
+        let modulus = u64::try_from(bound).unwrap_or(u64::MAX);
+        usize::try_from(self.next_u64() % modulus).unwrap_or(0)
+    }
+}
+
+/// Small deterministic stream for deriving one alias independently.
+#[derive(Clone, Debug)]
+struct AliasRng {
+    state: u64,
+}
+
+impl AliasRng {
+    #[inline]
+    fn new(seed: &Seed, flat_index: usize) -> Self {
+        let index = u64::try_from(flat_index).unwrap_or(u64::MAX);
+        let k0 = load_u64(seed, 16) ^ 0x616c_6961_735f_7274;
+        let k1 = load_u64(seed, 24).rotate_left(29);
+        let state = SipHasher24::hash_u64(k0, k1, index);
+        Self { state: state | 1 }
+    }
+
+    #[inline]
+    const fn next_u64(&mut self) -> u64 {
+        self.state = self.state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut value = self.state;
+        value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        value ^ (value >> 31)
     }
 
     #[inline]
     fn below(&mut self, bound: usize) -> usize {
-        let modulus = u64::try_from(bound).unwrap_or(1);
-        if modulus == 0 {
+        if bound == 0 {
             return 0;
         }
-        let value = self.next_u64() % modulus;
-        usize::try_from(value).unwrap_or(0)
+        let modulus = u64::try_from(bound).unwrap_or(u64::MAX);
+        usize::try_from(self.next_u64() % modulus).unwrap_or(0)
     }
 }
 
@@ -94,11 +122,6 @@ fn load_u64(bytes: &[u8], offset: usize) -> u64 {
         .get(offset..offset.wrapping_add(8))
         .and_then(|slice| <[u8; 8]>::try_from(slice).ok())
         .map_or(0, u64::from_le_bytes)
-}
-
-#[inline]
-fn low_u8(value: u64) -> u8 {
-    u8::try_from(value & 0xff).unwrap_or(0)
 }
 
 #[inline]
@@ -124,7 +147,7 @@ fn shuffle(bytes: &mut [u8; 256], rng: &mut Expander) {
     }
 }
 
-fn shuffle_order(order: &mut [u8; MAX_OPERANDS], count: usize, rng: &mut Expander) {
+fn shuffle_order(order: &mut [u8; MAX_OPERANDS], count: usize, rng: &mut AliasRng) {
     if count <= 1 {
         return;
     }
@@ -145,105 +168,123 @@ fn shuffle_order(order: &mut [u8; MAX_OPERANDS], count: usize, rng: &mut Expande
     }
 }
 
+fn derive_alias_spec(
+    seed: &Seed,
+    semantic: u8,
+    alias_index: usize,
+    opcodes: &[u8; 256],
+) -> Option<AliasSpec> {
+    let layout = format(semantic)?;
+    let semantic_index = usize::from(semantic);
+    let flat_index = semantic_index
+        .checked_mul(ALIASES_PER_SEMANTIC)?
+        .checked_add(alias_index)?;
+    let opcode = opcodes.get(flat_index).copied()?;
+    let mut rng = AliasRng::new(seed, flat_index);
+    let mut order = [0_u8, 1, 2, 3];
+    shuffle_order(&mut order, usize::from(layout.len), &mut rng);
+    let reg_map = u8::from(rng.next_u64() & 1 == 1);
+    let big_endian = rng.next_u64() & 1 == 1;
+    Some(AliasSpec {
+        opcode,
+        order,
+        reg_map,
+        big_endian,
+    })
+}
+
 impl Tables {
-    /// Derives every per-build table. Returns `None` if a compiled-in semantic
-    /// format is malformed, which would indicate source corruption.
+    /// Derives every per-build table.
     #[inline]
     #[must_use]
-    pub fn derive(seed: &Seed) -> Option<Self> {
-        let mut rng = Expander::new(seed);
-        let mut opcodes = [0_u8; 256];
-        let mut index = 0_usize;
-        while index < 256 {
-            if let Some(slot) = opcodes.get_mut(index) {
-                *slot = slot_u8(index);
-            }
-            index = index.saturating_add(1);
-        }
-        shuffle(&mut opcodes, &mut rng);
+    pub fn derive(seed: &Seed) -> Self {
+        let seed_byte = seed.first().copied().unwrap_or(0);
+        let mut opcodes: [u8; 256] =
+            core::array::from_fn(|index| u8::try_from(index).unwrap_or(0) ^ seed_byte);
+        let mut opcode_rng = Expander::new(seed);
+        shuffle(&mut opcodes, &mut opcode_rng);
 
-        let mut aliases = [[AliasSpec::default(); ALIASES_PER_SEMANTIC]; SEMANTIC_COUNT];
-        let mut semantic_of_opcode = [INVALID_OPCODE; 256];
-        let mut alias_of_opcode = [INVALID_OPCODE; 256];
-        let mut cursor = 0_usize;
-
+        let mut semantic_of_opcode: [u8; 256] =
+            core::array::from_fn(|index| 0xc0 | u8::try_from(index & 0x3f).unwrap_or(0));
+        let mut alias_of_opcode: [u8; 256] =
+            core::array::from_fn(|index| 0xc0 | u8::try_from(index & 0x3f).unwrap_or(0));
         for semantic in SEMANTIC_IDS {
-            let layout = format(semantic)?;
-            for alias_index in 0..ALIASES_PER_SEMANTIC {
-                let opcode = opcodes.get(cursor).copied().unwrap_or(INVALID_OPCODE);
-                cursor = cursor.saturating_add(1);
-                let mut order = [0_u8, 1, 2, 3];
-                shuffle_order(&mut order, usize::from(layout.len), &mut rng);
-                let spec = AliasSpec {
-                    opcode,
-                    order,
-                    reg_map: u8::from(rng.next_bool()),
-                    big_endian: rng.next_bool(),
-                };
-                if let Some(semantic_slot) = aliases.get_mut(usize::from(semantic)) {
-                    if let Some(alias_slot) = semantic_slot.get_mut(alias_index) {
-                        *alias_slot = spec;
+            let mut alias_index = 0_usize;
+            while alias_index < ALIASES_PER_SEMANTIC {
+                if let Some(spec) = derive_alias_spec(seed, semantic, alias_index, &opcodes) {
+                    if let Some(slot) = semantic_of_opcode.get_mut(usize::from(spec.opcode)) {
+                        *slot = semantic;
+                    }
+                    if let Some(slot) = alias_of_opcode.get_mut(usize::from(spec.opcode)) {
+                        *slot = slot_u8(alias_index);
                     }
                 }
-                if let Some(slot) = semantic_of_opcode.get_mut(usize::from(opcode)) {
-                    *slot = semantic;
-                }
-                if let Some(slot) = alias_of_opcode.get_mut(usize::from(opcode)) {
-                    *slot = slot_u8(alias_index);
-                }
+                alias_index = alias_index.saturating_add(1);
             }
         }
 
-        let mut reg_decode = [[INVALID_OPCODE; 256]; 2];
-        let mut reg_encode = [[0_u8; VM_REGISTERS]; 2];
-        let mut variant = 0_usize;
-        while variant < 2 {
-            let mut encodings = [0_u8; 256];
-            let mut init = 0_usize;
-            while init < 256 {
-                if let Some(slot) = encodings.get_mut(init) {
-                    *slot = slot_u8(init);
-                }
-                init = init.saturating_add(1);
+        let mut first_pool: [u8; 256] = core::array::from_fn(|index| {
+            u8::try_from(index).unwrap_or(0) ^ seed.get(1).copied().unwrap_or(0)
+        });
+        let mut second_pool: [u8; 256] = core::array::from_fn(|index| {
+            u8::try_from(index).unwrap_or(0) ^ seed.get(2).copied().unwrap_or(0)
+        });
+        let mut register_rng = Expander::new(&{
+            let mut register_seed = *seed;
+            if let Some(slot) = register_seed.get_mut(0) {
+                *slot ^= 0xa7;
             }
-            shuffle(&mut encodings, &mut rng);
-            let mut register = 0_usize;
-            while register < VM_REGISTERS {
-                let encoded = encodings.get(register).copied().unwrap_or(INVALID_OPCODE);
-                if let Some(encode_slot) = reg_encode.get_mut(variant) {
-                    if let Some(value) = encode_slot.get_mut(register) {
-                        *value = encoded;
-                    }
-                }
-                if let Some(decode_table) = reg_decode.get_mut(variant) {
-                    if let Some(value) = decode_table.get_mut(usize::from(encoded)) {
-                        *value = slot_u8(register);
-                    }
-                }
-                register = register.saturating_add(1);
-            }
-            variant = variant.saturating_add(1);
-        }
+            register_seed
+        });
+        shuffle(&mut first_pool, &mut register_rng);
+        shuffle(&mut second_pool, &mut register_rng);
 
-        Some(Self {
-            aliases,
+        let reg_encode: [[u8; VM_REGISTERS]; 2] = core::array::from_fn(|variant| {
+            let pool = if variant == 0 {
+                &first_pool
+            } else {
+                &second_pool
+            };
+            core::array::from_fn(|slot| pool.get(slot).copied().unwrap_or(INVALID_ENTRY))
+        });
+        let reg_decode: [[u8; 256]; 2] = core::array::from_fn(|variant| {
+            core::array::from_fn(|encoded| {
+                let mut slot = 0_usize;
+                while slot < VM_REGISTERS {
+                    let candidate = reg_encode
+                        .get(variant)
+                        .and_then(|table| table.get(slot))
+                        .copied()
+                        .unwrap_or(INVALID_ENTRY);
+                    if candidate == slot_u8(encoded) {
+                        return slot_u8(slot);
+                    }
+                    slot = slot.saturating_add(1);
+                }
+                0xc0 | u8::try_from(encoded & 0x3f).unwrap_or(0)
+            })
+        });
+
+        Self {
+            seed: *seed,
+            opcodes,
             semantic_of_opcode,
             alias_of_opcode,
             reg_decode,
             reg_encode,
-            manifest_big_endian: rng.next_bool(),
-        })
+            manifest_big_endian: opcode_rng.next_u64() & 1 == 1,
+        }
     }
 
     /// Returns one alias for a semantic, selected by the caller's random source.
     #[inline]
     #[must_use]
     pub fn alias_for(&self, semantic: u8, choice: usize) -> Option<AliasSpec> {
+        if usize::from(semantic) >= SEMANTIC_COUNT {
+            return None;
+        }
         let alias_index = choice % ALIASES_PER_SEMANTIC;
-        self.aliases
-            .get(usize::from(semantic))
-            .and_then(|aliases| aliases.get(alias_index))
-            .copied()
+        derive_alias_spec(&self.seed, semantic, alias_index, &self.opcodes)
     }
 
     /// Encodes a logical register for an alias map.
@@ -276,7 +317,7 @@ impl Tables {
         self.semantic_of_opcode
             .get(usize::from(opcode))
             .copied()
-            .filter(|value| *value != INVALID_OPCODE)
+            .filter(|value| usize::from(*value) < SEMANTIC_COUNT)
     }
 
     /// Returns the alias index for an encoded opcode.
@@ -286,21 +327,14 @@ impl Tables {
         self.alias_of_opcode
             .get(usize::from(opcode))
             .copied()
-            .filter(|value| *value != INVALID_OPCODE)
+            .filter(|value| usize::from(*value) < ALIASES_PER_SEMANTIC)
             .map(usize::from)
     }
 }
 
-/// Returns the low byte of a value without an unchecked cast.
-#[inline]
-#[must_use]
-pub fn low_byte(value: u64) -> u8 {
-    low_u8(value)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{Tables, low_byte};
+    use super::{Tables, derive_alias_spec};
     use crate::shared::format::{
         ALIASES_PER_SEMANTIC, SEMANTIC_COUNT, SEMANTIC_IDS, VM_REGISTERS, format,
     };
@@ -321,21 +355,20 @@ mod tests {
     fn derivation_is_deterministic() {
         let first = Tables::derive(&seed(7));
         let second = Tables::derive(&seed(7));
-        assert!(first.is_some());
         assert_eq!(first, second);
     }
 
     #[test]
     fn different_seeds_differ() {
-        let first = Tables::derive(&seed(1)).expect("seed 1");
-        let second = Tables::derive(&seed(2)).expect("seed 2");
-        assert_ne!(first.aliases, second.aliases);
-        assert_ne!(first.reg_encode, second.reg_encode);
+        let first = Tables::derive(&seed(1));
+        let second = Tables::derive(&seed(2));
+        assert_ne!(first.alias_for(0, 0), second.alias_for(0, 0));
+        assert_ne!(first.encode_register(0, 0), second.encode_register(0, 0));
     }
 
     #[test]
     fn every_semantic_has_four_unique_opcodes() {
-        let tables = Tables::derive(&seed(9)).expect("tables");
+        let tables = Tables::derive(&seed(9));
         let expected = SEMANTIC_COUNT * ALIASES_PER_SEMANTIC;
         let mut count = 0_usize;
         for semantic in SEMANTIC_IDS {
@@ -353,8 +386,8 @@ mod tests {
     }
 
     #[test]
-    fn opcodes_are_globally_unique() {
-        let tables = Tables::derive(&seed(11)).expect("tables");
+    fn every_opcode_is_globally_unique() {
+        let tables = Tables::derive(&seed(11));
         let mut seen = [false; 256];
         for semantic in SEMANTIC_IDS {
             for alias in 0..ALIASES_PER_SEMANTIC {
@@ -370,7 +403,7 @@ mod tests {
 
     #[test]
     fn register_maps_invert() {
-        let tables = Tables::derive(&seed(13)).expect("tables");
+        let tables = Tables::derive(&seed(13));
         for variant in 0_u8..2 {
             for logical in 0..u8::try_from(VM_REGISTERS).unwrap_or(0) {
                 let encoded = tables.encode_register(variant, logical).expect("encode");
@@ -381,7 +414,7 @@ mod tests {
 
     #[test]
     fn operand_orders_are_permutations_of_valid_roles() {
-        let tables = Tables::derive(&seed(17)).expect("tables");
+        let tables = Tables::derive(&seed(17));
         for semantic in SEMANTIC_IDS {
             let layout = format(semantic).expect("format");
             for alias in 0..ALIASES_PER_SEMANTIC {
@@ -401,8 +434,11 @@ mod tests {
     }
 
     #[test]
-    fn low_byte_never_casts() {
-        assert_eq!(low_byte(0x1234), 0x34);
-        assert_eq!(low_byte(u64::MAX), 0xff);
+    fn alias_derivation_is_stable_across_calls() {
+        let tables = Tables::derive(&seed(19));
+        let first = tables.alias_for(3, 2);
+        let second = tables.alias_for(3, 2);
+        assert_eq!(first, second);
+        assert_eq!(first, derive_alias_spec(&seed(19), 3, 2, &tables.opcodes));
     }
 }
