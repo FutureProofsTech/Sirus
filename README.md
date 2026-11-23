@@ -2,6 +2,8 @@
 
 **Zero-dependency polymorphic code virtualizer in Safe Rust.**
 
+**Release:** `1.0.0-safe` — see [`RELEASE.md`](RELEASE.md) and [`CHANGELOG.md`](CHANGELOG.md).
+
 Sirus takes a compiled Linux x86-64 ELF, lifts a selected function into an
 internal IR, flattens its control flow, expands sensitive arithmetic through
 bounded MBA, encodes it into a per-build randomized encrypted ISA, synthesizes a
@@ -27,7 +29,7 @@ known limits are in [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md).
 | Shared VM for multiple protected functions | working |
 | Safe Rust / no external crates | enforced |
 | Kani proofs, Miri, libFuzzer, differential/tamper/bypass tests | run locally |
-| 100% line coverage | **not reached; current measured total is 87.64%** |
+| 100% line coverage | **not reached; current measured: 87.64% tarpaulin / 89.54% llvm-cov** |
 
 ---
 

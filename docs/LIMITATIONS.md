@@ -114,7 +114,7 @@ of these controls.
 
 ## 6. Verification gaps
 
-- Measured line coverage with all targets: **87.64%**, not 100%. The proof script enforces an 85% regression floor; 100% remains a release target.
+- Measured line coverage with all targets: **87.64% tarpaulin / 89.54% llvm-cov**, not 100%. The proof script enforces an 85% regression floor; 100% remains a release target.
 - Kani proofs cover bounded primitives and memory bounds; the full decoder is too
   large for CBMC and is covered by tests/fuzzing instead.
 - Miri covers core and VM unit/execution suites; it is very slow.

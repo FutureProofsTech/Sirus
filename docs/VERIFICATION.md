@@ -186,7 +186,22 @@ sirus-protector/src/vmgen.rs   212/236
 sirus-vm/src/engine.rs        312/357
 ```
 
-The 100% target is **not met**. `scripts/prove.sh` enforces an 85% regression floor with `--fail-under 85`; 100% remains the release target. Uncovered lines are predominantly defensive error
+The 100% target is **not met**. `scripts/prove.sh` enforces an 85% regression floor with `--fail-under 85`; 100% remains the release target.
+
+Secondary independent measurement with LLVM source-based coverage:
+
+```sh
+cargo llvm-cov --workspace --all-targets --summary-only
+```
+
+```text
+TOTAL regions 84.93% (2542 missed of 16863)
+TOTAL functions 80.67% (126 missed of 652)
+TOTAL lines 89.54% (945 missed of 9035)
+```
+
+The two tools instrument differently; both show the same residual error/I/O
+branches. Neither reaches 100%. Uncovered lines are predominantly defensive error
 returns, malformed-binary branches, and CLI/pipeline I/O failures. The exact LCOV
 report is generated under `target/coverage-all/`.
 

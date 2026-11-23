@@ -197,7 +197,7 @@ Implemented exactly in the root `Cargo.toml`:
 | `cargo-audit` | installed | executed; 0 vulnerabilities |
 | `cargo-deny` | installed | executed; advisories/bans/licenses/sources pass |
 | `cargo-nextest` | installed | executed; 145/145 tests |
-| `cargo-tarpaulin` | installed | executed; 87.64% lines, 100% target not met |
+| `cargo-tarpaulin` | installed | executed; 87.64% tarpaulin lines / 89.54% llvm-cov lines, 100% target not met |
 | `cargo-fuzz` | installed | 101,274 runs, no crash |
 | Kani 0.68.0 | installed | 5 core + 2 VM harnesses verified |
 | Miri | nightly | core and VM unit/execution suites pass |
@@ -214,7 +214,7 @@ Implemented exactly in the root `Cargo.toml`:
 
 These remain open, not claimed:
 
-1. 100% coverage: measured 87.64% line coverage; uncovered defensive branches are
+1. 100% coverage: measured 87.64% tarpaulin / 89.54% llvm-cov line coverage; uncovered defensive branches are
    enumerated from LCOV.
 2. Full red-team external tooling: Ghidra/IDA/Binary Ninja, GAMBA/SiMBA, angr/KLEE,
    Creusot, AORAI, Ferrocene, dudect-style timing.

@@ -21,7 +21,7 @@
 | M6 multiple functions and data binding | complete, shared-VM e2e test |
 | M7 PE structural backend | complete structurally; Windows runtime open |
 | M8 adversarial suite | partial: in-tree, libFuzzer, Kani, Miri, differential, tamper, bypass, valgrind; external Ghidra/GAMBA/angr/Creusot/AORAI/Ferrocene/dudect not yet run |
-| M9 production release | **not complete**: coverage is 87.64% (not 100%), handler-layout mutation is partial, live memory-dump diagnostic finds transient constants in VM registers, and Windows runtime remains open |
+| M9 production release | **not complete**: coverage is 87.64% tarpaulin / 89.54% llvm-cov (not 100%), handler-layout mutation is partial, live memory-dump diagnostic finds transient constants in VM registers, and Windows runtime remains open |
 
 See `docs/TRACEABILITY.md` and `docs/VERIFICATION.md` for the exact matrix and
 measured evidence.
