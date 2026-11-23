@@ -94,7 +94,7 @@ of these controls.
 
 ## 5. Security residuals
 
-- Full `.sirus` segment differential equality is 28.6% between two seeds; handler
+- Full `.sirus` segment differential equality is 25.2% between two seeds; handler
   code skeleton is reused. Payload equality is 0.36%.
 - No formal proof that MBA expressions resist GAMBA/SiMBA/angr.
 - No live-process memory dump scan was automated; the design keeps plaintext
@@ -112,7 +112,7 @@ of these controls.
 
 ## 6. Verification gaps
 
-- Measured line coverage with all targets: **87.23%**, not 100%.
+- Measured line coverage with all targets: **87.63%**, not 100%. The proof script enforces an 85% regression floor; 100% remains a release target.
 - Kani proofs cover bounded primitives and memory bounds; the full decoder is too
   large for CBMC and is covered by tests/fuzzing instead.
 - Miri covers core and VM unit/execution suites; it is very slow.

@@ -196,8 +196,8 @@ Implemented exactly in the root `Cargo.toml`:
 | `cargo doc` | stable | executed with `-D warnings`, passing |
 | `cargo-audit` | installed | executed; 0 vulnerabilities |
 | `cargo-deny` | installed | executed; advisories/bans/licenses/sources pass |
-| `cargo-nextest` | installed | executed; 138/138 tests |
-| `cargo-tarpaulin` | installed | executed; 87.23% lines, 100% target not met |
+| `cargo-nextest` | installed | executed; 144/144 tests |
+| `cargo-tarpaulin` | installed | executed; 87.63% lines, 100% target not met |
 | `cargo-fuzz` | installed | 66,962 runs, no crash |
 | Kani 0.68.0 | installed | 5 core + 2 VM harnesses verified |
 | Miri | nightly | core and VM unit/execution suites pass |
@@ -214,12 +214,12 @@ Implemented exactly in the root `Cargo.toml`:
 
 These remain open, not claimed:
 
-1. 100% coverage: measured 87.23% line coverage; uncovered defensive branches are
+1. 100% coverage: measured 87.63% line coverage; uncovered defensive branches are
    enumerated from LCOV.
 2. Full red-team external tooling: Ghidra/IDA/Binary Ninja, GAMBA/SiMBA, angr/KLEE,
    Creusot, AORAI, Ferrocene, dudect-style timing.
 3. Live process memory-dump scanner.
-4. Full handler-layout mutation across builds (full `.sirus` equality 28.6%).
+4. Full handler-layout mutation across builds (full `.sirus` equality 25.2%).
 5. Windows PE runtime execution and Win64 ABI validation.
 
 All protector modules are now wired into the crate and included in the Clippy

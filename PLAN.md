@@ -8,6 +8,26 @@
 
 ---
 
+## Implementation status snapshot
+
+| Milestone | Status |
+|---|---|
+| M0 skeleton and standards | complete |
+| M1 crypto/format primitives | complete |
+| M2 decoder/lifter/flags | complete for the documented subset |
+| M3 IR/MBA/flattening/encoder | complete |
+| M4 reference VM runtime | complete, Kani/Miri/fuzzed |
+| M5 ELF injection and VM synthesis | complete, real PIE execution verified |
+| M6 multiple functions and data binding | complete, shared-VM e2e test |
+| M7 PE structural backend | complete structurally; Windows runtime open |
+| M8 adversarial suite | partial: in-tree, libFuzzer, Kani, Miri, differential, tamper, bypass, valgrind; external Ghidra/GAMBA/angr/Creusot/AORAI/Ferrocene/dudect not yet run |
+| M9 production release | **not complete**: coverage is 87.63% (not 100%), handler-layout mutation is partial, live memory-dump scan and Windows runtime remain open |
+
+See `docs/TRACEABILITY.md` and `docs/VERIFICATION.md` for the exact matrix and
+measured evidence.
+
+---
+
 ## 0. Document control
 
 This plan is the single source of truth for architecture, scope, safety policy, verification, and release gates. Any implementation choice that weakens a stated invariant must be recorded in `docs/DECISIONS.md` and must be rejected in review unless the plan is amended first.

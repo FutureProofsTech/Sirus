@@ -21,7 +21,7 @@ under the safe-Rust/no-unsafe constraint.
 | Asymmetric cost, not unbreakability | implemented as stated | `docs/THREAT_MODEL.md`, red-team report |
 | Defeat static decompilation of protected logic | partial | body scrubbed, flattened, encrypted; Ghidra not run |
 | Break automated symbolic execution | partial | large states/MBA/encryption; angr not run |
-| Invalidate prior work across builds | partial | payload 0.36% equal, ISA/state randomization; full segment 28.6% equal |
+| Invalidate prior work across builds | partial | payload 0.36% equal, ISA/state randomization; full segment 25.2% equal |
 | Two components in one workspace | implemented | core/vm/binfmt/protector crates |
 | Zero external libraries | implemented | `cargo tree`, `cargo deny` |
 
@@ -77,7 +77,7 @@ under the safe-Rust/no-unsafe constraint.
 | Rolling bytecode encryption | implemented | per-byte chained cipher |
 | No complete plaintext bytecode in RAM | implemented by design | byte-at-a-time locals; live scan open |
 | ISA layout mutation | partial | payload/aliases/maps/states; handler skeleton reused |
-| Handler layout mutation | partial | `.sirus` similar bytes 28.6% equal |
+| Handler layout mutation | partial | `.sirus` similar bytes 25.2% equal |
 | Build-specific static data | implemented | seed/payload/hash/entry shares |
 
 ### Stage 6 — VM synthesis and injection
@@ -195,7 +195,7 @@ See `docs/CODE_STANDARD_COMPLIANCE.md` and ADR-001.
 | 6 | No decrypted bytecode in memory | partial | no cache by design; live scan open |
 | 7 | Deep binding / bypass fails | implemented | tamper and forced-return tests |
 | 8 | Hypervisor/debug-register resistance | **not feasible safely** | documented |
-| 9 | Differential builds mutate everything | partial | payload 0.36% equal; full segment 28.6% |
+| 9 | Differential builds mutate everything | partial | payload 0.36% equal; full segment 25.2% |
 | 10 | VM fuzzing no panic/OOB/hang | implemented | in-tree + libFuzzer + Miri + Kani |
 
 ---

@@ -333,5 +333,9 @@ mod tests {
     #[test]
     fn register_file_is_large_enough() {
         assert_eq!(VM_REGISTERS, 64);
+        assert_eq!(format(255), None);
+        let custom = super::Format::new([ROLE_REG, ROLE_IMM, 0, 0], 2);
+        assert_eq!(custom.len, 2);
+        assert_eq!(custom.roles, [ROLE_REG, ROLE_IMM, 0, 0]);
     }
 }

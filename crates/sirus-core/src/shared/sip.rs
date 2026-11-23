@@ -177,6 +177,15 @@ mod tests {
     }
 
     #[test]
+    fn hash_u64_matches_streaming_and_keys() {
+        let direct = SipHasher24::hash_u64(3, 4, 0x0102_0304_0506_0708);
+        let mut hasher = SipHasher24::new(3, 4);
+        hasher.write_u64(0x0102_0304_0506_0708);
+        assert_eq!(direct, hasher.finish());
+        assert_eq!(hasher.keys(), (3, 4));
+    }
+
+    #[test]
     fn empty_message_is_deterministic() {
         assert_eq!(SipHasher24::hash(1, 2, &[]), SipHasher24::hash(1, 2, &[]));
         assert_ne!(SipHasher24::hash(1, 2, &[]), SipHasher24::hash(2, 1, &[]));

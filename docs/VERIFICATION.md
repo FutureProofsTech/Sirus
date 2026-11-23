@@ -39,7 +39,7 @@ Result: **exit 0**. The script runs:
 `cargo nextest run --workspace`:
 
 ```text
-Summary [0.590s] 138 tests run: 138 passed, 0 skipped
+Summary [0.590s] 144 tests run: 144 passed, 0 skipped
 ```
 
 Breakdown:
@@ -48,14 +48,15 @@ Breakdown:
 |---|---:|
 | `sirus-binfmt` unit tests | 14 |
 | `sirus-binfmt` real-loader test | 1 |
-| `sirus-core` unit tests | 70 |
+| `sirus-core` unit tests | 73 |
 | `sirus-protector` unit tests | 19 |
 | `sirus-protector` end-to-end | 1 |
+| `sirus-protector` pipeline errors | 1 |
 | `sirus-protector` marker end-to-end | 1 |
 | `sirus-vm` unit tests | 8 |
 | `sirus-vm` execution | 15 |
 | `sirus-vm` deterministic fuzz | 2 |
-| `sirus-vm` malformed payloads | 7 |
+| `sirus-vm` malformed payloads | 9 |
 
 The end-to-end tests compile a real victim, protect it, compare outputs, check
 body scrubbing, compare two seeds, tamper payload, forced-return bypass, and run
@@ -140,13 +141,13 @@ cargo tarpaulin --workspace --all-targets --engine Llvm \
   --out Xml --out Lcov --output-dir target/coverage-all --timeout 120
 ```
 
-Result: **87.23% line coverage (4766 / 5464 lines)**.
+Result: **87.63% line coverage (4812 / 5491 lines)**.
 
 Per file at that run:
 
 ```text
 sirus-binfmt/src/elf.rs       666/781
-sirus-binfmt/src/lib.rs        52/66
+sirus-binfmt/src/lib.rs        56/66
 sirus-binfmt/src/pe.rs        286/317
 sirus-core/src/decode.rs      716/777
 sirus-core/src/encode.rs      360/380
@@ -156,20 +157,20 @@ sirus-core/src/lifter.rs      531/671
 sirus-core/src/mba.rs         225/233
 sirus-core/src/program.rs     423/450
 sirus-core/src/shared/chacha.rs 111/111
-sirus-core/src/shared/cipher.rs  60/63
+sirus-core/src/shared/cipher.rs  62/63
 sirus-core/src/shared/derive.rs 151/154
 sirus-core/src/shared/format.rs  19/24
-sirus-core/src/shared/sip.rs     67/68
+sirus-core/src/shared/sip.rs     68/68
 sirus-protector/src/cli.rs    132/141
 sirus-protector/src/entropy.rs 84/114
 sirus-protector/src/error.rs   21/27
-sirus-protector/src/main.rs    19/25
-sirus-protector/src/pipeline.rs 178/255
-sirus-protector/src/vmgen.rs   185/209
-sirus-vm/src/engine.rs        311/357
+sirus-protector/src/main.rs    25/25
+sirus-protector/src/pipeline.rs 183/255
+sirus-protector/src/vmgen.rs   212/236
+sirus-vm/src/engine.rs        312/357
 ```
 
-The 100% target is **not met**. Uncovered lines are predominantly defensive error
+The 100% target is **not met**. `scripts/prove.sh` enforces an 85% regression floor with `--fail-under 85`; 100% remains the release target. Uncovered lines are predominantly defensive error
 returns, malformed-binary branches, and CLI/pipeline I/O failures. The exact LCOV
 report is generated under `target/coverage-all/`.
 
@@ -196,7 +197,7 @@ PASS valgrind
 
 Additional measured facts:
 
-- full `.sirus` segment equal-byte ratio between the two seeds: **0.2856**;
+- full `.sirus` segment equal-byte ratio between the two seeds: **0.2517**;
 - protected binary preserves native output for branch/loop/overflow cases;
 - original function bodies are gone after the jump;
 - payload tamper yields deterministic wrong output without crash/hang;
@@ -238,7 +239,7 @@ cargo asm -p sirus-core --lib 1
 
 | Gap | Status |
 |---|---|
-| 100% line/branch coverage | open; measured 87.23% lines |
+| 100% line/branch coverage | open; measured 87.63% lines |
 | Ghidra / IDA / Binary Ninja headless validation | tools not installed |
 | GAMBA / SiMBA / MBA-Blast | tools not installed |
 | angr / KLEE / Triton symbolic run | not installed/run |
@@ -247,7 +248,7 @@ cargo asm -p sirus-core --lib 1
 | Ferrocene certified compiler | not installed |
 | dudect-style timing study | not implemented |
 | Windows PE runtime execution | not supported |
-| handler-layout full mutation | partial; `.sirus` equality 28.6% |
+| handler-layout full mutation | partial; `.sirus` equality 25.2% |
 | native self-code checksum / debug detection / LFENCE | impossible under safe-Rust-only |
 
 These are not silently waived. They are release blockers for any claim of full

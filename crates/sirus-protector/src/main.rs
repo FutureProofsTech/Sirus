@@ -1,6 +1,26 @@
 //! Sirus protector command line.
 
 #![forbid(unsafe_code)]
+#![deny(
+    clippy::all,
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::cargo,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::todo,
+    clippy::unimplemented,
+    clippy::unreachable,
+    clippy::as_conversions,
+    clippy::cast_lossless,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::float_arithmetic,
+    clippy::missing_inline_in_public_items,
+    clippy::exhaustive_structs
+)]
 #![cfg_attr(
     test,
     allow(

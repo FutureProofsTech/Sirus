@@ -646,6 +646,23 @@ mod tests {
     }
 
     #[test]
+    fn rejects_invalid_register_operand() {
+        let tables = Tables::derive(&seed());
+        let mut rng = BuildRng::new(&seed(), 11);
+        let states = [1_u64];
+        let body = encode_block(
+            &[IrOp::Mov { dst: 255, src: 0 }],
+            Terminator::Return { value: 0 },
+            &states,
+            &tables,
+            &mut rng,
+            0,
+            0,
+        );
+        assert!(body.is_err());
+    }
+
+    #[test]
     fn rejects_invalid_target_state() {
         let tables = Tables::derive(&seed());
         let mut rng = BuildRng::new(&seed(), 3);

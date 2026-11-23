@@ -147,7 +147,8 @@ elf_a = Elf(protected_a)
 elf_native = Elf(native)
 sirus = elf_a.section('.sirus')
 payload_a = elf_a.section_bytes('.sirus.payload')
-payload_b = Elf(protected_b).section_bytes('.sirus.payload')
+elf_b = Elf(protected_b)
+payload_b = elf_b.section_bytes('.sirus.payload')
 assert sirus is not None and payload_a, 'missing Sirus sections'
 assert elf_a.section('.sirus.payload') is not None
 assert len(payload_a) > 1024
@@ -192,6 +193,12 @@ equal = sum(1 for a, b in zip(payload_a[:common], payload_b[:common]) if a == b)
 ratio = equal / common if common else 1.0
 assert ratio < 0.02, f'differential payloads too similar: {ratio:.4f}'
 print(f'PASS differential payload: equal-byte ratio={ratio:.4f} sizes={len(payload_a)}/{len(payload_b)}')
+segment_a = elf_a.section_bytes('.sirus')
+segment_b = elf_b.section_bytes('.sirus')
+segment_common = min(len(segment_a), len(segment_b))
+segment_ratio = sum(1 for a, b in zip(segment_a[:segment_common], segment_b[:segment_common]) if a == b) / segment_common
+assert segment_ratio < 0.35, f'full VM segment too similar: {segment_ratio:.4f}'
+print(f'PASS differential VM segment: equal-byte ratio={segment_ratio:.4f} sizes={len(segment_a)}/{len(segment_b)}')
 
 # Forced-return bypass and payload tamper artifacts.
 payload_section = elf_a.section('.sirus.payload')

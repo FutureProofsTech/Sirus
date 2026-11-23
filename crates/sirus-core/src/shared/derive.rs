@@ -434,6 +434,39 @@ mod tests {
     }
 
     #[test]
+    fn invalid_lookups_return_none() {
+        let tables = Tables::derive(&seed(21));
+        assert_eq!(tables.alias_for(u8::MAX, 0), None);
+        assert_eq!(tables.encode_register(0, u8::MAX), None);
+        let mut invalid_register = false;
+        let mut encoded = 0_u16;
+        while encoded <= 255 {
+            if tables
+                .decode_register(0, u8::try_from(encoded).unwrap_or(0))
+                .is_none()
+            {
+                invalid_register = true;
+                break;
+            }
+            encoded += 1;
+        }
+        assert!(invalid_register);
+        let mut invalid_opcode = false;
+        let mut opcode = 0_u16;
+        while opcode <= 255 {
+            if tables
+                .semantic_for_opcode(u8::try_from(opcode).unwrap_or(0))
+                .is_none()
+            {
+                invalid_opcode = true;
+                break;
+            }
+            opcode += 1;
+        }
+        assert!(invalid_opcode);
+    }
+
+    #[test]
     fn alias_derivation_is_stable_across_calls() {
         let tables = Tables::derive(&seed(19));
         let first = tables.alias_for(3, 2);

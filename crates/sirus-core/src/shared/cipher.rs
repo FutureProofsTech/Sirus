@@ -193,7 +193,8 @@ pub const fn default_fuel() -> u64 {
 mod tests {
     use super::{
         BodyCipher, MANIFEST_ENTRY_BYTES, MAX_PAYLOAD_BLOCKS, base_key, decode_manifest_u64,
-        effective_key, encode_manifest_u64, manifest_byte, manifest_size, payload_hash,
+        default_fuel, effective_key, encode_manifest_u64, manifest_byte, manifest_size,
+        payload_hash,
     };
 
     fn seed(value: u8) -> [u8; 32] {
@@ -276,5 +277,6 @@ mod tests {
         assert_eq!(effective_key(base, 0, actual, expected), base);
         assert_ne!(effective_key(base, 0, actual ^ 1, expected), base);
         assert_ne!(payload_hash(&seed, b"other"), actual);
+        assert_eq!(default_fuel(), super::DEFAULT_FUEL);
     }
 }

@@ -160,11 +160,11 @@ MBA shapes, decoys, payload size, and code/data offsets.
 
 ```text
 differential .sirus.payload equal-byte ratio = 0.0036
-differential .sirus segment equal-byte ratio = 0.2856
+differential .sirus segment equal-byte ratio = 0.2517
 payload sizes = 16555 / 15344 bytes
 ```
 
-**Residual:** the interpreter skeleton is reused; 28.6% of the full VM segment
+**Residual:** the interpreter skeleton is reused; 25.2% of the full VM segment
 matches byte-for-byte at equal offsets. Full handler-layout mutation is not
 complete. BinDiff has not been run.
 
@@ -200,7 +200,7 @@ masked shifts, no division, checked memory, deterministic fuel, no panic path.
 | 6 | memory dump | entropy/string pass; live dump scan open |
 | 7 | patch/forced return | pass |
 | 8 | hypervisor | not capable; documented |
-| 9 | differential | payload near-zero; full segment 28.6% residual |
+| 9 | differential | payload near-zero; full segment 25.2% residual |
 | 10 | fuzzing | pass across in-tree, libFuzzer, Kani, Miri |
 
 No gate in this report is marked “passed” unless its local command was executed.

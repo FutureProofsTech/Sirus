@@ -24,7 +24,7 @@ fi
 if [[ "${SIRUS_COVERAGE:-0}" == "1" ]]; then
     echo "== coverage =="
     cargo tarpaulin --workspace --all-targets --engine Llvm --out Xml --out Lcov \
-        --output-dir target/coverage-all --timeout 120
+        --output-dir target/coverage-all --timeout 120 --fail-under 85
 fi
 
 echo "== proof gates passed =="

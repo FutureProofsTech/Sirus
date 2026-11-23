@@ -6,8 +6,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::entropy::junk;
 use sirus_binfmt::elf::{Elf64, PF_R, PF_W, PF_X, PT_LOAD, STT_FUNC, STT_OBJECT, SymbolEntry};
 use sirus_core::program::CompiledProgram;
+use sirus_core::shared::derive::Seed;
 
 use crate::entropy::build_id;
 use crate::error::{ProtectError, Result};
@@ -67,6 +69,51 @@ fn append_u64_pair_array(source: &mut String, name: &str, pairs: &[[u64; 2]]) ->
     Ok(())
 }
 
+fn append_padding_module(source: &mut String, id: &str, seed: &Seed) -> Result<()> {
+    let material = junk(seed, 0x7061_6464_696e_6700, 256);
+    let count = 8_usize.saturating_add(usize::from(material.first().copied().unwrap_or(0) & 7));
+    emit!(source, "#[allow(dead_code)]\nmod padding {{\n");
+    let mut index = 0_usize;
+    while index < count {
+        let base = index.saturating_mul(9);
+        let first = read_u64(&material, base);
+        let second = read_u64(&material, base.saturating_add(8));
+        let third = read_u64(&material, base.saturating_add(16));
+        let rounds = 4_u64.saturating_add(u64::from(
+            material.get(base.saturating_add(24)).copied().unwrap_or(0) & 7,
+        ));
+        let rotation = u32::from(material.get(base.saturating_add(25)).copied().unwrap_or(0) & 63);
+        let function = format!("pad_{id}_{index}");
+        let keep = format!("KEEP_PAD_{id}_{index}");
+        emit!(
+            source,
+            "#[inline(never)]\npub extern \"C\" fn {function}(x: u64) -> u64 {{\n\
+             \x20   let mut value = x.wrapping_add(0x{first:016x});\n\
+             \x20   let mut round = 0_u64;\n\
+             \x20   while round < {rounds}_u64 {{\n\
+             \x20       value = value.wrapping_mul(0x{second:016x}).rotate_left({rotation});\n\
+             \x20       value ^= 0x{third:016x};\n\
+             \x20       round = round.wrapping_add(1);\n\
+             \x20   }}\n\
+             \x20   value\n\
+             }}\n\
+             #[used]\n\
+             static {keep}: extern \"C\" fn(u64) -> u64 = {function};\n\n"
+        );
+        index = index.saturating_add(1);
+    }
+    emit!(source, "}}\n\n");
+    Ok(())
+}
+
+#[inline]
+fn read_u64(bytes: &[u8], offset: usize) -> u64 {
+    bytes
+        .get(offset..offset.saturating_add(8))
+        .and_then(|slice| <[u8; 8]>::try_from(slice).ok())
+        .map_or(0, u64::from_le_bytes)
+}
+
 fn generate_source(program: &CompiledProgram, id: &str, vm_base: u64) -> Result<String> {
     let payload_name = format!("SIRUS_PAYLOAD_{id}");
     let seed_name = format!("SIRUS_SEED_{id}");
@@ -95,7 +142,9 @@ fn generate_source(program: &CompiledProgram, id: &str, vm_base: u64) -> Result<
     emit!(source, "pub mod format {{\n{FORMAT_SOURCE}\n}}\n");
     emit!(source, "pub mod derive {{\n{DERIVE_SOURCE}\n}}\n");
     emit!(source, "pub mod cipher {{\n{CIPHER_SOURCE}\n}}\n");
-    emit!(source, "}}\n\nmod engine {{\n{ENGINE_SOURCE}\n}}\n\n");
+    emit!(source, "}}\n\n");
+    append_padding_module(&mut source, id, program.seed())?;
+    emit!(source, "mod engine {{\n{ENGINE_SOURCE}\n}}\n\n");
 
     append_u8_array(&mut source, &payload_name, program.payload())?;
     append_u8_array(&mut source, &seed_name, program.seed())?;

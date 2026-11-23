@@ -250,3 +250,38 @@ fn fuel_and_entry_index_are_bounded() {
     );
     assert_eq!(result.status, Status::BadPayload);
 }
+
+fn count_only(count: u64) -> (Vec<u8>, u64, u64) {
+    let tables = Tables::derive(&SEED);
+    let key = base_key(&SEED);
+    let encoded = encode_manifest_u64(count, tables.manifest_big_endian);
+    let mut payload = Vec::new();
+    for (index, byte) in encoded.iter().enumerate() {
+        payload.push(manifest_byte(key, index, *byte));
+    }
+    let expected_hash = payload_hash(&SEED, &payload);
+    (payload, key, expected_hash)
+}
+
+#[test]
+fn manifest_count_limits_fail_closed() {
+    for count in [0_u64, 257, u64::MAX] {
+        let (payload, base, expected_hash) = count_only(count);
+        let states = [[STATE, 0]];
+        let result = execute(
+            VmInput::new(&payload, &SEED, expected_hash, base, 0, &states, 1000),
+            0,
+            [0; 6],
+        );
+        assert_eq!(result.status, Status::BadPayload, "count={count}");
+    }
+}
+
+#[test]
+fn body_without_terminator_fails_closed() {
+    let tables = Tables::derive(&SEED);
+    let body = encode_instruction(&tables, SEM_MOV_RI, [u64::from(REG_RAX), 7, 0, 0]);
+    let fixture = make_fixture(&body, None, None);
+    let (_, status, _) = run(&fixture, 1000);
+    assert_eq!(status, Status::BadPayload);
+}

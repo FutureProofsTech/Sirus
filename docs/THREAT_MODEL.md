@@ -70,7 +70,7 @@ Sirus raises cost; it does not prove impossibility.
 | Symbolic execution | large random states, encrypted manifest, MBA, finite fuel | path explosion is probabilistic, not proven |
 | Memory dumping | no decrypted body cache; instructions live in locals only | live debugger can still inspect instruction semantics |
 | Forced return | host consumes derived data, not only a boolean | caller-side patch remains possible |
-| Differential analysis | new seed changes every payload field and much code/data layout | full `.sirus` segment equality measured at 28.6% |
+| Differential analysis | new seed changes every payload field and much code/data layout | full `.sirus` segment equality measured at 25.2% |
 | VM fuzzing | checks and fuel prevent panic/OOB/hang | semantic garbage may still produce a value |
 
 ---
@@ -98,7 +98,7 @@ protected data in ways that fail downstream if incorrect.
    not claimed.
 3. **No LFENCE/Spectre mitigation.** Safe Rust cannot emit the required barrier.
 4. **Handler layout reuse.** Payload/ISA/state geometry mutates per build, but the
-   interpreter's semantic skeleton is shared. Full `.sirus` equality is 28.6% in
+   interpreter's semantic skeleton is shared. Full `.sirus` equality is 25.2% in
    the current differential sample.
 5. **Coverage and tool gaps.** Coverage is 87.23%, not the 100% target. Ghidra,
    GAMBA/SiMBA, angr, Creusot, AORAI, and Ferrocene have not been run.
