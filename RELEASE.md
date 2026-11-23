@@ -1,9 +1,9 @@
-# Sirus 1.0.0-safe — Release Notes
+# Sirus 1.1.0-safe — Release Notes
 
-**Release type:** safe-tier production prototype  
-**Tag:** `v1.0.0-safe`  
-**Platform:** Linux x86-64 end-to-end; PE32+ structural backend  
-**Dependency policy:** zero external crates in shipped code  
+**Release type:** safe-tier production prototype
+**Tag:** `v1.1.0-safe`
+**Platform:** Linux x86-64 end-to-end; PE32+ structural backend
+**Dependency policy:** zero external crates in shipped code
 **Unsafe policy:** `forbid(unsafe_code)` in every shipped crate and generated VM
 
 ---
@@ -35,7 +35,8 @@
 - x86-64 subset decoder and lifter with eager flags.
 - Bounded fixed-capacity IR and expression arena.
 - CFG flattening with random 64-bit state ids.
-- MBA expansion and constant blinding.
+- Linear MBA expansion, a variable-shift non-linear layer, data-dependent
+  modular multiplication with a Newton modular inverse, and constant blinding.
 - Opaque guard/decoy synthesis.
 - Randomized ISA: four aliases per semantic, per-alias operand order, two
   register maps, per-alias endianness.
@@ -50,7 +51,8 @@
 
 ### Verification
 
-- 145 tests (unit + integration + end-to-end).
+- 146 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
+  statistical-timing measurement hooks.
 - Real victim compilation and execution differential matrix.
 - Differential two-seed builds.
 - Tamper and forced-return bypass tests.
@@ -60,6 +62,10 @@
 - Miri suite.
 - Valgrind, gdb/gcore, readelf/objdump, cargo-show-asm.
 - cargo-audit, cargo-deny, cargo-nextest, cargo-tarpaulin, cargo-llvm-cov.
+- Ghidra 12.2, radare2 5.9.8, GAMBA, SiMBA, MBA-Blast.
+- angr 10.0.7 and KLEE 3.3 bounded symbolic probes.
+- Creusot/Why3 boundary proofs.
+- Official dudect-bencher timing measurement.
 
 ---
 
@@ -69,7 +75,7 @@
 ./scripts/verify.sh
 ```
 
-Passes formatting, Clippy (`-D warnings`, all targets), 145 tests, rustdoc,
+Passes formatting, Clippy (`-D warnings`, all targets), 146 tests, rustdoc,
 audit, deny, Kani, red-team, and memory-dump diagnostic.
 
 ```sh
@@ -83,13 +89,13 @@ Runs Kani, Miri, and libFuzzer. Full Miri execution is slow; set
 Recorded evidence:
 
 - Kani: 5 core + 2 VM harnesses.
-- Miri: 8 VM lib + 15 VM execution + 74 core tests.
-- libFuzzer: 101,274 executions, no crash.
-- Tarpaulin: 87.64% lines.
-- llvm-cov: 89.54% lines, 84.93% regions.
-- Payload differential: 0.36% equal bytes.
-- Full VM segment differential: 25.2% equal bytes.
-- Payload entropy: 7.990 Shannon / 7.589 min-entropy bits/byte.
+- Miri: 8 VM lib + 15 VM execution + 75 core tests.
+- libFuzzer: 164,729 cumulative executions, no crash.
+- Tarpaulin: 88.51% lines (4921/5560).
+- llvm-cov: 88.53% lines, 83.97% regions.
+- Payload differential: 0.38% equal bytes.
+- Full VM segment differential: 10.9% equal bytes.
+- Payload entropy: 7.995 Shannon / 7.691 min-entropy bits/byte.
 - No obvious strings in `.sirus`.
 - Original bodies absent from protected file and live memory.
 - Tamper/forced-return alter results; valgrind clean.
@@ -125,14 +131,21 @@ constant used repeatedly. This is documented as a residual.
 
 ### External security tools
 
-Ghidra/IDA/Binary Ninja headless decompilation, GAMBA/SiMBA, angr/KLEE, Creusot,
-AORAI, Ferrocene, and dudect-style timing analysis were not executed. Their
-absence is an evidence gap, not a pass.
+Ghidra 12.2 and radare2 5.9.8 decompiler smoke tests were executed: patched host
+functions reduce to jump stubs / `halt_baddata`, and `.sirus` yields only VM
+machinery. GAMBA, SiMBA, and MBA-Blast ran against the exact rewrite corpus;
+GAMBA timed out on modular-inverse forms, while SiMBA still reduced them. angr
+and KLEE both hit bounded symbolic timeouts with no memory errors. Creusot proved
+three boundary contracts. Official dudect-bencher measured the cipher below the
+leak threshold and the VM branch far above it. IDA Pro/Hex-Rays and Binary Ninja
+require commercial licenses. Ferrocene requires customer authentication. AORAI is
+a C-only Frama-C plugin and is not applicable to Rust. Triton had no compatible
+prebuilt binding.
 
 ### Coverage
 
-The supplied standard requests 100%. This release measures 87.64% (tarpaulin) /
-89.54% (llvm-cov) lines. Defensive/error branches remain uncovered. The proof
+The supplied standard requests 100%. This release remains below that target at
+**88.51% tarpaulin lines / 88.53% llvm-cov lines**. Defensive/error branches remain uncovered. The proof
 script enforces an 85% regression floor; 100% is not claimed.
 
 ---
@@ -165,6 +178,8 @@ scripts/prove.sh              proof/fuzz gate
 scripts/red-team.sh           adversarial harness
 scripts/memory-dump.sh        live memory diagnostic
 scripts/install-tools.sh      tool bootstrap
+verification/creusot          Creusot/Why3 boundary proofs
+verification/dudect           official dudect-bencher harness
 docs/                          architecture, format, threat, proof, traceability
 ```
 
@@ -184,12 +199,13 @@ docs/                          architecture, format, threat, proof, traceability
 | Miri | pass |
 | libFuzzer | pass |
 | fmt/clippy/doc/audit/deny | pass |
-| 100% coverage | **fail — 87.64% tarpaulin / 89.54% llvm-cov** |
-| External decompiler/MBA/symbolic/formal tools | **open** |
+| 100% coverage | **fail — exact numbers in `docs/VERIFICATION.md`** |
+| External decompiler/MBA/symbolic/formal tools | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect executed; IDA/BN/Ferrocene/Triton unavailable; AORAI not applicable |
 | Windows runtime | **not supported** |
 | Anti-debug/self-code/timing/LFENCE | **not possible under safe-Rust constraint** |
 | Live memory constant secrecy | **residual** |
-| Full handler-layout mutation | **partial (25.2% segment equality)** |
+| VM constant-time execution | **fail — dudect VM branch max \|t\| = 358.73** |
+| Full handler-layout mutation | **partial (10.9% segment equality)** |
 
 This is the final safe-tier product. The items marked fail/open are release
 exceptions, not hidden passes.

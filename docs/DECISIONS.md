@@ -128,3 +128,52 @@ signal. Shipped code keeps every Level 3 ban.
 
 **Gate:** Clippy `--all-targets -D warnings` must still pass; production builds
 exclude the exemption.
+
+---
+
+## ADR-011 — Non-linear MBA with a modular inverse
+
+**Decision:** Add one non-linear wrapper per function: a variable-shift bit
+recombination and multiplication by a data-dependent odd number and its
+six-step Newton modular inverse.
+
+**Reason:** The linear-only identities were fully reduced by GAMBA and SiMBA.
+The wrapper is exact over 64-bit wrapping arithmetic, adds modular multiplication
+and variable shifts, and makes the general simplifier time out. It is applied
+once per function to keep block bodies and fuel bounded.
+
+**Trade-off:** SiMBA still reduces the inverse form, and GAMBA rejects variable
+shifts at parse time rather than proving equivalence. These are measured cost
+asymmetries, not a proof of irreducibility.
+
+---
+
+## ADR-012 — External proofs are models, not whole-product proofs
+
+**Decision:** Keep `creusot-std`, `dudect-bencher`, angr, KLEE, and MBA tooling
+outside the shipped workspace. Creusot proves boundary models; KLEE compiles the
+generated VM with an LLVM-18-era rustc and removes `const` for compatibility.
+
+**Reason:** The shipped crates must stay zero-dependency and `no_std`. The
+external tools cannot prove the entire Rust product in one run. Reporting each
+result with its exact scope is more honest than presenting a model proof as a
+whole-product proof.
+
+**Gate:** `scripts/verify.sh` remains dependency-free; external runs are opt-in
+through `scripts/prove.sh` environment flags and their outputs are recorded in
+`docs/VERIFICATION.md`.
+
+---
+
+## ADR-013 — Accept the measured VM timing leak
+
+**Decision:** Do not claim constant-time VM execution. Keep the cipher path
+dudect-clean and document the data-dependent VM branch as a measured leak.
+
+**Reason:** A general-purpose virtualizer must branch on secret-dependent control
+flow and keep virtual registers in memory. Safe Rust cannot add RDTSC, debug
+register, or speculative barriers, and a constant-time interpreter would require
+executing both sides of every branch and a fully oblivious memory model.
+
+**Residual:** Official dudect-bencher measured the VM branch at max |t| = 358.73,
+far above the conventional threshold of 5.

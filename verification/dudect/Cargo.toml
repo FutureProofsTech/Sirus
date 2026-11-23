@@ -1,0 +1,12 @@
+[package]
+name = "sirus-dudect"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+dudect-bencher = "0.7.0"
+sirus-core = { path = "../../crates/sirus-core" }
+sirus-vm = { path = "../../crates/sirus-vm" }
+
+[workspace]

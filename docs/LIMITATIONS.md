@@ -94,9 +94,14 @@ of these controls.
 
 ## 5. Security residuals
 
-- Full `.sirus` segment differential equality is 25.2% between two seeds; handler
-  code skeleton is reused. Payload equality is 0.36%.
-- No formal proof that MBA expressions resist GAMBA/SiMBA/angr.
+- Full `.sirus` segment differential equality is 10.9% between two seeds; handler
+  code skeleton is reused. Payload equality is 0.38%.
+- The linear MBA forms are reduced by GAMBA/SiMBA. On the non-linear
+  modular-inverse corpus, GAMBA times out at 20 s and the variable-shift form
+  parser-fails; SiMBA still reduces the inverse form. This is measured cost
+  asymmetry, not a proof of MBA irreducibility.
+- The VM is not constant-time. Official dudect-bencher measured the cipher path at
+  max |t| = 4.42 and the data-dependent VM branch at max |t| = 358.73.
 - No whole decrypted bytecode is cached, and the static injected segment has no
   obvious strings. However, the live-memory diagnostic shows that a sensitive
   constant used repeatedly can be observed transiently in VM register state.
@@ -114,12 +119,23 @@ of these controls.
 
 ## 6. Verification gaps
 
-- Measured line coverage with all targets: **87.64% tarpaulin / 89.54% llvm-cov**, not 100%. The proof script enforces an 85% regression floor; 100% remains a release target.
+- Measured line coverage with all targets is reported in
+  `docs/VERIFICATION.md`; the 100% target is not met. The proof script enforces
+  an 85% regression floor.
 - Kani proofs cover bounded primitives and memory bounds; the full decoder is too
   large for CBMC and is covered by tests/fuzzing instead.
 - Miri covers core and VM unit/execution suites; it is very slow.
-- Ghidra/IDA/Binary Ninja headless analysis, GAMBA/SiMBA, angr/KLEE, Creusot,
-  AORAI, Ferrocene, and dudect-style timing analysis have not been run.
+- IDA Pro/Hex-Rays and Binary Ninja are commercial/licensed and were not run.
+- Ghidra 12.2 and radare2 5.9.8 static decompiler smoke tests were run; scoped
+  protected functions show only jump stubs / VM machinery.
+- angr 10.0.7 timed out after 120 s on a symbolic preimage; KLEE 3.3 timed out
+  after 60 s with no completed path and no memory errors. These are bounded
+  searches, not proofs.
+- Creusot proved three VM boundary models. AORAI is a C-only Frama-C plugin and
+  cannot consume Rust/ELF/PE directly; Ferrocene requires customer authentication;
+  Triton had no compatible prebuilt binding.
+- The official dudect-bencher run is complete; its VM branch result is a measured
+  timing leak, not a pass.
 - cargo-show-asm was installed after the main build evidence; assembly inspection
   currently uses objdump/readelf scripts.
 

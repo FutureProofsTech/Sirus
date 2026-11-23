@@ -1,9 +1,9 @@
 # SIRUS — Master Engineering Plan
 
-**Project:** Zero-Dependency Polymorphic Code Virtualizer in Safe Rust  
-**Workspace:** `sirus`  
-**Status:** Authoritative implementation plan; production-prototype scope  
-**Document owners:** implementation team and adversarial-review team (same repository, separate roles)  
+**Project:** Zero-Dependency Polymorphic Code Virtualizer in Safe Rust
+**Workspace:** `sirus`
+**Status:** Authoritative implementation plan; production-prototype scope
+**Document owners:** implementation team and adversarial-review team (same repository, separate roles)
 **Last updated:** 2026-11-23
 
 ---
@@ -20,8 +20,8 @@
 | M5 ELF injection and VM synthesis | complete, real PIE execution verified |
 | M6 multiple functions and data binding | complete, shared-VM e2e test |
 | M7 PE structural backend | complete structurally; Windows runtime open |
-| M8 adversarial suite | partial: in-tree, libFuzzer, Kani, Miri, differential, tamper, bypass, valgrind; external Ghidra/GAMBA/angr/Creusot/AORAI/Ferrocene/dudect not yet run |
-| M9 production release | **not complete**: coverage is 87.64% tarpaulin / 89.54% llvm-cov (not 100%), handler-layout mutation is partial, live memory-dump diagnostic finds transient constants in VM registers, and Windows runtime remains open |
+| M8 adversarial suite | partial: in-tree, libFuzzer, Kani, Miri, differential, tamper, bypass, valgrind, Ghidra, radare2, GAMBA/SiMBA/MBA-Blast, angr, KLEE, Creusot, dudect-bencher; IDA/Binary Ninja, Ferrocene, Triton, and AORAI remain unavailable/not applicable |
+| M9 production release | **not complete**: coverage is below the 100% target, handler-layout mutation is partial (10.9% equal segment bytes), live memory-dump finds transient VM-register constants, the VM timing branch leaks under dudect, and Windows runtime remains open |
 
 See `docs/TRACEABILITY.md` and `docs/VERIFICATION.md` for the exact matrix and
 measured evidence.
@@ -793,9 +793,9 @@ Each numbered item follows the supplied `red team` checklist.
    - Gate: no original function bytes or readable VM payload; original symbol still identifies the patched address but not semantics.
 
 2. **MBA simplification**
-   - Controls: bounded random MBA depth, layered identities, non-linear mixing, runtime values in state transitions.
-   - Tests: GAMBA/SiMBA corpus if installed; local rewriter equivalence suite; symbolic simplifier oracle for small expressions.
-   - Gate: no generated identity is trivial; equivalence proven; depth/budget recorded.
+   - Controls: bounded random linear MBA plus variable-shift recombination, modular multiplication, and a six-step Newton modular inverse.
+   - Tests: GAMBA/SiMBA/MBA-Blast corpus from the exact production rewrite hook; local rewriter equivalence over 10,000 random pairs; Z3 equivalence checks on tool output.
+   - Gate: every rewrite is exact; linear forms are reduced, while the modular-inverse form times out GAMBA at 20 s and variable shifts parser-fail. SiMBA still reduces the inverse form; this is cost asymmetry, not irreducibility.
    - Residual: a sufficiently powerful solver may reduce expressions; we do not claim otherwise.
 
 3. **DBI / instruction tracing**
@@ -810,8 +810,8 @@ Each numbered item follows the supplied `red team` checklist.
 
 5. **Symbolic execution**
    - Controls: random large state ids, encrypted dispatch, MBA, decoys, bounded loops, data-dependent next-state arithmetic.
-   - Tests: angr/KLEE harness if installed; local state-space corpus; path explosion estimate.
-   - Gate: protected function does not reduce to a single linear comparison in generated IR.
+   - Tests: angr on the real protected ELF (120 s bounded preimage search) and KLEE on generated VM source (60 s bounded search).
+   - Gate: no symbolic preimage was found in either run; this is a bounded negative result, not an unsatisfiability proof.
 
 6. **Live memory dumping**
    - Controls: instructions decrypted byte-by-byte into locals; no decrypted block cache; derived tables in stack memory; payload integrity.

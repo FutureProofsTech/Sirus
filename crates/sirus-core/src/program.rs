@@ -1,7 +1,7 @@
 //! Whole-program flattening, decoy synthesis, manifest construction, and final
 //! encrypted payload production.
 
-use crate::encode::encode_block;
+use crate::encode::{encode_block, encode_block_with_nonlinear};
 use crate::error::{CoreError, Result};
 use crate::ir::{
     BoundedVec, ByteBuf, IrOp, LiftedFunction, MAX_BLOCKS, MAX_FUNCTIONS, MAX_PAYLOAD, Terminator,
@@ -523,6 +523,7 @@ pub fn compile(
             .ok_or(CoreError::ArithmeticOverflow)?;
         let mut guard_for = [u16::MAX; MAX_BLOCKS];
         let mut candidates = BoundedVec::<u16, MAX_BLOCKS>::new();
+        let mut nonlinear_target = None;
         let mut block_index = 0_usize;
         while block_index < original {
             let Some(block) = function.blocks.get(block_index) else {
@@ -536,6 +537,11 @@ pub fn compile(
                     u16::try_from(block_index)
                         .map_err(|_| CoreError::InvalidBlock { block: u16::MAX })?,
                 )?;
+            }
+            if nonlinear_target.is_none()
+                && function.block_ops(block).is_some_and(|ops| !ops.is_empty())
+            {
+                nonlinear_target = Some(block_index);
             }
             block_index = block_index.saturating_add(1);
         }
@@ -576,15 +582,27 @@ pub fn compile(
             } else {
                 Terminator::Jump { target: guard }
             };
-            let body = encode_block(
-                ops,
-                terminator,
-                state_slice,
-                &tables,
-                &mut encode_rng,
-                options.mba_depth,
-                options.mba_budget,
-            )?;
+            let body = if nonlinear_target == Some(block_index) {
+                encode_block_with_nonlinear(
+                    ops,
+                    terminator,
+                    state_slice,
+                    &tables,
+                    &mut encode_rng,
+                    options.mba_depth,
+                    options.mba_budget,
+                )?
+            } else {
+                encode_block(
+                    ops,
+                    terminator,
+                    state_slice,
+                    &tables,
+                    &mut encode_rng,
+                    options.mba_depth,
+                    options.mba_budget,
+                )?
+            };
             let offset = u32::try_from(bodies.len()).map_err(|_| CoreError::PayloadTooLarge)?;
             let length = u32::try_from(body.len()).map_err(|_| CoreError::PayloadTooLarge)?;
             bodies.extend_from_slice(body.as_slice())?;

@@ -1,0 +1,13 @@
+[package]
+name = "sirus-creusot"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+creusot-std = { version = "0.15.0-dev", default-features = false }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(creusot)'] }
+
+[workspace]

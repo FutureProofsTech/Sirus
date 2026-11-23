@@ -7,7 +7,7 @@
 
 use crate::error::{CoreError, Result};
 use crate::ir::{ByteBuf, IrOp, Terminator, Width};
-use crate::mba::{BuildRng, ExprArena, ExprOp, expand};
+use crate::mba::{BuildRng, ExprArena, ExprOp, expand, nonlinear_wrap};
 use crate::shared::derive::Tables;
 use crate::shared::format::{
     ALIASES_PER_SEMANTIC, MAX_OPERANDS, REG_ONE, REG_TEMP_BASE, ROLE_IMM, ROLE_REG, SEM_ADD_RR,
@@ -37,6 +37,7 @@ struct BlockEncoder<'a> {
     budget: u16,
     arena: ExprArena,
     temps: [bool; TEMP_COUNT],
+    nonlinear_pending: bool,
     body: ByteBuf<MAX_BLOCK_BODY>,
 }
 
@@ -47,6 +48,7 @@ impl<'a> BlockEncoder<'a> {
         states: &'a [u64],
         depth: u8,
         budget: u16,
+        nonlinear: bool,
     ) -> Self {
         Self {
             tables,
@@ -56,6 +58,7 @@ impl<'a> BlockEncoder<'a> {
             budget,
             arena: ExprArena::new(),
             temps: [false; TEMP_COUNT],
+            nonlinear_pending: nonlinear,
             body: ByteBuf::new(),
         }
     }
@@ -291,6 +294,12 @@ impl<'a> BlockEncoder<'a> {
 
     fn apply_expression(&mut self, dst: u8, root: u32) -> Result<()> {
         let expanded = expand(&mut self.arena, root, self.rng, self.depth, self.budget);
+        let expanded = if self.nonlinear_pending && self.depth != 0 {
+            self.nonlinear_pending = false;
+            nonlinear_wrap(&mut self.arena, expanded, dst, self.rng)
+        } else {
+            expanded
+        };
         let compiled = self.compile_expr(expanded)?;
         if compiled.register != dst {
             self.emit(
@@ -569,7 +578,23 @@ pub(crate) fn encode_block(
     mba_depth: u8,
     mba_budget: u16,
 ) -> Result<ByteBuf<MAX_BLOCK_BODY>> {
-    let encoder = BlockEncoder::new(tables, rng, states, mba_depth, mba_budget);
+    let encoder = BlockEncoder::new(tables, rng, states, mba_depth, mba_budget, false);
+    encoder.finish(ops, terminator)
+}
+
+/// Encodes one flattened block body and adds the non-linear MBA layer to the
+/// first arithmetic statement.
+#[inline]
+pub(crate) fn encode_block_with_nonlinear(
+    ops: &[IrOp],
+    terminator: Terminator,
+    states: &[u64],
+    tables: &Tables,
+    rng: &mut BuildRng,
+    mba_depth: u8,
+    mba_budget: u16,
+) -> Result<ByteBuf<MAX_BLOCK_BODY>> {
+    let encoder = BlockEncoder::new(tables, rng, states, mba_depth, mba_budget, true);
     encoder.finish(ops, terminator)
 }
 

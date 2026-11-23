@@ -238,6 +238,9 @@ if command -v valgrind >/dev/null 2>&1; then
     echo "PASS valgrind"
 fi
 
+echo "== radare2 decompiler smoke test =="
+./scripts/radare2-check.sh
+
 echo "== live memory-dump diagnostic =="
 ./scripts/memory-dump.sh
 

@@ -6,3 +6,10 @@
 *.elf.tmp
 /tmp/
 .DS_Store
+/verification/creusot/target/
+/verification/creusot/verif/
+/verification/creusot/why3find.proofs/
+/verification/creusot/.why3find/
+/verification/creusot/.cargo/
+/verification/dudect/target/
+__pycache__/

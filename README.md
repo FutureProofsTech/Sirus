@@ -2,13 +2,14 @@
 
 **Zero-dependency polymorphic code virtualizer in Safe Rust.**
 
-**Release:** `1.0.0-safe` — see [`RELEASE.md`](RELEASE.md) and [`CHANGELOG.md`](CHANGELOG.md).
+**Release:** `1.1.0-safe` — see [`RELEASE.md`](RELEASE.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 Sirus takes a compiled Linux x86-64 ELF, lifts a selected function into an
 internal IR, flattens its control flow, expands sensitive arithmetic through
-bounded MBA, encodes it into a per-build randomized encrypted ISA, synthesizes a
-freestanding `no_std` VM, injects it into a new executable segment, patches the
-original function to jump into it, and destroys the original function body.
+bounded linear and non-linear MBA, encodes it into a per-build randomized
+encrypted ISA, synthesizes a freestanding `no_std` VM, injects it into a new
+executable segment, patches the original function to jump into it, and destroys
+the original function body.
 
 The project is a production-grade prototype, not a claim of mathematical
 unbreakability. The full engineering plan is [`PLAN.md`](PLAN.md), the exact
@@ -26,10 +27,13 @@ known limits are in [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md).
 | PE/Win64 runtime execution | not yet supported |
 | Random per-build ISA, aliases, operand orders, register maps | working |
 | CFG flattening, encrypted manifest/bodies, decoys, constant blinding | working |
+| Linear + non-linear MBA (variable shifts, modular inverse) | working; GAMBA times out, SiMBA reduces |
 | Shared VM for multiple protected functions | working |
 | Safe Rust / no external crates | enforced |
-| Kani proofs, Miri, libFuzzer, differential/tamper/bypass tests | run locally |
-| 100% line coverage | **not reached; current measured: 87.64% tarpaulin / 89.54% llvm-cov** |
+| Kani, Miri, libFuzzer, differential/tamper/bypass, Ghidra, radare2 | run locally |
+| angr, KLEE, Creusot, dudect-bencher | run locally; bounded/model results stated |
+| 100% line coverage | **not reached; exact current numbers in `docs/VERIFICATION.md`** |
+| Constant-time VM execution | **not claimed; dudect measures a branch leak** |
 
 ---
 
@@ -136,6 +140,20 @@ It runs Kani, Miri on core and VM unit tests, and a libFuzzer session. Set
 `SIRUS_FULL_MIRI=1` for the full Miri execution suite (long) and
 `SIRUS_COVERAGE=1` for coverage.
 
+External evidence can be enabled individually:
+
+```sh
+SIRUS_GHIDRA=1 SIRUS_RADARE2=1 SIRUS_MBA=1 SIRUS_ANGR=1 \
+SIRUS_KLEE=1 SIRUS_CREUSOT=1 SIRUS_DUDECT=1 ./scripts/prove.sh
+```
+
+The individual scripts are `scripts/ghidra-check.sh`,
+`scripts/radare2-check.sh`, `scripts/mba-check.sh`, `scripts/angr-check.py`,
+`scripts/klee-check.sh`, `scripts/creusot-check.sh`,
+`scripts/dudect-external.sh`, and `scripts/dudect-check.sh`. They require the
+external tools listed in `scripts/install-tools.sh`; results and caveats are in
+[`docs/VERIFICATION.md`](docs/VERIFICATION.md).
+
 Current measured results and residuals are in
 [`docs/VERIFICATION.md`](docs/VERIFICATION.md) and
 [`docs/RED_TEAM.md`](docs/RED_TEAM.md). Vulnerability handling is described in
@@ -151,7 +169,9 @@ crates/sirus-vm         no_std VM engine and execution tests
 crates/sirus-binfmt     no_std ELF/PE parsers and safe editors
 crates/sirus-protector  std CLI, VM synthesis, rustc driver, injection pipeline
 fuzz/                    cargo-fuzz harness (external verification tooling only)
-scripts/                 verify, prove, red-team, tool installation
+verification/creusot     Creusot/Why3 boundary proof models
+verification/dudect      official dudect-bencher harness
+scripts/                 verify, prove, red-team, external checks, tool installation
 docs/                    architecture, threat model, format, limitations, proof evidence
 ```
 

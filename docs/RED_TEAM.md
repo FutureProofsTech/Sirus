@@ -32,8 +32,17 @@ PASS patch/scrub sirus_demo_loop: changed=138/139
 PASS no obvious strings in injected segment
 ```
 
-**Not run:** headless Ghidra / IDA / Binary Ninja comparisons (tools not
-installed). Static decompiler resistance is therefore not independently certified.
+**Executed:**
+
+- **Ghidra 12.2 headless** decompiled 18 scoped functions (16 inside `.sirus`).
+  The patched host functions resolve to `halt_baddata()` because of the jump plus
+  random scrub; no original branch structure is recovered. The `.sirus` VM
+  functions decompile only as engine/state machinery.
+- **radare2 5.9.8 `pdc`** reconstructs both patched host functions as only
+  `goto VM_entry; return;` with no branch logic.
+
+**Not available:** IDA Pro/Hex-Rays and Binary Ninja require commercial licenses
+and are not installed. They remain unexecuted.
 
 ---
 
@@ -41,15 +50,34 @@ installed). Static decompiler resistance is therefore not independently certifie
 
 **Attack:** GAMBA, SiMBA, MBA-Blast, Triton algebraic/truth-table reduction.
 
-**Implemented controls:** bounded random MBA depth, exact wrapping identities,
-nested rewrites, constant shares, non-trivial transitions.
+**Implemented controls:** bounded randomized linear MBA, plus a non-linear
+layer that combines variable shifts, data-dependent modular multiplication, and
+a six-step Newton modular inverse. The inverse cancels the odd multiplier
+exactly for all 64-bit inputs. The wrapper is applied to one arithmetic statement
+per function; linear rewrites are applied throughout the CFG.
 
-**Local evidence:** MBA equivalence test suite over boundary and seeded random
-values; `every_rewrite_preserves_semantics` passes. Generated expressions are
-differential-tested through the VM.
+**Local evidence:** MBA equivalence tests include fixed boundary values and
+10,000 deterministic random pairs; `every_rewrite_preserves_semantics`,
+`nonlinear_wrap_preserves_semantics_and_uses_hard_operations`, and the expanded
+end-to-end input matrix pass.
 
-**Not run:** GAMBA/SiMBA. A sufficiently strong solver may reduce shallow
-expressions. This is a documented residual.
+**Executed:** `scripts/mba-check.sh` generates the exact post-rewrite corpus and
+feeds it to the external tools.
+
+```text
+SiMBA linear baseline: 18/18 verified reductions
+GAMBA linear baseline: 18/18 verified reductions
+GAMBA inverse-only nonlinear corpus: 6/6 timeouts/tool failures (20 s cap)
+GAMBA variable-shift nonlinear corpus: 6/6 parser failures
+SiMBA inverse-only corpus: 6/6 reductions (linear-only tool; not a nonlinear claim)
+MBA-Blast: 3/9 verified; 6 parser/tool failures on its grammar subset
+```
+
+GAMBA does not reduce the modular-inverse forms within 20 seconds. SiMBA reduces
+those exact forms; it is a linear-MBA simplifier and may reason unsoundly outside
+its input class, so that result is not a nonlinear-strength claim. The variable
+shift form is rejected by GAMBA's parser. These are real cost-asymmetry
+measurements, not a proof of irreducibility.
 
 ---
 
@@ -90,7 +118,20 @@ operator semantics.
 **Implemented controls:** random large state ids, encrypted manifest lookup,
 MBA, decoys, finite fuel, data-dependent transitions.
 
-**Not run:** angr/KLEE. No SMT-solver claim is made.
+**Executed:**
+
+- **angr 10.0.7** on `target/redteam/protected-a`, with symbolic 64-bit inputs
+  and a target output taken from the native invocation. The bounded probe timed
+  out after **120 s** with one active state, no completed return, and no preimage
+  (`scripts/angr-check.py`).
+- **KLEE 3.3 (LLVM 18)** on the generated `no_std` VM source, with symbolic
+  arguments. The 60 s run executed **8,684,268 instructions**, completed 0 paths,
+  left 2 partially completed paths, and reported no memory errors
+  (`scripts/klee-check.sh`). The source was compiled with rustc 1.78 for LLVM 18;
+  `const fn` was removed only for compiler compatibility.
+
+**Residual:** both runs are bounded searches. A timeout is evidence of cost, not
+a mathematical proof that no input exists. No SMT-solver proof is claimed.
 
 **Evidence:** local state-space and malformed-payload corpus; fuzzing.
 
@@ -107,7 +148,7 @@ MBA, decoys, finite fuel, data-dependent transitions.
 - ISA tables are derived on demand;
 - static `.sirus` has no obvious plaintext strings.
 
-**Local evidence:** payload entropy `shannon=7.990`, `min=7.589`, 256 distinct
+**Local evidence:** payload entropy `shannon=7.995`, `min=7.691`, 256 distinct
 bytes; static string scan passes.
 
 **Live snapshot evidence:** `scripts/memory-dump.sh` attaches to a long-running
@@ -150,6 +191,29 @@ VM's control unless the integration also binds call sites.
 
 ---
 
+## 7b. Statistical timing analysis
+
+**Attack:** dudect-style timing classification of a protected branch versus the
+cipher path.
+
+**Executed:** official `dudect-bencher` 0.7.0 (`scripts/dudect-external.sh`):
+
+```text
+bench crypto ... : max t = +4.42157
+bench vm     ... : max t = -358.73247
+```
+
+The cipher path is below the conventional |t| = 5 leak threshold; the VM
+data-dependent branch is far above it. The in-tree Welch harness independently
+measured `crypto_t=-1.199` and `vm_t=53.023`.
+
+**Residual:** the VM is not constant-time. Safe Rust can avoid secret-dependent
+machine branches inside a cipher, but a general virtualizer must branch on
+virtual control flow. This is a real, measured limitation, not a claim of
+immunity.
+
+---
+
 ## 8. Hypervisor and kernel-level debugging
 
 **Attack:** KVM/HyperDbg, spoofed RDTSC, hardware breakpoints.
@@ -172,12 +236,12 @@ MBA shapes, decoys, payload size, and code/data offsets.
 **Local evidence:**
 
 ```text
-differential .sirus.payload equal-byte ratio = 0.0036
-differential .sirus segment equal-byte ratio = 0.2517
-payload sizes = 16555 / 15344 bytes
+differential .sirus.payload equal-byte ratio = 0.0038
+differential .sirus segment equal-byte ratio = 0.1091
+payload sizes = 45669 / 45607 bytes
 ```
 
-**Residual:** the interpreter skeleton is reused; 25.2% of the full VM segment
+**Residual:** the interpreter skeleton is reused; 10.9% of the full VM segment
 matches byte-for-byte at equal offsets. Full handler-layout mutation is not
 complete. BinDiff has not been run.
 
@@ -194,7 +258,7 @@ masked shifts, no division, checked memory, deterministic fuel, no panic path.
 
 - deterministic in-tree fuzz: 20,000 random payloads + 10,000 valid-payload
   mutations, no panic/hang;
-- libFuzzer: **66,962 runs in 21 s plus a final 34,312-run 11 s session (101,274 total)**, no crash;
+- libFuzzer: **63,455 final-tree runs in 21 s; 164,729 cumulative across sessions**, no crash;
 - Kani: 5 core + 2 VM bounds harnesses verified;
 - Miri: core and VM unit/full execution suites pass;
 - malformed-payload suite covers bad count/offset/length/opcode/register/trap/fuel.
@@ -205,15 +269,15 @@ masked shifts, no division, checked memory, deterministic fuel, no panic path.
 
 | # | Gate | Status |
 |---:|---|---|
-| 1 | static body removal / no plaintext | pass locally; decompiler tools not run |
-| 2 | MBA equivalence | pass locally; GAMBA/SiMBA not run |
-| 3 | DBI resistance | partial; detection impossible/unsafe |
-| 4 | taint resistance | design + bypass evidence; no formal tool |
-| 5 | symbolic resistance | design; angr not run |
-| 6 | memory dump | entropy/string pass; live dump scan open |
+| 1 | static body removal / no plaintext | Ghidra + radare2 pass; IDA/Binary Ninja not licensed |
+| 2 | MBA resistance | linear forms reduce; GAMBA times out on modular-inverse forms; variable shifts parser-fail; SiMBA reduces inverse forms |
+| 3 | DBI resistance | partial; timing/DBI detection impossible/unsafe |
+| 4 | taint resistance | design + bypass evidence; no formal taint tool |
+| 5 | symbolic resistance | angr 120 s timeout; KLEE 60 s timeout with no completed paths or memory errors |
+| 6 | memory dump | entropy/string pass; live dump finds transient register constants |
 | 7 | patch/forced return | pass |
 | 8 | hypervisor | not capable; documented |
-| 9 | differential | payload near-zero; full segment 25.2% residual |
+| 9 | differential | payload 0.38% equal; full segment 10.9% equal residual |
 | 10 | fuzzing | pass across in-tree, libFuzzer, Kani, Miri |
 
 No gate in this report is marked “passed” unless its local command was executed.

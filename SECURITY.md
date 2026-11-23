@@ -37,7 +37,9 @@ Out of scope / documented residuals:
 - RDTSC/debug-register/hypervisor detection (not implemented);
 - LFENCE/Spectre mitigation (not implemented);
 - live memory observation of transient VM register values;
-- Ghidra/GAMBA/angr-level resistance claims not yet independently tested;
+- absolute resistance claims beyond the tested Ghidra/radare2/GAMBA/SiMBA/angr/KLEE
+  corpus and bounded timeouts;
+- constant-time VM execution (dudect measures a branch timing leak);
 - Windows execution;
 - attacks requiring the ability to rewrite both payload and generated key
   shares.

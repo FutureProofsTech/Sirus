@@ -53,6 +53,9 @@
     )
 )]
 
+#[cfg(test)]
+extern crate std;
+
 pub mod decode;
 pub(crate) mod encode;
 pub mod error;

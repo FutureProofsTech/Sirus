@@ -306,7 +306,7 @@ impl Expander<'_> {
                 None => return id,
             }
         };
-        if self.rng.below(100) >= 70 {
+        if self.rng.below(100) >= 99 {
             return base;
         }
         let Some(rewritten) = self.rewrite(node.op, a, b) else {
@@ -476,10 +476,110 @@ pub(crate) fn expand(
     expander.expand(root, depth)
 }
 
+/// Multiplies a value by a data-dependent odd number and by that number's
+/// modular inverse. The inverse is computed with six wrapping Newton steps,
+/// which is exact for every 64-bit odd input.
+pub(crate) fn inverse_wrap(
+    arena: &mut ExprArena,
+    value: u32,
+    anchor: u8,
+    _rng: &mut BuildRng,
+) -> u32 {
+    let Ok(anchor_leaf) = arena.reg(anchor) else {
+        return value;
+    };
+    let Ok(one) = arena.constant(1) else {
+        return value;
+    };
+    let Ok(two) = arena.constant(2) else {
+        return value;
+    };
+    let Ok(odd) = arena.binary(ExprOp::Or, anchor_leaf, one) else {
+        return value;
+    };
+
+    // Modular inverse of an odd operand. Six Newton steps give at least 192
+    // correct low bits starting from the three bits supplied by odd * odd.
+    let mut inverse = odd;
+    let mut step = 0_u8;
+    while step < 6 {
+        let Ok(product) = arena.binary(ExprOp::Mul, odd, inverse) else {
+            return value;
+        };
+        let Ok(correction) = arena.binary(ExprOp::Sub, two, product) else {
+            return value;
+        };
+        let Ok(next) = arena.binary(ExprOp::Mul, inverse, correction) else {
+            return value;
+        };
+        inverse = next;
+        step = step.saturating_add(1);
+    }
+
+    let Ok(scaled) = arena.binary(ExprOp::Mul, value, odd) else {
+        return value;
+    };
+    arena.binary(ExprOp::Mul, scaled, inverse).unwrap_or(value)
+}
+
+/// Wraps a value in exact non-linear identities.
+///
+/// The first identity recombines the low and high parts of the value with a
+/// variable shift. The second multiplies the value by a data-dependent odd
+/// number and by that number's modular inverse. Both transformations are exact
+/// for every 64-bit input, but they are not linear MBA forms: a simplifier must
+/// reason about variable shifts and modular multiplication rather than only
+/// bitwise-linear algebra.
+pub(crate) fn nonlinear_wrap(
+    arena: &mut ExprArena,
+    value: u32,
+    anchor: u8,
+    rng: &mut BuildRng,
+) -> u32 {
+    let Ok(anchor_leaf) = arena.reg(anchor) else {
+        return value;
+    };
+    let Ok(one) = arena.constant(1) else {
+        return value;
+    };
+
+    // Variable-shift split: x == ((x >> s) << s) | (x & ((1 << s) - 1)).
+    let shift_source = match rng.below(2) {
+        0 => anchor_leaf,
+        _ => value,
+    };
+    let Ok(sixty_three) = arena.constant(63) else {
+        return value;
+    };
+    let Ok(shift) = arena.binary(ExprOp::And, shift_source, sixty_three) else {
+        return value;
+    };
+    let Ok(shifted_one) = arena.binary(ExprOp::Shl, one, shift) else {
+        return value;
+    };
+    let Ok(mask) = arena.binary(ExprOp::Sub, shifted_one, one) else {
+        return value;
+    };
+    let Ok(low) = arena.binary(ExprOp::And, value, mask) else {
+        return value;
+    };
+    let Ok(high_shifted) = arena.binary(ExprOp::ShrU, value, shift) else {
+        return value;
+    };
+    let Ok(high) = arena.binary(ExprOp::Shl, high_shifted, shift) else {
+        return value;
+    };
+    let Ok(split) = arena.binary(ExprOp::Or, low, high) else {
+        return value;
+    };
+    inverse_wrap(arena, split, anchor, rng)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{BuildRng, ExprArena, ExprOp, expand};
+    use super::{BuildRng, ExprArena, ExprOp, expand, inverse_wrap, nonlinear_wrap};
     use crate::shared::derive::Seed;
+    use std::io::Write as _;
 
     fn evaluate(arena: &ExprArena, id: u32, registers: &[u64; 64]) -> u64 {
         let Some(node) = arena.node(id) else {
@@ -601,6 +701,74 @@ mod tests {
     }
 
     #[test]
+    fn nonlinear_wrap_preserves_semantics_and_uses_hard_operations() {
+        let seed = [0x5a_u8; 32];
+        let mut rng = BuildRng::new(&seed, 0x4e4f_4e4c);
+        let mut arena = ExprArena::new();
+        let left = arena.reg(1).expect("left");
+        let right = arena.reg(2).expect("right");
+        let root = arena.binary(ExprOp::Add, left, right).expect("root");
+        let expanded = expand(&mut arena, root, &mut rng, 3, 512);
+        let wrapped = nonlinear_wrap(&mut arena, expanded, 3, &mut rng);
+        let mut registers = [0_u64; 64];
+        let values = [
+            0,
+            1,
+            2,
+            7,
+            63,
+            64,
+            0x8000_0000_0000_0000,
+            u64::MAX,
+            0x5555_5555_5555_5555,
+            0xaaaa_aaaa_aaaa_aaaa,
+        ];
+        let mut saw_mul = false;
+        let mut saw_shift = false;
+        let mut index = 0_u32;
+        while let Some(node) = arena.node(index) {
+            saw_mul |= node.op == ExprOp::Mul;
+            saw_shift |= matches!(node.op, ExprOp::Shl | ExprOp::ShrU);
+            index = index.saturating_add(1);
+        }
+        assert!(saw_mul && saw_shift);
+        let mut random = 0x1234_5678_9abc_def0_u64;
+        let mut check = |first: u64, second: u64| {
+            if let Some(slot) = registers.get_mut(1) {
+                *slot = first;
+            }
+            if let Some(slot) = registers.get_mut(2) {
+                *slot = second;
+            }
+            if let Some(slot) = registers.get_mut(3) {
+                *slot = first.rotate_left(17) ^ second;
+            }
+            assert_eq!(
+                evaluate(&arena, expanded, &registers),
+                evaluate(&arena, wrapped, &registers)
+            );
+        };
+        for first in values {
+            for second in values {
+                check(first, second);
+            }
+        }
+        let random_samples = if cfg!(miri) { 100 } else { 10_000 };
+        let mut sample = 0_usize;
+        while sample < random_samples {
+            random ^= random << 13;
+            random ^= random >> 7;
+            random ^= random << 17;
+            let first = random;
+            random ^= random << 13;
+            random ^= random >> 7;
+            random ^= random << 17;
+            check(first, random);
+            sample = sample.saturating_add(1);
+        }
+    }
+
+    #[test]
     fn zero_budget_returns_original() {
         let seed: Seed = [7_u8; 32];
         let mut rng = BuildRng::new(&seed, 1);
@@ -628,5 +796,125 @@ mod tests {
         let first_expanded = expand(&mut first, root, &mut first_rng, 2, 64);
         let second_expanded = expand(&mut second, second_root, &mut second_rng, 2, 64);
         assert_eq!(first_expanded, second_expanded);
+    }
+
+    fn render_expression<W: std::io::Write>(
+        arena: &ExprArena,
+        id: u32,
+        out: &mut W,
+    ) -> std::io::Result<()> {
+        let Some(node) = arena.node(id) else {
+            return write!(out, "0");
+        };
+        match node.op {
+            ExprOp::Reg => {
+                let symbol = match node.imm {
+                    1 => "x",
+                    2 => "y",
+                    other => {
+                        return write!(out, "r{other}");
+                    }
+                };
+                write!(out, "{symbol}")
+            }
+            ExprOp::Const => write!(out, "{}", node.imm),
+            ExprOp::Not => {
+                write!(out, "(~")?;
+                render_expression(arena, node.a, out)?;
+                write!(out, ")")
+            }
+            ExprOp::Neg => {
+                write!(out, "(-")?;
+                render_expression(arena, node.a, out)?;
+                write!(out, ")")
+            }
+            ExprOp::Select => {
+                write!(out, "(")?;
+                render_expression(arena, node.a, out)?;
+                write!(out, " ? ")?;
+                render_expression(arena, node.b, out)?;
+                write!(out, " : ")?;
+                render_expression(arena, node.c, out)?;
+                write!(out, ")")
+            }
+            operation => {
+                let symbol = match operation {
+                    ExprOp::Add => "+",
+                    ExprOp::Sub => "-",
+                    ExprOp::Mul => "*",
+                    ExprOp::And => "&",
+                    ExprOp::Or => "|",
+                    ExprOp::Xor => "^",
+                    ExprOp::Shl => "<<",
+                    ExprOp::ShrU | ExprOp::ShrS => ">>",
+                    ExprOp::RotL => "<<<",
+                    ExprOp::RotR => ">>>",
+                    ExprOp::CmpEq => "==",
+                    ExprOp::CmpLtU | ExprOp::CmpLtS => "<",
+                    ExprOp::CmpLeU | ExprOp::CmpLeS => "<=",
+                    ExprOp::Reg | ExprOp::Const | ExprOp::Not | ExprOp::Neg | ExprOp::Select => {
+                        return write!(out, "0");
+                    }
+                };
+                write!(out, "(")?;
+                render_expression(arena, node.a, out)?;
+                write!(out, " {symbol} ")?;
+                render_expression(arena, node.b, out)?;
+                write!(out, ")")
+            }
+        }
+    }
+
+    /// Writes the exact post-MBA expressions consumed by the external
+    /// de-obfuscator corpus. This test only runs when the path is requested.
+    #[test]
+    #[ignore = "writes a corpus only when SIRUS_MBA_CORPUS is set"]
+    fn mba_audit_corpus() {
+        let Ok(path) = std::env::var("SIRUS_MBA_CORPUS") else {
+            return;
+        };
+        let file = std::fs::File::create(path).expect("corpus file");
+        let mut out = std::io::BufWriter::new(file);
+        let operations = [
+            (ExprOp::Add, "x + y"),
+            (ExprOp::Sub, "x - y"),
+            (ExprOp::And, "x & y"),
+            (ExprOp::Or, "x | y"),
+            (ExprOp::Xor, "x ^ y"),
+            (ExprOp::Not, "~x"),
+        ];
+        for (depth, seed_byte, budget) in [(1_u8, 0x11_u8, 64_u16), (2, 0x22, 128), (3, 0x33, 512)]
+        {
+            let seed = [seed_byte; 32];
+            for (operation_index, (operation, ground_truth)) in operations.into_iter().enumerate() {
+                let operation_domain = 0x4d42_415f
+                    + u64::from(depth)
+                    + (u64::try_from(operation_index).unwrap_or(0) << 16);
+                let mut rng = BuildRng::new(&seed, operation_domain);
+                let mut arena = ExprArena::new();
+                let left = arena.reg(1).expect("left");
+                let right = arena.reg(2).expect("right");
+                let root = if operation == ExprOp::Not {
+                    arena.unary(operation, left).expect("root")
+                } else {
+                    arena.binary(operation, left, right).expect("root")
+                };
+                let expanded = expand(&mut arena, root, &mut rng, depth, budget);
+                writeln!(out, "# mode=linear depth={depth} op={operation:?}").expect("header");
+                render_expression(&arena, expanded, &mut out).expect("expression");
+                writeln!(out, "\t{ground_truth}").expect("ground truth");
+                if depth == 3 {
+                    let wrapped = nonlinear_wrap(&mut arena, expanded, 1, &mut rng);
+                    writeln!(out, "# mode=nonlinear depth={depth} op={operation:?}")
+                        .expect("header");
+                    render_expression(&arena, wrapped, &mut out).expect("expression");
+                    writeln!(out, "\t{ground_truth}").expect("ground truth");
+                    let inverse = inverse_wrap(&mut arena, expanded, 1, &mut rng);
+                    writeln!(out, "# mode=inverse depth={depth} op={operation:?}").expect("header");
+                    render_expression(&arena, inverse, &mut out).expect("expression");
+                    writeln!(out, "\t{ground_truth}").expect("ground truth");
+                }
+            }
+        }
     }
 }

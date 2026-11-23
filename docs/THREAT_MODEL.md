@@ -37,7 +37,7 @@ Sirus raises cost; it does not prove impossibility.
 |---|---|---|---|
 | O1 | Remove readable original logic | original body scrubbed, flattened encrypted bytecode | red-team patch/scrub check |
 | O2 | Obscure operations | bounded MBA, constant blinding, randomized ISA | MBA property tests, differential builds |
-| O3 | Make builds independent | new seed changes opcodes, orders, maps, states, block order, keys, MBA, decoys | payload equality ratio 0.0036 |
+| O3 | Make builds independent | new seed changes opcodes, orders, maps, states, block order, keys, MBA, decoys | payload equality ratio 0.0038 |
 | O4 | Detect payload tampering | integrity hash mixed into effective key | tamper test: wrong output, no crash/hang |
 | O5 | Keep host safe | no unsafe, checked decode, no heap, gas limit, private memory | fuzz, Miri, Kani, malformed suite |
 | O6 | Resist forced-return bypass | protected results are data used by the host; no boolean-only API | forced-return bypass changes output |
@@ -70,7 +70,7 @@ Sirus raises cost; it does not prove impossibility.
 | Symbolic execution | large random states, encrypted manifest, MBA, finite fuel | path explosion is probabilistic, not proven |
 | Memory dumping | no decrypted body cache; instructions live in locals only | live dump can observe transient VM register values (including repeated constants) |
 | Forced return | host consumes derived data, not only a boolean | caller-side patch remains possible |
-| Differential analysis | new seed changes every payload field and much code/data layout | full `.sirus` segment equality measured at 25.2% |
+| Differential analysis | new seed changes every payload field and much code/data layout | full `.sirus` segment equality measured at 10.9% |
 | VM fuzzing | checks and fuel prevent panic/OOB/hang | semantic garbage may still produce a value |
 
 ---
@@ -98,10 +98,13 @@ protected data in ways that fail downstream if incorrect.
    not claimed.
 3. **No LFENCE/Spectre mitigation.** Safe Rust cannot emit the required barrier.
 4. **Handler layout reuse.** Payload/ISA/state geometry mutates per build, but the
-   interpreter's semantic skeleton is shared. Full `.sirus` equality is 25.2% in
+   interpreter's semantic skeleton is shared. Full `.sirus` equality is 10.9% in
    the current differential sample.
-5. **Coverage and tool gaps.** Coverage is 87.23%, not the 100% target. Ghidra,
-   GAMBA/SiMBA, angr, Creusot, AORAI, and Ferrocene have not been run.
+5. **Coverage and tool gaps.** Coverage remains below the 100% target. Ghidra,
+   radare2, GAMBA/SiMBA/MBA-Blast, angr, KLEE, Creusot, and dudect-bencher have
+   been run; IDA/Binary Ninja, Ferrocene, and Triton were unavailable, and AORAI
+   is not applicable to Rust. The VM's data-dependent branch leaks timing under
+   dudect-bencher.
 6. **Windows runtime.** PE container support is implemented structurally only.
 7. **Symbol metadata.** Protected output retains the host symbol table; the
    injected `.sirus` segment itself contains no obvious strings.

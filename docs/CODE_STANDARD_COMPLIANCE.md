@@ -196,31 +196,44 @@ Implemented exactly in the root `Cargo.toml`:
 | `cargo doc` | stable | executed with `-D warnings`, passing |
 | `cargo-audit` | installed | executed; 0 vulnerabilities |
 | `cargo-deny` | installed | executed; advisories/bans/licenses/sources pass |
-| `cargo-nextest` | installed | executed; 145/145 tests |
-| `cargo-tarpaulin` | installed | executed; 87.64% tarpaulin lines / 89.54% llvm-cov lines, 100% target not met |
-| `cargo-fuzz` | installed | 101,274 runs, no crash |
+| `cargo-nextest` | installed | executed; 146 tests passing |
+| `cargo-tarpaulin` | installed | executed; 88.51% lines (4921/5560), below 100% |
+| `cargo-llvm-cov` | installed | executed; 88.53% lines / 83.97% regions |
+| `cargo-fuzz` | installed | 164,729 cumulative runs, no crash |
 | Kani 0.68.0 | installed | 5 core + 2 VM harnesses verified |
-| Miri | nightly | core and VM unit/execution suites pass |
+| Miri | nightly | 75 core + 8 VM lib + 15 VM execution tests pass |
 | valgrind | installed | protected sample clean |
 | gdb/strace/perf | installed | available; no scripted gate yet |
 | cargo-show-asm | installed | used for assembly inspection |
-| Creusot | **missing** | install required |
-| AORAI | **missing** | research tool; optional |
-| Ferrocene | **missing** | optional certified toolchain |
-| Ghidra/angr/Triton | **missing** | optional red-team tooling |
-| dudect-bencher | **missing** | in-tree timing harness planned; external optional |
+| Ghidra 12.2 | installed in `/opt/sirus-tools` | 18 scoped functions decompiled; patched targets halt |
+| radare2 5.9.8 | installed | patched functions reduce to jump stubs |
+| GAMBA/SiMBA/MBA-Blast | installed under `/opt/sirus-tools` | external corpus executed; see `docs/VERIFICATION.md` |
+| angr 10.0.7 | installed in a Python 3.13 venv | 120 s bounded symbolic timeout |
+| KLEE 3.3 / LLVM 18 | installed in an official container | 60 s bounded symbolic timeout, no memory errors |
+| Creusot | installed (git source patched for local Why3) | 3 boundary models proved |
+| dudect-bencher 0.7.0 | standalone verification crate | cipher below \|t\|=5; VM branch leaks |
+| AORAI | installed (Frama-C 33.0) | C-only; not applicable to the Rust product |
+| Ferrocene | **missing** | customer-portal authentication required |
+| IDA Pro / Binary Ninja | **missing** | commercial licences required |
+| Triton | **missing** | no compatible prebuilt DBI binding |
+| BinDiff / Diaphora | **missing** | in-tree differential metrics used instead |
 
 ### Not yet satisfied gates
 
 These remain open, not claimed:
 
-1. 100% coverage: measured 87.64% tarpaulin / 89.54% llvm-cov line coverage; uncovered defensive branches are
-   enumerated from LCOV.
-2. Full red-team external tooling: Ghidra/IDA/Binary Ninja, GAMBA/SiMBA, angr/KLEE,
-   Creusot, AORAI, Ferrocene, dudect-style timing.
-3. Live memory-dump diagnostic exists; its residual transient-constant finding must be accepted or mitigated.
-4. Full handler-layout mutation across builds (full `.sirus` equality 25.2%).
-5. Windows PE runtime execution and Win64 ABI validation.
+1. 100% coverage: not reached; uncovered defensive branches are enumerated from
+   LCOV and the exact current numbers are in `docs/VERIFICATION.md`.
+2. External tooling remains partial: IDA/Binary Ninja and Ferrocene require
+   unavailable licences/accounts; AORAI is a C-only tool; Triton was not run.
+   Ghidra, radare2, GAMBA, SiMBA, MBA-Blast, angr, KLEE, Creusot, and
+   dudect-bencher are executed.
+3. The VM timing measurement is a real leak (VM branch max |t| = 358.73); it is
+   not constant-time.
+4. Live memory-dump diagnostic exists; its residual transient-constant finding
+   must be accepted or mitigated.
+5. Full handler-layout mutation across builds (full `.sirus` equality 10.9%).
+6. Windows PE runtime execution and Win64 ABI validation.
 
 All protector modules are now wired into the crate and included in the Clippy
 graph. **No release claim may be made while any item in this section is open.**
@@ -254,4 +267,5 @@ Allowed:
 Not allowed:
 
 > “The entire project passes the full standard” while Level 2 is waived in the
-> CLI, test exemptions exist, or Kani/Miri/fuzzing/coverage have not run.
+> CLI, test exemptions exist, coverage is below 100%, the VM timing leak is
+> present, or any external tool result is overstated.

@@ -224,6 +224,24 @@ fn end_to_end_protection_and_adversarial_mutations() {
             "arguments {arguments:?}"
         );
     }
+    let mut random = 0x9e37_79b9_7f4a_7c15_u64;
+    for _ in 0..20 {
+        random ^= random << 13;
+        random ^= random >> 7;
+        random ^= random << 17;
+        let first_text = format!("{random}");
+        random ^= random << 13;
+        random ^= random >> 7;
+        random ^= random << 17;
+        let second_text = format!("{random}");
+        let arguments = [first_text.as_str(), second_text.as_str()];
+        let native_output = run_bounded(&victim, &arguments, Duration::from_secs(5));
+        let protected_output = run_bounded(&protected, &arguments, Duration::from_secs(5));
+        assert_eq!(
+            native_output.stdout, protected_output.stdout,
+            "random arguments {arguments:?}"
+        );
+    }
 
     let native_elf = Elf64::parse(&native_image).expect("parse native");
     let checks = native_elf

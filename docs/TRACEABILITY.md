@@ -19,9 +19,9 @@ under the safe-Rust/no-unsafe constraint.
 | Requirement | Status | Evidence |
 |---|---|---|
 | Asymmetric cost, not unbreakability | implemented as stated | `docs/THREAT_MODEL.md`, red-team report |
-| Defeat static decompilation of protected logic | partial | body scrubbed, flattened, encrypted; Ghidra not run |
-| Break automated symbolic execution | partial | large states/MBA/encryption; angr not run |
-| Invalidate prior work across builds | partial | payload 0.36% equal, ISA/state randomization; full segment 25.2% equal |
+| Defeat static decompilation of protected logic | partial | body scrubbed, flattened, encrypted; Ghidra/radare2 executed; IDA/BN unavailable |
+| Break automated symbolic execution | partial | angr 120 s timeout, KLEE 60 s timeout, no completed symbolic path |
+| Invalidate prior work across builds | partial | payload 0.38% equal, ISA/state randomization; full segment 10.9% equal |
 | Two components in one workspace | implemented | core/vm/binfmt/protector crates |
 | Zero external libraries | implemented | `cargo tree`, `cargo deny` |
 
@@ -60,11 +60,11 @@ under the safe-Rust/no-unsafe constraint.
 
 | Requirement | Status | Evidence |
 |---|---|---|
-| MBA expansion | implemented, bounded | `mba.rs`, property tests |
+| MBA expansion | implemented, bounded, linear + non-linear | `mba.rs`, fixed/random property tests |
 | Opaque predicates / fake branches | implemented | guard/decoy synthesis |
 | Constant blinding | implemented | XOR shares in encoder |
-| No contiguous sensitive constants | partial by construction | encrypted and blinded; live memory scan open |
-| MBA resistance to GAMBA/SiMBA | open/not proven | tools not run |
+| No contiguous sensitive constants | partial by construction | encrypted and blinded; live memory scan finds transient VM register values |
+| MBA resistance to GAMBA/SiMBA | partial | GAMBA times out on modular-inverse forms; variable shifts parser-fail; SiMBA reduces inverse forms |
 
 ### Stage 5 — Polymorphic virtual architecture
 
@@ -75,9 +75,9 @@ under the safe-Rust/no-unsafe constraint.
 | Randomized operand/register encoding | implemented | per-alias order, two reg maps |
 | Instruction aliasing | implemented | 4 aliases/semantic |
 | Rolling bytecode encryption | implemented | per-byte chained cipher |
-| No complete plaintext bytecode in RAM | implemented by design | byte-at-a-time locals; live scan open |
+| No complete plaintext bytecode in RAM | implemented by design | byte-at-a-time locals; live scan finds transient register values |
 | ISA layout mutation | partial | payload/aliases/maps/states; handler skeleton reused |
-| Handler layout mutation | partial | `.sirus` similar bytes 25.2% equal |
+| Handler layout mutation | partial | `.sirus` similar bytes 10.9% equal |
 | Build-specific static data | implemented | seed/payload/hash/entry shares |
 
 ### Stage 6 — VM synthesis and injection
@@ -169,17 +169,18 @@ See `docs/CODE_STANDARD_COMPLIANCE.md` and ADR-001.
 | Tool/requirement | Status | Evidence |
 |---|---|---|
 | Kani / SMT | run, 7 harnesses pass | `docs/VERIFICATION.md` |
-| Creusot | not run | open |
-| AORAI | not run | open |
-| cargo-fuzz | run, 66,962 executions | fuzz/ |
+| Creusot | run, 3 boundary models proved | `verification/creusot`, `scripts/creusot-check.sh` |
+| AORAI | installed (Frama-C 33.0); C-only, not applicable | `docs/VERIFICATION.md` |
+| cargo-fuzz | run, 63,455 final-tree executions (164,729 cumulative) | fuzz/ |
 | Proptest | external crate prohibited; in-tree property tests implemented | tests |
-| cargo-tarpaulin | run, 87.23% | coverage report |
+| cargo-tarpaulin | run, below the 100% target | coverage report |
+| cargo-llvm-cov | run, independent coverage | `docs/VERIFICATION.md` |
 | Loom | not applicable (no shared mutable runtime state) | ADR/architecture |
-| dudect-bencher | not implemented | open |
+| dudect-bencher | run; cipher below \|t\|=5, VM branch leaks | `verification/dudect` |
 | cargo-show-asm | installed, used | `cargo asm` |
 | LFENCE/Spectre fences | not feasible safely | limitations |
 | opt-level 3 / LTO / 1 CGU / panic abort / strip | implemented for release | Cargo.toml |
-| Ferrocene | not installed | open |
+| Ferrocene | not installed; customer authentication unavailable | open |
 
 ---
 
@@ -187,32 +188,29 @@ See `docs/CODE_STANDARD_COMPLIANCE.md` and ADR-001.
 
 | # | Requirement | Status | Evidence |
 |---:|---|---|---|
-| 1 | No readable original logic / no panic strings / no plaintext constants | partial | scrub + strings scan + entropy; Ghidra not run |
-| 2 | MBA resists simplification | partial | equivalence tests; GAMBA/SiMBA not run |
-| 3 | Uniform handlers, mutate state, detect DBI | partial | per-build geometry; no DBI detection |
+| 1 | No readable original logic / no panic strings / no plaintext constants | partial | Ghidra/radare2 scoped evidence; host std strings remain outside `.sirus` |
+| 2 | MBA resists simplification | partial | GAMBA timeout on inverse forms; variable shifts parser-fail; SiMBA reduces inverse |
+| 3 | Uniform handlers, mutate state, detect DBI | partial | per-build geometry; DBI/timing detection not feasible; VM timing leaks |
 | 4 | Taint explosion/laundering | partial | data flow/deep binding; no taint tool |
-| 5 | Symbolic explosion | partial | design; angr not run |
+| 5 | Symbolic explosion | partial | angr and KLEE bounded timeouts; not proofs |
 | 6 | No decrypted bytecode in memory | partial | no body cache; live dump finds transient constants in VM registers |
 | 7 | Deep binding / bypass fails | implemented | tamper and forced-return tests |
 | 8 | Hypervisor/debug-register resistance | **not feasible safely** | documented |
-| 9 | Differential builds mutate everything | partial | payload 0.36% equal; full segment 25.2% |
+| 9 | Differential builds mutate everything | partial | payload 0.38% equal; full segment 10.9% |
 | 10 | VM fuzzing no panic/OOB/hang | implemented | in-tree + libFuzzer + Miri + Kani |
 
 ---
 
 ## D. Open work
 
-1. Coverage from 87.23% to 100%, with branch-level justification.
-2. Ghidra/IDA/Binary Ninja headless evaluation.
-3. GAMBA/SiMBA/MBA-Blast corpus.
-4. angr/KLEE symbolic harness.
-5. Live process memory dump scanner.
-6. Creusot/AORAI contracts.
-7. Ferrocene build validation.
-8. Full handler-layout polymorphism.
-9. Windows ABI/linker/runtime validation.
-10. Optional dudect-style timing measurement (measurement, not a constant-time
-    claim).
+1. Coverage to 100%, with branch-level justification.
+2. IDA/Binary Ninja headless evaluation (licence unavailable).
+3. Ferrocene build validation (customer authentication unavailable).
+4. Full handler-layout polymorphism.
+5. Windows ABI/linker/runtime validation.
+6. Constant-time VM execution or explicit acceptance of the measured timing leak.
+7. Live memory constant secrecy beyond the current transient-register residual.
+8. Triton DBI symbolic run, if a compatible build is obtained.
 
 Any statement that all supplied requirements are fully satisfied is false until
 these are closed or explicitly accepted as release exceptions.
