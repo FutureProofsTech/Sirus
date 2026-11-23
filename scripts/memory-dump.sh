@@ -11,6 +11,8 @@ for tool in gcore gdb rustc readelf python3; do
     fi
 done
 
+cargo build -p sirus-protector >/dev/null
+
 work="target/memory-dump"
 rm -rf "$work"
 mkdir -p "$work"

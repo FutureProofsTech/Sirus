@@ -103,22 +103,22 @@ libFuzzer/Miri. This is recorded as a proof-scope limitation, not a pass.
 
 Toolchain: `cargo +nightly miri` (miri 0.1.0, 2026-08-03).
 
-Recorded passes:
+Final passes on the current tree:
 
 ```text
-cargo +nightly miri test -p sirus-core
-  46 tests passed (328.90 s)
-
 cargo +nightly miri test -p sirus-vm --lib
-  8 tests passed
+  8 tests passed (0.85 s)
 
 cargo +nightly miri test -p sirus-vm --test execution
-  11 tests passed (2051.87 s)
+  15 tests passed (2467.17 s)
+
+cargo +nightly miri test -p sirus-core
+  74 tests passed (459.35 s)
 ```
 
-After the memory-helper slice refactor and the expanded test corpus, a final Miri
-rerun is executed via `scripts/prove.sh`; its result is appended when complete.
-Miri is extremely slow and is not part of the fast gate.
+This includes the slice-based VM memory helpers, stack/push/pop semantics,
+branch/loop executions, malformed payloads, and all core tests. Miri is extremely
+slow and is not part of the fast gate.
 
 ---
 
@@ -133,6 +133,12 @@ Result:
 
 ```text
 Done 66962 runs in 21 second(s)
+```
+
+A final 11-second run added 34,312 executions (101,274 total) with no crash.
+
+```text
+Done 34312 runs in 11 second(s)
 ```
 
 No crash, panic, OOB, or timeout. The fuzz target builds a valid integrity key
@@ -256,7 +262,7 @@ cargo asm -p sirus-core --lib 1
 | Ghidra / IDA / Binary Ninja headless validation | tools not installed |
 | GAMBA / SiMBA / MBA-Blast | tools not installed |
 | angr / KLEE / Triton symbolic run | not installed/run |
-| live process memory dump scan | not automated |
+| live process memory dump scan | implemented diagnostic; transient constant observed in VM registers |
 | Creusot / AORAI | not installed/run |
 | Ferrocene certified compiler | not installed |
 | dudect-style timing study | not implemented |

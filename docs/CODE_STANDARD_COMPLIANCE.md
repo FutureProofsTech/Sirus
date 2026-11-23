@@ -198,7 +198,7 @@ Implemented exactly in the root `Cargo.toml`:
 | `cargo-deny` | installed | executed; advisories/bans/licenses/sources pass |
 | `cargo-nextest` | installed | executed; 145/145 tests |
 | `cargo-tarpaulin` | installed | executed; 87.64% lines, 100% target not met |
-| `cargo-fuzz` | installed | 66,962 runs, no crash |
+| `cargo-fuzz` | installed | 101,274 runs, no crash |
 | Kani 0.68.0 | installed | 5 core + 2 VM harnesses verified |
 | Miri | nightly | core and VM unit/execution suites pass |
 | valgrind | installed | protected sample clean |
@@ -218,7 +218,7 @@ These remain open, not claimed:
    enumerated from LCOV.
 2. Full red-team external tooling: Ghidra/IDA/Binary Ninja, GAMBA/SiMBA, angr/KLEE,
    Creusot, AORAI, Ferrocene, dudect-style timing.
-3. Live process memory-dump scanner.
+3. Live memory-dump diagnostic exists; its residual transient-constant finding must be accepted or mitigated.
 4. Full handler-layout mutation across builds (full `.sirus` equality 25.2%).
 5. Windows PE runtime execution and Win64 ABI validation.
 

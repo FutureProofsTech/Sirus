@@ -194,7 +194,7 @@ masked shifts, no division, checked memory, deterministic fuel, no panic path.
 
 - deterministic in-tree fuzz: 20,000 random payloads + 10,000 valid-payload
   mutations, no panic/hang;
-- libFuzzer: **66,962 runs in 21 s**, no crash;
+- libFuzzer: **66,962 runs in 21 s plus a final 34,312-run 11 s session (101,274 total)**, no crash;
 - Kani: 5 core + 2 VM bounds harnesses verified;
 - Miri: core and VM unit/full execution suites pass;
 - malformed-payload suite covers bad count/offset/length/opcode/register/trap/fuel.

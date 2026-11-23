@@ -1,4 +1,4 @@
-# SIRUS
+# SIRUS (Super Sirus)
 
 **Zero-dependency polymorphic code virtualizer in Safe Rust.**
 
@@ -136,7 +136,8 @@ It runs Kani, Miri on core and VM unit tests, and a libFuzzer session. Set
 
 Current measured results and residuals are in
 [`docs/VERIFICATION.md`](docs/VERIFICATION.md) and
-[`docs/RED_TEAM.md`](docs/RED_TEAM.md).
+[`docs/RED_TEAM.md`](docs/RED_TEAM.md). Vulnerability handling is described in
+[`SECURITY.md`](SECURITY.md).
 
 ---
 
