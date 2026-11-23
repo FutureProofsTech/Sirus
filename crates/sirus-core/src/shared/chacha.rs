@@ -1,4 +1,4 @@
-//! ChaCha20 stream cipher (RFC 8439), used to expand operating-system entropy
+//! `ChaCha20` stream cipher (RFC 8439), used to expand operating-system entropy
 //! into build keys and randomized padding. This is the only primitive in the
 //! project intended to carry cryptographic entropy.
 
@@ -10,8 +10,7 @@ fn load_u32(bytes: &[u8], offset: usize) -> u32 {
     bytes
         .get(offset..offset.wrapping_add(4))
         .and_then(|slice| <[u8; 4]>::try_from(slice).ok())
-        .map(u32::from_le_bytes)
-        .unwrap_or(0)
+        .map_or(0, u32::from_le_bytes)
 }
 
 macro_rules! quarter_round {
@@ -31,7 +30,7 @@ macro_rules! quarter_round {
     };
 }
 
-/// ChaCha20 generator with a 256-bit key and 96-bit nonce.
+/// `ChaCha20` generator with a 256-bit key and 96-bit nonce.
 #[derive(Clone, Debug)]
 pub struct ChaCha20 {
     key: [u32; 8],
@@ -74,7 +73,7 @@ impl ChaCha20 {
     /// Creates a stream with an explicit counter.
     #[inline]
     #[must_use]
-    pub fn with_counter(mut self, counter: u32) -> Self {
+    pub const fn with_counter(mut self, counter: u32) -> Self {
         self.counter = counter;
         self.block_index = 64;
         self
@@ -207,7 +206,9 @@ mod tests {
             0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b,
             0x1c, 0x1d, 0x1e, 0x1f,
         ];
-        let nonce = [0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x4a, 0x00, 0x00, 0x00, 0x00];
+        let nonce = [
+            0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x4a, 0x00, 0x00, 0x00, 0x00,
+        ];
         let mut stream = ChaCha20::new(key, nonce).with_counter(1);
         let mut block = [0_u8; 64];
         stream.fill(&mut block);

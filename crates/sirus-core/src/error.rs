@@ -123,6 +123,7 @@ pub enum CoreError {
 }
 
 impl fmt::Display for DecodeReason {
+    #[inline]
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let text = match self {
             Self::Truncated => "truncated instruction",
@@ -141,11 +142,16 @@ impl fmt::Display for DecodeReason {
 }
 
 impl fmt::Display for CoreError {
+    #[inline]
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::CapacityExceeded => formatter.write_str("fixed capacity exceeded"),
             Self::Decode(error) => {
-                write!(formatter, "decode failed at {:#x}: {}", error.offset, error.reason)
+                write!(
+                    formatter,
+                    "decode failed at {:#x}: {}",
+                    error.offset, error.reason
+                )
             }
             Self::InvalidBranchTarget { offset, target } => {
                 write!(

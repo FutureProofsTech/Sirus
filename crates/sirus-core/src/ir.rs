@@ -137,6 +137,10 @@ impl<T: Copy + Default, const N: usize> BoundedVec<T, N> {
     }
 
     /// Appends an item.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::error::CoreError::CapacityExceeded`] when the fixed capacity is full.
     #[inline]
     pub fn push(&mut self, value: T) -> Result<()> {
         if self.len >= N {
@@ -200,13 +204,13 @@ impl<T: Copy + Default, const N: usize> BoundedVec<T, N> {
 
     /// Clears the vector.
     #[inline]
-    pub fn clear(&mut self) {
+    pub const fn clear(&mut self) {
         self.len = 0;
     }
 
     /// Shrinks the initialized prefix.
     #[inline]
-    pub fn truncate(&mut self, length: usize) {
+    pub const fn truncate(&mut self, length: usize) {
         if length < self.len {
             self.len = length;
         }
@@ -214,7 +218,7 @@ impl<T: Copy + Default, const N: usize> BoundedVec<T, N> {
 
     /// Iterates over items.
     #[inline]
-    pub fn iter(&self) -> BoundedIter<'_, T, N> {
+    pub const fn iter(&self) -> BoundedIter<'_, T, N> {
         BoundedIter {
             vector: self,
             index: 0,
@@ -253,6 +257,10 @@ impl<T: Copy + Default, const N: usize> BoundedVec<T, N> {
     }
 
     /// Inserts a value in sorted order using `less`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::error::CoreError::CapacityExceeded`] when the fixed capacity is full.
     #[inline]
     pub fn insert_sorted_by<F>(&mut self, value: T, less: F) -> Result<()>
     where
@@ -393,6 +401,10 @@ impl<const N: usize> ByteBuf<N> {
     }
 
     /// Appends one byte.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::error::CoreError::PayloadTooLarge`] when the fixed capacity is full.
     #[inline]
     pub fn push(&mut self, byte: u8) -> Result<()> {
         if self.len >= N {
@@ -408,6 +420,10 @@ impl<const N: usize> ByteBuf<N> {
     }
 
     /// Appends a slice.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::error::CoreError::PayloadTooLarge`] when the fixed capacity is full.
     #[inline]
     pub fn extend_from_slice(&mut self, bytes: &[u8]) -> Result<()> {
         for byte in bytes {
@@ -447,13 +463,13 @@ impl<const N: usize> ByteBuf<N> {
 
     /// Clears the buffer.
     #[inline]
-    pub fn clear(&mut self) {
+    pub const fn clear(&mut self) {
         self.len = 0;
     }
 
     /// Shrinks the buffer.
     #[inline]
-    pub fn truncate(&mut self, length: usize) {
+    pub const fn truncate(&mut self, length: usize) {
         if length < self.len {
             self.len = length;
         }
@@ -472,6 +488,16 @@ impl<const N: usize> Default for ByteBuf<N> {
 pub struct BoundedIter<'a, T: Copy + Default, const N: usize> {
     vector: &'a BoundedVec<T, N>,
     index: usize,
+}
+
+impl<'a, T: Copy + Default, const N: usize> IntoIterator for &'a BoundedVec<T, N> {
+    type Item = &'a T;
+    type IntoIter = BoundedIter<'a, T, N>;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
 }
 
 impl<'a, T: Copy + Default, const N: usize> Iterator for BoundedIter<'a, T, N> {
@@ -822,7 +848,7 @@ impl LiftedFunction {
 
 #[cfg(test)]
 mod tests {
-    use super::{BoundedVec, Width, MAX_IR_OPS};
+    use super::{BoundedVec, MAX_IR_OPS, Width};
     use crate::error::CoreError;
 
     #[test]

@@ -24,7 +24,7 @@ const fn rotl(value: u64, count: u32) -> u64 {
 }
 
 #[inline]
-fn sip_round(v0: &mut u64, v1: &mut u64, v2: &mut u64, v3: &mut u64) {
+const fn sip_round(v0: &mut u64, v1: &mut u64, v2: &mut u64, v3: &mut u64) {
     *v0 = v0.wrapping_add(*v1);
     *v1 = rotl(*v1, 13);
     *v1 ^= *v0;
@@ -60,7 +60,7 @@ impl SipHasher24 {
     }
 
     #[inline]
-    fn compress(&mut self, message: u64) {
+    const fn compress(&mut self, message: u64) {
         self.v3 ^= message;
         sip_round(&mut self.v0, &mut self.v1, &mut self.v2, &mut self.v3);
         sip_round(&mut self.v0, &mut self.v1, &mut self.v2, &mut self.v3);
@@ -93,7 +93,7 @@ impl SipHasher24 {
     /// Finalizes the hash.
     #[inline]
     #[must_use]
-    pub fn finish(&self) -> u64 {
+    pub const fn finish(&self) -> u64 {
         let mut v0 = self.v0;
         let mut v1 = self.v1;
         let mut v2 = self.v2;
@@ -158,7 +158,10 @@ mod tests {
             }
             index += 1;
         }
-        assert_eq!(SipHasher24::hash(key0, key1, &message), 0xa129_ca61_49be_45e5);
+        assert_eq!(
+            SipHasher24::hash(key0, key1, &message),
+            0xa129_ca61_49be_45e5
+        );
     }
 
     #[test]

@@ -270,27 +270,22 @@ pub const SEMANTIC_IDS: [u8; SEMANTIC_COUNT] = [
 /// Returns the canonical operand layout of a semantic operation.
 #[inline]
 #[must_use]
-pub fn format(semantic: u8) -> Option<Format> {
+pub const fn format(semantic: u8) -> Option<Format> {
     match semantic {
-        SEM_NOP => Some(Format::new([ROLE_NONE; MAX_OPERANDS], 0)),
-        SEM_MOV_RR => Some(f2(ROLE_REG, ROLE_REG)),
-        SEM_MOV_RI => Some(f2(ROLE_REG, ROLE_IMM)),
-        SEM_ADD_RR | SEM_SUB_RR | SEM_MUL_RR | SEM_AND_RR | SEM_OR_RR | SEM_XOR_RR
-        | SEM_SHL_RR | SEM_SHR_RR | SEM_SAR_RR | SEM_ROTL_RR | SEM_ROTR_RR => {
-            Some(f2(ROLE_REG, ROLE_REG))
-        }
-        SEM_ADD_RI | SEM_SUB_RI | SEM_AND_RI | SEM_OR_RI | SEM_XOR_RI | SEM_SHL_RI
+        SEM_NOP | SEM_TRAP => Some(Format::new([ROLE_NONE; MAX_OPERANDS], 0)),
+        SEM_MOV_RR | SEM_LOAD8 | SEM_LOAD16 | SEM_LOAD32 | SEM_LOAD64 | SEM_STORE8
+        | SEM_STORE16 | SEM_STORE32 | SEM_STORE64 | SEM_ADD_RR | SEM_SUB_RR | SEM_MUL_RR
+        | SEM_AND_RR | SEM_OR_RR | SEM_XOR_RR | SEM_SHL_RR | SEM_SHR_RR | SEM_SAR_RR
+        | SEM_ROTL_RR | SEM_ROTR_RR => Some(f2(ROLE_REG, ROLE_REG)),
+        SEM_MOV_RI | SEM_ADD_RI | SEM_SUB_RI | SEM_AND_RI | SEM_OR_RI | SEM_XOR_RI | SEM_SHL_RI
         | SEM_SHR_RI | SEM_SAR_RI | SEM_ROTL_RI | SEM_ROTR_RI => Some(f2(ROLE_REG, ROLE_IMM)),
         SEM_NOT_R | SEM_NEG_R | SEM_RET => Some(f1(ROLE_REG)),
         SEM_CMPEQ_RR | SEM_CMPLTU_RR | SEM_CMPLTS_RR | SEM_CMPLEU_RR | SEM_CMPLES_RR => {
             Some(f3(ROLE_REG, ROLE_REG, ROLE_REG))
         }
         SEM_SELECT_RRRR => Some(f4(ROLE_REG, ROLE_REG, ROLE_REG, ROLE_REG)),
-        SEM_LOAD8 | SEM_LOAD16 | SEM_LOAD32 | SEM_LOAD64 => Some(f2(ROLE_REG, ROLE_REG)),
-        SEM_STORE8 | SEM_STORE16 | SEM_STORE32 | SEM_STORE64 => Some(f2(ROLE_REG, ROLE_REG)),
         SEM_JMP => Some(f2(ROLE_IMM, ROLE_REG)),
         SEM_JCC => Some(f4(ROLE_REG, ROLE_IMM, ROLE_IMM, ROLE_REG)),
-        SEM_TRAP => Some(Format::new([ROLE_NONE; MAX_OPERANDS], 0)),
         _ => None,
     }
 }
@@ -298,8 +293,8 @@ pub fn format(semantic: u8) -> Option<Format> {
 #[cfg(test)]
 mod tests {
     use super::{
-        format, ROLE_IMM, ROLE_REG, SEMANTIC_IDS, SEMANTIC_COUNT, SEM_ADD_RR, SEM_JCC, SEM_JMP,
-        SEM_MOV_RI, SEM_SELECT_RRRR, VM_REGISTERS,
+        ROLE_IMM, ROLE_REG, SEM_ADD_RR, SEM_JCC, SEM_JMP, SEM_MOV_RI, SEM_SELECT_RRRR,
+        SEMANTIC_COUNT, SEMANTIC_IDS, VM_REGISTERS, format,
     };
 
     #[test]
@@ -325,10 +320,7 @@ mod tests {
             format(SEM_MOV_RI).map(|value| (value.roles, value.len)),
             Some(([ROLE_REG, ROLE_IMM, 0, 0], 2))
         );
-        assert_eq!(
-            format(SEM_ADD_RR).map(|value| value.len),
-            Some(2)
-        );
+        assert_eq!(format(SEM_ADD_RR).map(|value| value.len), Some(2));
         assert_eq!(format(SEM_SELECT_RRRR).map(|value| value.len), Some(4));
     }
 

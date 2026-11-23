@@ -4,8 +4,8 @@
 //! encoder and the injected VM call this module with the same seed.
 
 use crate::shared::format::{
-    format, ALIASES_PER_SEMANTIC, INVALID_OPCODE, MAX_OPERANDS, SEMANTIC_COUNT, SEMANTIC_IDS,
-    VM_REGISTERS,
+    ALIASES_PER_SEMANTIC, INVALID_OPCODE, MAX_OPERANDS, SEMANTIC_COUNT, SEMANTIC_IDS, VM_REGISTERS,
+    format,
 };
 use crate::shared::sip::SipHasher24;
 
@@ -44,8 +44,8 @@ pub struct Tables {
     pub manifest_big_endian: bool,
 }
 
-/// Small deterministic expander built from SipHash. It is not a general
-/// cryptographic random generator; build entropy comes from ChaCha20 and the
+/// Small deterministic expander built from `SipHash`. It is not a general
+/// cryptographic random generator; build entropy comes from `ChaCha20` and the
 /// operating system. This expander only converts one secret seed into
 /// reproducible structural tables.
 #[derive(Clone, Debug)]
@@ -93,8 +93,7 @@ fn load_u64(bytes: &[u8], offset: usize) -> u64 {
     bytes
         .get(offset..offset.wrapping_add(8))
         .and_then(|slice| <[u8; 8]>::try_from(slice).ok())
-        .map(u64::from_le_bytes)
-        .unwrap_or(0)
+        .map_or(0, u64::from_le_bytes)
 }
 
 #[inline]
@@ -288,7 +287,7 @@ impl Tables {
             .get(usize::from(opcode))
             .copied()
             .filter(|value| *value != INVALID_OPCODE)
-            .and_then(|value| usize::try_from(value).ok())
+            .map(usize::from)
     }
 }
 
@@ -301,9 +300,9 @@ pub fn low_byte(value: u64) -> u8 {
 
 #[cfg(test)]
 mod tests {
-    use super::{low_byte, Tables};
+    use super::{Tables, low_byte};
     use crate::shared::format::{
-        format, ALIASES_PER_SEMANTIC, SEMANTIC_COUNT, SEMANTIC_IDS, VM_REGISTERS,
+        ALIASES_PER_SEMANTIC, SEMANTIC_COUNT, SEMANTIC_IDS, VM_REGISTERS, format,
     };
 
     fn seed(value: u8) -> [u8; 32] {

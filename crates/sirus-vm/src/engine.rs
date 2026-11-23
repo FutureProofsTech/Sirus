@@ -6,19 +6,20 @@
 //! trigger an out-of-bounds access, panic, or unbounded execution.
 
 use crate::shared::cipher::{
+    BodyCipher, MANIFEST_COUNT_BYTES, MANIFEST_ENTRY_BYTES, MAX_PAYLOAD_BLOCKS,
     decode_manifest_u32, decode_manifest_u64, effective_key, manifest_byte, manifest_size,
-    payload_hash, BodyCipher, MANIFEST_COUNT_BYTES, MANIFEST_ENTRY_BYTES, MAX_PAYLOAD_BLOCKS,
+    payload_hash,
 };
 use crate::shared::derive::{Seed, Tables};
 use crate::shared::format::{
-    format, MAX_OPERANDS, REG_R8, REG_R9, REG_RAX, REG_RCX, REG_RDI, REG_RDX, REG_RSI, REG_RSP,
-    ROLE_IMM, ROLE_REG, SEM_ADD_RI, SEM_ADD_RR, SEM_AND_RI, SEM_AND_RR, SEM_CMPEQ_RR,
-    SEM_CMPLES_RR, SEM_CMPLEU_RR, SEM_CMPLTS_RR, SEM_CMPLTU_RR, SEM_JCC, SEM_JMP, SEM_LOAD16,
-    SEM_LOAD32, SEM_LOAD64, SEM_LOAD8, SEM_MOV_RI, SEM_MOV_RR, SEM_MUL_RR, SEM_NEG_R, SEM_NOP,
-    SEM_NOT_R, SEM_OR_RI, SEM_OR_RR, SEM_RET, SEM_ROTL_RI, SEM_ROTL_RR, SEM_ROTR_RI,
-    SEM_ROTR_RR, SEM_SAR_RI, SEM_SAR_RR, SEM_SELECT_RRRR, SEM_SHL_RI, SEM_SHL_RR, SEM_SHR_RI,
-    SEM_SHR_RR, SEM_STORE16, SEM_STORE32, SEM_STORE64, SEM_STORE8, SEM_SUB_RI, SEM_SUB_RR,
-    SEM_TRAP, SEM_XOR_RI, SEM_XOR_RR, VM_MEMORY_SIZE, VM_REGISTERS, VM_STACK_TOP,
+    MAX_OPERANDS, REG_R8, REG_R9, REG_RAX, REG_RCX, REG_RDI, REG_RDX, REG_RSI, REG_RSP, ROLE_IMM,
+    ROLE_REG, SEM_ADD_RI, SEM_ADD_RR, SEM_AND_RI, SEM_AND_RR, SEM_CMPEQ_RR, SEM_CMPLES_RR,
+    SEM_CMPLEU_RR, SEM_CMPLTS_RR, SEM_CMPLTU_RR, SEM_JCC, SEM_JMP, SEM_LOAD8, SEM_LOAD16,
+    SEM_LOAD32, SEM_LOAD64, SEM_MOV_RI, SEM_MOV_RR, SEM_MUL_RR, SEM_NEG_R, SEM_NOP, SEM_NOT_R,
+    SEM_OR_RI, SEM_OR_RR, SEM_RET, SEM_ROTL_RI, SEM_ROTL_RR, SEM_ROTR_RI, SEM_ROTR_RR, SEM_SAR_RI,
+    SEM_SAR_RR, SEM_SELECT_RRRR, SEM_SHL_RI, SEM_SHL_RR, SEM_SHR_RI, SEM_SHR_RR, SEM_STORE8,
+    SEM_STORE16, SEM_STORE32, SEM_STORE64, SEM_SUB_RI, SEM_SUB_RR, SEM_TRAP, SEM_XOR_RI,
+    SEM_XOR_RR, VM_MEMORY_SIZE, VM_REGISTERS, VM_STACK_TOP, format,
 };
 
 /// Deterministic VM outcome.
@@ -147,9 +148,7 @@ impl<'a> BodyReader<'a> {
             return None;
         }
         let raw = self.payload.get(self.position).copied()?;
-        let plain = self
-            .cipher
-            .apply(self.position, self.previous, raw);
+        let plain = self.cipher.apply(self.position, self.previous, raw);
         self.previous = plain;
         self.position = self.position.checked_add(1)?;
         Some(plain)
@@ -233,12 +232,12 @@ fn immediate(values: &[u64; MAX_OPERANDS], operand: usize) -> Option<u64> {
 }
 
 #[inline]
-fn as_i64(value: u64) -> i64 {
+const fn as_i64(value: u64) -> i64 {
     i64::from_ne_bytes(value.to_ne_bytes())
 }
 
 #[inline]
-fn as_u64(value: i64) -> u64 {
+const fn as_u64(value: i64) -> u64 {
     u64::from_ne_bytes(value.to_ne_bytes())
 }
 
@@ -248,11 +247,7 @@ fn shift_amount(value: u64) -> u32 {
 }
 
 #[inline]
-fn load_memory(
-    memory: &[u8; VM_MEMORY_SIZE],
-    address: u64,
-    width: usize,
-) -> Option<u64> {
+fn load_memory(memory: &[u8; VM_MEMORY_SIZE], address: u64, width: usize) -> Option<u64> {
     let start = usize::try_from(address).ok()?;
     let end = start.checked_add(width)?;
     if end > VM_MEMORY_SIZE || width > 8 {
@@ -301,26 +296,23 @@ fn execute_semantic(
     memory: &mut [u8; VM_MEMORY_SIZE],
 ) -> Option<Flow> {
     let values = &decoded.values;
-    let write_binary = |registers: &mut [u64; VM_REGISTERS],
-                        operation: fn(u64, u64) -> u64|
-     -> Option<()> {
-        let left = reg_value(registers, values, 0)?;
-        let right = reg_value(registers, values, 1)?;
-        set_reg_value(registers, values, 0, operation(left, right))
-    };
-    let write_binary_imm = |registers: &mut [u64; VM_REGISTERS],
-                            operation: fn(u64, u64) -> u64|
-     -> Option<()> {
-        let left = reg_value(registers, values, 0)?;
-        let right = immediate(values, 1)?;
-        set_reg_value(registers, values, 0, operation(left, right))
-    };
-    let write_unary = |registers: &mut [u64; VM_REGISTERS],
-                       operation: fn(u64) -> u64|
-     -> Option<()> {
-        let value = reg_value(registers, values, 0)?;
-        set_reg_value(registers, values, 0, operation(value))
-    };
+    let write_binary =
+        |registers: &mut [u64; VM_REGISTERS], operation: fn(u64, u64) -> u64| -> Option<()> {
+            let left = reg_value(registers, values, 0)?;
+            let right = reg_value(registers, values, 1)?;
+            set_reg_value(registers, values, 0, operation(left, right))
+        };
+    let write_binary_imm =
+        |registers: &mut [u64; VM_REGISTERS], operation: fn(u64, u64) -> u64| -> Option<()> {
+            let left = reg_value(registers, values, 0)?;
+            let right = immediate(values, 1)?;
+            set_reg_value(registers, values, 0, operation(left, right))
+        };
+    let write_unary =
+        |registers: &mut [u64; VM_REGISTERS], operation: fn(u64) -> u64| -> Option<()> {
+            let value = reg_value(registers, values, 0)?;
+            set_reg_value(registers, values, 0, operation(value))
+        };
 
     match decoded.semantic {
         SEM_NOP => Some(Flow::Continue),
@@ -387,7 +379,9 @@ fn execute_semantic(
             Some(Flow::Continue)
         }
         SEM_SHL_RR => {
-            write_binary(registers, |left, right| left.wrapping_shl(shift_amount(right)))?;
+            write_binary(registers, |left, right| {
+                left.wrapping_shl(shift_amount(right))
+            })?;
             Some(Flow::Continue)
         }
         SEM_SHL_RI => {
@@ -397,7 +391,9 @@ fn execute_semantic(
             Some(Flow::Continue)
         }
         SEM_SHR_RR => {
-            write_binary(registers, |left, right| left.wrapping_shr(shift_amount(right)))?;
+            write_binary(registers, |left, right| {
+                left.wrapping_shr(shift_amount(right))
+            })?;
             Some(Flow::Continue)
         }
         SEM_SHR_RI => {
@@ -419,19 +415,27 @@ fn execute_semantic(
             Some(Flow::Continue)
         }
         SEM_ROTL_RR => {
-            write_binary(registers, |left, right| left.rotate_left(shift_amount(right)))?;
+            write_binary(registers, |left, right| {
+                left.rotate_left(shift_amount(right))
+            })?;
             Some(Flow::Continue)
         }
         SEM_ROTL_RI => {
-            write_binary_imm(registers, |left, right| left.rotate_left(shift_amount(right)))?;
+            write_binary_imm(registers, |left, right| {
+                left.rotate_left(shift_amount(right))
+            })?;
             Some(Flow::Continue)
         }
         SEM_ROTR_RR => {
-            write_binary(registers, |left, right| left.rotate_right(shift_amount(right)))?;
+            write_binary(registers, |left, right| {
+                left.rotate_right(shift_amount(right))
+            })?;
             Some(Flow::Continue)
         }
         SEM_ROTR_RI => {
-            write_binary_imm(registers, |left, right| left.rotate_right(shift_amount(right)))?;
+            write_binary_imm(registers, |left, right| {
+                left.rotate_right(shift_amount(right))
+            })?;
             Some(Flow::Continue)
         }
         SEM_CMPEQ_RR | SEM_CMPLTU_RR | SEM_CMPLTS_RR | SEM_CMPLEU_RR | SEM_CMPLES_RR => {
@@ -508,7 +512,7 @@ fn execute_semantic(
 }
 
 #[inline]
-fn halt(status: Status, steps: u64) -> Run {
+const fn halt(status: Status, steps: u64) -> Run {
     Run {
         value: 0,
         status,
@@ -517,12 +521,7 @@ fn halt(status: Status, steps: u64) -> Run {
 }
 
 #[inline]
-fn read_manifest_u64_at(
-    payload: &[u8],
-    key: u64,
-    start: usize,
-    big_endian: bool,
-) -> Option<u64> {
+fn read_manifest_u64_at(payload: &[u8], key: u64, start: usize, big_endian: bool) -> Option<u64> {
     let mut bytes = [0_u8; 8];
     let mut index = 0_usize;
     while index < 8 {
@@ -538,12 +537,7 @@ fn read_manifest_u64_at(
 }
 
 #[inline]
-fn read_manifest_u32_at(
-    payload: &[u8],
-    key: u64,
-    start: usize,
-    big_endian: bool,
-) -> Option<u32> {
+fn read_manifest_u32_at(payload: &[u8], key: u64, start: usize, big_endian: bool) -> Option<u32> {
     let mut bytes = [0_u8; 4];
     let mut index = 0_usize;
     while index < 4 {
@@ -560,6 +554,7 @@ fn read_manifest_u32_at(
 
 /// Executes a protected function.
 #[inline]
+#[must_use]
 pub fn execute(input: VmInput<'_>, entry_index: usize, args: [u64; 6]) -> Run {
     let mut steps = 0_u64;
     let mut fuel = input.fuel;
@@ -574,7 +569,14 @@ pub fn execute(input: VmInput<'_>, entry_index: usize, args: [u64; 6]) -> Run {
     let [entry_a, entry_b] = *entry;
     let mut state = entry_a ^ entry_b;
     let mut registers = [0_u64; VM_REGISTERS];
-    let [argument0, argument1, argument2, argument3, argument4, argument5] = args;
+    let [
+        argument0,
+        argument1,
+        argument2,
+        argument3,
+        argument4,
+        argument5,
+    ] = args;
     let _ = set_reg_value_raw(&mut registers, REG_RDI, argument0);
     let _ = set_reg_value_raw(&mut registers, REG_RSI, argument1);
     let _ = set_reg_value_raw(&mut registers, REG_RDX, argument2);
@@ -613,12 +615,10 @@ pub fn execute(input: VmInput<'_>, entry_index: usize, args: [u64; 6]) -> Run {
         let mut found: Option<(usize, usize)> = None;
         let mut entry_index_scan = 0_usize;
         while entry_index_scan < count {
-            let Some(entry_relative) = entry_index_scan.checked_mul(MANIFEST_ENTRY_BYTES)
-            else {
+            let Some(entry_relative) = entry_index_scan.checked_mul(MANIFEST_ENTRY_BYTES) else {
                 return halt(Status::BadPayload, steps);
             };
-            let Some(entry_start) = MANIFEST_COUNT_BYTES.checked_add(entry_relative)
-            else {
+            let Some(entry_start) = MANIFEST_COUNT_BYTES.checked_add(entry_relative) else {
                 return halt(Status::BadPayload, steps);
             };
             let Some(tag) =
@@ -633,14 +633,20 @@ pub fn execute(input: VmInput<'_>, entry_index: usize, args: [u64; 6]) -> Run {
                 let Some(length_start) = offset_start.checked_add(4) else {
                     return halt(Status::BadPayload, steps);
                 };
-                let Some(offset) =
-                    read_manifest_u32_at(input.payload, key, offset_start, tables.manifest_big_endian)
-                else {
+                let Some(offset) = read_manifest_u32_at(
+                    input.payload,
+                    key,
+                    offset_start,
+                    tables.manifest_big_endian,
+                ) else {
                     return halt(Status::BadPayload, steps);
                 };
-                let Some(length) =
-                    read_manifest_u32_at(input.payload, key, length_start, tables.manifest_big_endian)
-                else {
+                let Some(length) = read_manifest_u32_at(
+                    input.payload,
+                    key,
+                    length_start,
+                    tables.manifest_big_endian,
+                ) else {
                     return halt(Status::BadPayload, steps);
                 };
                 let Ok(offset) = usize::try_from(offset) else {
@@ -719,15 +725,14 @@ fn set_reg_value_raw(registers: &mut [u64; VM_REGISTERS], slot: u8, value: u64) 
 #[cfg(test)]
 mod tests {
     use super::{
-        as_i64, as_u64, execute_semantic, load_memory, shift_amount, store_memory, Decoded, Flow,
-        Status,
+        Decoded, Flow, as_i64, as_u64, execute_semantic, load_memory, shift_amount, store_memory,
     };
     use crate::shared::format::{
         MAX_OPERANDS, REG_RAX, REG_RBX, REG_RCX, REG_RDX, REG_RSP, SEM_ADD_RI, SEM_ADD_RR,
         SEM_AND_RR, SEM_CMPEQ_RR, SEM_CMPLES_RR, SEM_CMPLTS_RR, SEM_JCC, SEM_JMP, SEM_LOAD64,
         SEM_MOV_RI, SEM_MOV_RR, SEM_MUL_RR, SEM_NEG_R, SEM_NOT_R, SEM_OR_RR, SEM_RET, SEM_ROTL_RI,
-        SEM_ROTR_RI, SEM_SAR_RI, SEM_SELECT_RRRR, SEM_SHL_RI, SEM_SHR_RI, SEM_STORE64,
-        SEM_SUB_RR, SEM_XOR_RR, VM_MEMORY_SIZE, VM_REGISTERS,
+        SEM_ROTR_RI, SEM_SAR_RI, SEM_SELECT_RRRR, SEM_SHL_RI, SEM_SHR_RI, SEM_STORE64, SEM_SUB_RR,
+        SEM_XOR_RR, VM_MEMORY_SIZE, VM_REGISTERS,
     };
 
     fn registers() -> [u64; VM_REGISTERS] {
@@ -749,10 +754,7 @@ mod tests {
     }
 
     fn get(registers: &[u64; VM_REGISTERS], slot: u8) -> u64 {
-        registers
-            .get(usize::from(slot))
-            .copied()
-            .unwrap_or(0)
+        registers.get(usize::from(slot)).copied().unwrap_or(0)
     }
 
     #[test]
@@ -897,7 +899,12 @@ mod tests {
         set(&mut regs, REG_RDX, 7);
         let mut instruction = decoded(
             SEM_CMPEQ_RR,
-            [u64::from(REG_RBX), u64::from(REG_RAX), u64::from(REG_RCX), 0],
+            [
+                u64::from(REG_RBX),
+                u64::from(REG_RAX),
+                u64::from(REG_RCX),
+                0,
+            ],
         );
         assert_eq!(
             execute_semantic(&instruction, &mut regs, &mut mem),
@@ -920,7 +927,12 @@ mod tests {
         assert_eq!(get(&regs, REG_RBX), 42);
         instruction = decoded(
             SEM_CMPLTS_RR,
-            [u64::from(REG_RBX), u64::from(REG_RAX), u64::from(REG_RDX), 0],
+            [
+                u64::from(REG_RBX),
+                u64::from(REG_RAX),
+                u64::from(REG_RDX),
+                0,
+            ],
         );
         assert_eq!(
             execute_semantic(&instruction, &mut regs, &mut mem),
@@ -929,7 +941,12 @@ mod tests {
         assert_eq!(get(&regs, REG_RBX), 0);
         instruction = decoded(
             SEM_CMPLES_RR,
-            [u64::from(REG_RBX), u64::from(REG_RDX), u64::from(REG_RAX), 0],
+            [
+                u64::from(REG_RBX),
+                u64::from(REG_RDX),
+                u64::from(REG_RAX),
+                0,
+            ],
         );
         assert_eq!(
             execute_semantic(&instruction, &mut regs, &mut mem),
@@ -941,12 +958,30 @@ mod tests {
     #[test]
     fn memory_is_little_endian_and_bounds_checked() {
         let mut memory = memory();
-        assert_eq!(store_memory(&mut memory, 100, 8, 0x0102_0304_0506_0708), Some(()));
+        assert_eq!(
+            store_memory(&mut memory, 100, 8, 0x0102_0304_0506_0708),
+            Some(())
+        );
         assert_eq!(load_memory(&memory, 100, 8), Some(0x0102_0304_0506_0708));
         assert_eq!(load_memory(&memory, 100, 4), Some(0x0506_0708));
         assert_eq!(load_memory(&memory, 100, 1), Some(0x08));
-        assert_eq!(load_memory(&memory, VM_MEMORY_SIZE as u64, 1), None);
-        assert_eq!(store_memory(&mut memory, VM_MEMORY_SIZE as u64 - 1, 8, 0), None);
+        assert_eq!(
+            load_memory(
+                &memory,
+                u64::try_from(VM_MEMORY_SIZE).unwrap_or(u64::MAX),
+                1
+            ),
+            None
+        );
+        assert_eq!(
+            store_memory(
+                &mut memory,
+                u64::try_from(VM_MEMORY_SIZE).unwrap_or(u64::MAX) - 1,
+                8,
+                0
+            ),
+            None
+        );
     }
 
     #[test]
@@ -955,32 +990,20 @@ mod tests {
         let mut mem = memory();
         set(&mut regs, REG_RSP, 100);
         set(&mut regs, REG_RAX, 0x1122_3344_5566_7788);
-        let mut instruction = decoded(
-            SEM_STORE64,
-            [u64::from(REG_RSP), u64::from(REG_RAX), 0, 0],
-        );
+        let mut instruction = decoded(SEM_STORE64, [u64::from(REG_RSP), u64::from(REG_RAX), 0, 0]);
         assert_eq!(
             execute_semantic(&instruction, &mut regs, &mut mem),
             Some(Flow::Continue)
         );
-        instruction = decoded(
-            SEM_LOAD64,
-            [u64::from(REG_RCX), u64::from(REG_RSP), 0, 0],
-        );
+        instruction = decoded(SEM_LOAD64, [u64::from(REG_RCX), u64::from(REG_RSP), 0, 0]);
         assert_eq!(
             execute_semantic(&instruction, &mut regs, &mut mem),
             Some(Flow::Continue)
         );
         assert_eq!(get(&regs, REG_RCX), 0x1122_3344_5566_7788);
-        instruction = decoded(
-            SEM_LOAD64,
-            [u64::from(REG_RCX), u64::from(REG_RSP), 0, 0],
-        );
+        instruction = decoded(SEM_LOAD64, [u64::from(REG_RCX), u64::from(REG_RSP), 0, 0]);
         set(&mut regs, REG_RSP, u64::MAX);
-        assert_eq!(
-            execute_semantic(&instruction, &mut regs, &mut mem),
-            None
-        );
+        assert_eq!(execute_semantic(&instruction, &mut regs, &mut mem), None);
     }
 
     #[test]
@@ -988,23 +1011,12 @@ mod tests {
         let mut regs = registers();
         let mut mem = memory();
         set(&mut regs, REG_RAX, 0xabcd);
-        let jumps = decoded(
-            SEM_JMP,
-            [0x1234_5678, u64::from(REG_RAX), 0, 0],
-        );
+        let jumps = decoded(SEM_JMP, [0x1234_5678, u64::from(REG_RAX), 0, 0]);
         assert_eq!(
             execute_semantic(&jumps, &mut regs, &mut mem),
             Some(Flow::Jump(0x1234_5678))
         );
-        let conditional = decoded(
-            SEM_JCC,
-            [
-                u64::from(REG_RBX),
-                100,
-                200,
-                u64::from(REG_RAX),
-            ],
-        );
+        let conditional = decoded(SEM_JCC, [u64::from(REG_RBX), 100, 200, u64::from(REG_RAX)]);
         set(&mut regs, REG_RBX, 1);
         assert_eq!(
             execute_semantic(&conditional, &mut regs, &mut mem),
@@ -1028,12 +1040,13 @@ mod tests {
         let mut mem = memory();
         let instruction = decoded(
             SEM_MOV_RR,
-            [u64::from(MAX_OPERANDS as u8) + 100, 0, 0, 0],
+            [
+                u64::from(u8::try_from(MAX_OPERANDS).unwrap_or(u8::MAX)) + 100,
+                0,
+                0,
+                0,
+            ],
         );
-        assert_eq!(
-            execute_semantic(&instruction, &mut regs, &mut mem),
-            None
-        );
-        assert_eq!(Status::BadPayload, Status::BadPayload);
+        assert_eq!(execute_semantic(&instruction, &mut regs, &mut mem), None);
     }
 }

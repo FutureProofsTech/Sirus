@@ -35,11 +35,28 @@
     clippy::missing_inline_in_public_items,
     clippy::exhaustive_structs
 )]
+#![allow(
+    clippy::too_many_lines,
+    clippy::large_stack_arrays,
+    clippy::large_stack_frames,
+    clippy::redundant_pub_crate,
+    reason = "bounded no-allocation state machines and intentionally private helper modules"
+)]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::indexing_slicing,
+        clippy::panic,
+        reason = "test assertions and fixed-size test vectors intentionally panic on failure"
+    )
+)]
 
 pub mod decode;
+pub(crate) mod encode;
 pub mod error;
 pub mod ir;
-pub(crate) mod encode;
 pub mod lifter;
 pub(crate) mod mba;
 pub mod program;

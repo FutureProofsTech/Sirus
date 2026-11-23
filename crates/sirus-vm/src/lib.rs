@@ -30,6 +30,22 @@
     clippy::missing_inline_in_public_items,
     clippy::exhaustive_structs
 )]
+#![allow(
+    clippy::too_many_lines,
+    clippy::large_stack_arrays,
+    clippy::large_stack_frames,
+    reason = "the VM dispatcher is a single bounded state machine with fixed on-stack memory"
+)]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::indexing_slicing,
+        clippy::panic,
+        reason = "VM tests use fixed vectors and assertion panics by design"
+    )
+)]
 
 pub use sirus_core::shared;
 

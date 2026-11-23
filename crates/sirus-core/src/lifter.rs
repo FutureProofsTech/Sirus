@@ -4,11 +4,11 @@
 //! control flow, never guess a semantic, and reset flag knowledge at every basic
 //! block boundary so cross-block flag liveness fails closed.
 
-use crate::decode::{decode, Condition, Instruction, MemoryOperand, Mnemonic, Operand};
+use crate::decode::{Condition, Instruction, MemoryOperand, Mnemonic, Operand, decode};
 use crate::error::{CoreError, DecodeError, DecodeReason, Result};
 use crate::ir::{
-    Block, BoundedVec, IrOp, LiftedFunction, Terminator, Width, MAX_BLOCKS, MAX_FUNCTION_BYTES,
-    MAX_IR_OPS,
+    Block, BoundedVec, IrOp, LiftedFunction, MAX_BLOCKS, MAX_FUNCTION_BYTES, MAX_IR_OPS,
+    Terminator, Width,
 };
 use crate::shared::format::{
     REG_CF, REG_OF, REG_ONE, REG_RAX, REG_RBP, REG_RSP, REG_SF, REG_TMP0, REG_TMP1, REG_TMP2,
@@ -188,20 +188,12 @@ impl Lifter {
             self.add(REG_TMP3, REG_TMP2)?;
         }
         if memory.disp != 0 {
-            self.add_imm(
-                REG_TMP3,
-                u64::from_ne_bytes(memory.disp.to_ne_bytes()),
-            )?;
+            self.add_imm(REG_TMP3, u64::from_ne_bytes(memory.disp.to_ne_bytes()))?;
         }
         Ok(())
     }
 
-    fn read_operand_into(
-        &mut self,
-        operand: Operand,
-        width: Width,
-        target: u8,
-    ) -> Result<()> {
+    fn read_operand_into(&mut self, operand: Operand, width: Width, target: u8) -> Result<()> {
         match operand {
             Operand::Reg { index, .. } => {
                 self.mov(target, index)?;
@@ -327,7 +319,7 @@ impl Lifter {
         Ok(())
     }
 
-    fn required_flags(condition: Condition) -> Option<u8> {
+    const fn required_flags(condition: Condition) -> Option<u8> {
         match condition {
             Condition::Overflow | Condition::NoOverflow => Some(FLAG_OF),
             Condition::Below | Condition::AboveOrEqual => Some(FLAG_CF),
@@ -340,14 +332,9 @@ impl Lifter {
         }
     }
 
-    fn compute_condition(
-        &mut self,
-        condition: Condition,
-        known: u8,
-        offset: u64,
-    ) -> Result<u8> {
-        let required = Self::required_flags(condition)
-            .ok_or(CoreError::UnsupportedCondition { offset })?;
+    fn compute_condition(&mut self, condition: Condition, known: u8, offset: u64) -> Result<u8> {
+        let required =
+            Self::required_flags(condition).ok_or(CoreError::UnsupportedCondition { offset })?;
         if known & required != required {
             return Err(CoreError::UnknownFlags { offset });
         }
@@ -408,11 +395,7 @@ impl Lifter {
         Ok(REG_TMP0)
     }
 
-    fn lower_alu(
-        &mut self,
-        instruction: &Instruction,
-        operation: Mnemonic,
-    ) -> Result<()> {
+    fn lower_alu(&mut self, instruction: &Instruction, operation: Mnemonic) -> Result<()> {
         let width = instruction.width;
         self.read_operand_into(instruction.dst, width, REG_TMP0)?;
         self.read_operand_into(instruction.src, width, REG_TMP1)?;
@@ -465,8 +448,8 @@ impl Lifter {
                 Ok(None)
             }
             Mnemonic::Movzx | Mnemonic::Movsx | Mnemonic::Movsxd => {
-                let source_width = operand_width(instruction.src)
-                    .ok_or(CoreError::Decode(DecodeError {
+                let source_width =
+                    operand_width(instruction.src).ok_or(CoreError::Decode(DecodeError {
                         offset: instruction.offset,
                         reason: DecodeReason::UnsupportedForm,
                     }))?;
@@ -603,8 +586,8 @@ impl Lifter {
                 let width = instruction.width;
                 self.read_operand_into(instruction.dst, width, REG_TMP0)?;
                 self.mov(REG_TMP2, REG_TMP0)?;
-                match instruction.src {
-                    Operand::Imm { value, .. } => match instruction.mnemonic {
+                if let Operand::Imm { value, .. } = instruction.src {
+                    match instruction.mnemonic {
                         Mnemonic::Shl => self.shl_imm(REG_TMP2, value)?,
                         Mnemonic::Shr => self.shr_u_imm(REG_TMP2, value)?,
                         Mnemonic::Sar => self.emit(IrOp::ShrSImm {
@@ -619,31 +602,30 @@ impl Lifter {
                             dst: REG_TMP2,
                             value,
                         })?,
-                    },
-                    _ => {
-                        self.read_operand_into(instruction.src, Width::W8, REG_TMP1)?;
-                        match instruction.mnemonic {
-                            Mnemonic::Shl => self.emit(IrOp::Shl {
-                                dst: REG_TMP2,
-                                src: REG_TMP1,
-                            })?,
-                            Mnemonic::Shr => self.emit(IrOp::ShrU {
-                                dst: REG_TMP2,
-                                src: REG_TMP1,
-                            })?,
-                            Mnemonic::Sar => self.emit(IrOp::ShrS {
-                                dst: REG_TMP2,
-                                src: REG_TMP1,
-                            })?,
-                            Mnemonic::Rol => self.emit(IrOp::RotL {
-                                dst: REG_TMP2,
-                                src: REG_TMP1,
-                            })?,
-                            _ => self.emit(IrOp::RotR {
-                                dst: REG_TMP2,
-                                src: REG_TMP1,
-                            })?,
-                        }
+                    }
+                } else {
+                    self.read_operand_into(instruction.src, Width::W8, REG_TMP1)?;
+                    match instruction.mnemonic {
+                        Mnemonic::Shl => self.emit(IrOp::Shl {
+                            dst: REG_TMP2,
+                            src: REG_TMP1,
+                        })?,
+                        Mnemonic::Shr => self.emit(IrOp::ShrU {
+                            dst: REG_TMP2,
+                            src: REG_TMP1,
+                        })?,
+                        Mnemonic::Sar => self.emit(IrOp::ShrS {
+                            dst: REG_TMP2,
+                            src: REG_TMP1,
+                        })?,
+                        Mnemonic::Rol => self.emit(IrOp::RotL {
+                            dst: REG_TMP2,
+                            src: REG_TMP1,
+                        })?,
+                        _ => self.emit(IrOp::RotR {
+                            dst: REG_TMP2,
+                            src: REG_TMP1,
+                        })?,
                     }
                 }
                 self.apply_mask(REG_TMP2, width)?;
@@ -736,12 +718,12 @@ impl Lifter {
                 Ok(None)
             }
             Mnemonic::Jmp => {
-                let target = instruction
-                    .target
-                    .ok_or(CoreError::InvalidBranchTarget {
+                let Some(target) = instruction.target else {
+                    return Err(CoreError::InvalidBranchTarget {
                         offset: instruction.offset,
                         target: instruction.offset,
-                    })?;
+                    });
+                };
                 let target_index = self.branch_target(target, instruction.offset)?;
                 Ok(Some(Terminator::Jump {
                     target: target_index,
@@ -750,12 +732,12 @@ impl Lifter {
             Mnemonic::Jcc(condition) => {
                 let condition_register =
                     self.compute_condition(condition, *known, instruction.offset)?;
-                let target = instruction
-                    .target
-                    .ok_or(CoreError::InvalidBranchTarget {
+                let Some(target) = instruction.target else {
+                    return Err(CoreError::InvalidBranchTarget {
                         offset: instruction.offset,
                         target: instruction.offset,
-                    })?;
+                    });
+                };
                 let true_index = self.branch_target(target, instruction.offset)?;
                 let fallthrough = self
                     .base_va
@@ -793,9 +775,8 @@ impl Lifter {
         let mut index = 0_usize;
         while index < self.leaders.len() {
             if self.leaders.get(index) == Some(&wanted) {
-                return u16::try_from(index).map_err(|_| CoreError::InvalidBlock {
-                    block: u16::MAX,
-                });
+                return u16::try_from(index)
+                    .map_err(|_| CoreError::InvalidBlock { block: u16::MAX });
             }
             index = index.saturating_add(1);
         }
@@ -835,20 +816,19 @@ impl Lifter {
         queue.push(0)?;
         let mut decoded_count = 0_usize;
         while let Some(start_value) = queue.pop() {
-            let start = usize::try_from(start_value)
-                .map_err(|_| CoreError::ArithmeticOverflow)?;
+            let start = usize::try_from(start_value).map_err(|_| CoreError::ArithmeticOverflow)?;
             let mut cursor = start;
             loop {
                 if cursor >= self.code_len {
                     return Err(CoreError::MissingTerminator {
-                        offset: self.base_va.wrapping_add(
-                            u64::try_from(cursor).unwrap_or(u64::MAX),
-                        ),
+                        offset: self
+                            .base_va
+                            .wrapping_add(u64::try_from(cursor).unwrap_or(u64::MAX)),
                     });
                 }
                 if cursor != start {
-                    let current = u32::try_from(cursor)
-                        .map_err(|_| CoreError::ArithmeticOverflow)?;
+                    let current =
+                        u32::try_from(cursor).map_err(|_| CoreError::ArithmeticOverflow)?;
                     if self.leaders.contains(&current) {
                         break;
                     }
@@ -859,9 +839,9 @@ impl Lifter {
                             break;
                         }
                         return Err(CoreError::OverlappingInstruction {
-                            offset: self.base_va.wrapping_add(
-                                u64::try_from(cursor).unwrap_or(u64::MAX),
-                            ),
+                            offset: self
+                                .base_va
+                                .wrapping_add(u64::try_from(cursor).unwrap_or(u64::MAX)),
                         });
                     }
                 } else {
@@ -874,7 +854,9 @@ impl Lifter {
                         .wrapping_add(u64::try_from(cursor).unwrap_or(u64::MAX)),
                 )?;
                 let length = usize::from(instruction.length);
-                let end = cursor.checked_add(length).ok_or(CoreError::ArithmeticOverflow)?;
+                let end = cursor
+                    .checked_add(length)
+                    .ok_or(CoreError::ArithmeticOverflow)?;
                 if end > self.code_len {
                     return Err(CoreError::Decode(DecodeError {
                         offset: instruction.offset,
@@ -886,9 +868,9 @@ impl Lifter {
                     let owner = owners.get_mut(mark).ok_or(CoreError::ArithmeticOverflow)?;
                     if *owner != u16::MAX && usize::from(*owner) != cursor {
                         return Err(CoreError::OverlappingInstruction {
-                            offset: self.base_va.wrapping_add(
-                                u64::try_from(mark).unwrap_or(u64::MAX),
-                            ),
+                            offset: self
+                                .base_va
+                                .wrapping_add(u64::try_from(mark).unwrap_or(u64::MAX)),
                         });
                     }
                     *owner = u16::try_from(cursor).map_err(|_| CoreError::ArithmeticOverflow)?;
@@ -900,20 +882,17 @@ impl Lifter {
                 }
                 match instruction.mnemonic {
                     Mnemonic::Jcc(_) => {
-                        let target = instruction.target.ok_or(
-                            CoreError::InvalidBranchTarget {
-                                offset: instruction.offset,
-                                target: instruction.offset,
-                            },
-                        )?;
-                        let target_relative =
-                            self.relative_target(target, instruction.offset)?;
+                        let target = instruction.target.ok_or(CoreError::InvalidBranchTarget {
+                            offset: instruction.offset,
+                            target: instruction.offset,
+                        })?;
+                        let target_relative = self.relative_target(target, instruction.offset)?;
                         if end >= self.code_len {
                             return Err(CoreError::InvalidBranchTarget {
                                 offset: instruction.offset,
-                                target: self.base_va.wrapping_add(
-                                    u64::try_from(end).unwrap_or(u64::MAX),
-                                ),
+                                target: self
+                                    .base_va
+                                    .wrapping_add(u64::try_from(end).unwrap_or(u64::MAX)),
                             });
                         }
                         self.add_leader(target_relative)?;
@@ -922,20 +901,16 @@ impl Lifter {
                             u32::try_from(target_relative)
                                 .map_err(|_| CoreError::ArithmeticOverflow)?,
                         )?;
-                        queue.push(
-                            u32::try_from(end).map_err(|_| CoreError::ArithmeticOverflow)?,
-                        )?;
+                        queue
+                            .push(u32::try_from(end).map_err(|_| CoreError::ArithmeticOverflow)?)?;
                         break;
                     }
                     Mnemonic::Jmp => {
-                        let target = instruction.target.ok_or(
-                            CoreError::InvalidBranchTarget {
-                                offset: instruction.offset,
-                                target: instruction.offset,
-                            },
-                        )?;
-                        let target_relative =
-                            self.relative_target(target, instruction.offset)?;
+                        let target = instruction.target.ok_or(CoreError::InvalidBranchTarget {
+                            offset: instruction.offset,
+                            target: instruction.offset,
+                        })?;
+                        let target_relative = self.relative_target(target, instruction.offset)?;
                         self.add_leader(target_relative)?;
                         queue.push(
                             u32::try_from(target_relative)
@@ -1028,7 +1003,9 @@ impl Lifter {
                         .wrapping_add(u64::try_from(cursor).unwrap_or(u64::MAX)),
                 )?;
                 let length = usize::from(instruction.length);
-                let end = cursor.checked_add(length).ok_or(CoreError::ArithmeticOverflow)?;
+                let end = cursor
+                    .checked_add(length)
+                    .ok_or(CoreError::ArithmeticOverflow)?;
                 if end > limit {
                     return Err(CoreError::OverlappingInstruction {
                         offset: instruction.offset,
@@ -1042,8 +1019,8 @@ impl Lifter {
             let ops_len = self.ops.len().saturating_sub(ops_start);
             let ops_start = u16::try_from(ops_start)
                 .map_err(|_| CoreError::InvalidBlock { block: u16::MAX })?;
-            let ops_len = u16::try_from(ops_len)
-                .map_err(|_| CoreError::InvalidBlock { block: u16::MAX })?;
+            let ops_len =
+                u16::try_from(ops_len).map_err(|_| CoreError::InvalidBlock { block: u16::MAX })?;
             self.blocks.push(Block {
                 start_va: self
                     .base_va
@@ -1059,7 +1036,7 @@ impl Lifter {
 }
 
 #[inline]
-fn operand_width(operand: Operand) -> Option<Width> {
+const fn operand_width(operand: Operand) -> Option<Width> {
     match operand {
         Operand::Reg { width, .. }
         | Operand::Imm { width, .. }
@@ -1072,6 +1049,12 @@ fn operand_width(operand: Operand) -> Option<Width> {
 ///
 /// Returns a fully validated CFG. Any unsupported, ambiguous, overlapping, or
 /// out-of-range instruction rejects the whole function.
+///
+/// # Errors
+///
+/// Returns a typed error for empty or oversized functions, malformed or
+/// unsupported instructions, overlapping decode paths, invalid branch targets,
+/// unknown flags, and fixed-capacity exhaustion.
 #[inline]
 pub fn lift_function(code: &[u8], base_va: u64) -> Result<LiftedFunction> {
     if code.is_empty() || code.len() > MAX_FUNCTION_BYTES {
@@ -1095,7 +1078,7 @@ pub fn lift_function(code: &[u8], base_va: u64) -> Result<LiftedFunction> {
 
 #[cfg(test)]
 mod tests {
-    use super::{lift_function, FlagKind, Lifter};
+    use super::{FlagKind, Lifter, lift_function};
     use crate::error::CoreError;
     use crate::ir::Terminator;
     use crate::shared::format::{REG_RAX, REG_RDI, REG_RSI};

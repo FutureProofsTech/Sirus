@@ -4,13 +4,12 @@
 use crate::encode::encode_block;
 use crate::error::{CoreError, Result};
 use crate::ir::{
-    BoundedVec, ByteBuf, IrOp, LiftedFunction, Terminator, MAX_BLOCKS, MAX_FUNCTIONS,
-    MAX_PAYLOAD,
+    BoundedVec, ByteBuf, IrOp, LiftedFunction, MAX_BLOCKS, MAX_FUNCTIONS, MAX_PAYLOAD, Terminator,
 };
 use crate::mba::BuildRng;
 use crate::shared::cipher::{
-    base_key, encode_manifest_u32, encode_manifest_u64, manifest_byte, manifest_size, payload_hash,
-    BodyCipher, MANIFEST_COUNT_BYTES, MANIFEST_ENTRY_BYTES, MAX_PAYLOAD_BLOCKS,
+    BodyCipher, MANIFEST_COUNT_BYTES, MANIFEST_ENTRY_BYTES, MAX_PAYLOAD_BLOCKS, base_key,
+    encode_manifest_u32, encode_manifest_u64, manifest_byte, manifest_size, payload_hash,
 };
 use crate::shared::derive::{Seed, Tables};
 use crate::shared::format::{
@@ -48,7 +47,7 @@ impl CompileOptions {
         }
     }
 
-    fn validate(self) -> Result<()> {
+    const fn validate(self) -> Result<()> {
         if self.mba_depth > 8 || self.mba_budget > 4096 || self.decoys > 8 || self.fuel == 0 {
             return Err(CoreError::InvalidPlan);
         }
@@ -300,17 +299,14 @@ fn finalize(
             .and_then(|relative| relative.checked_add(manifest_len))
             .and_then(|absolute| u32::try_from(absolute).ok())
             .ok_or(CoreError::PayloadTooLarge)?;
-        push_guarded_u32(
-            &mut field,
-            8,
-            absolute_offset,
-            tables.manifest_big_endian,
-        )?;
+        push_guarded_u32(&mut field, 8, absolute_offset, tables.manifest_big_endian)?;
         push_guarded_u32(&mut field, 12, entry.length, tables.manifest_big_endian)?;
         let start = MANIFEST_COUNT_BYTES
-            .checked_add(manifest_position.checked_mul(MANIFEST_ENTRY_BYTES).ok_or(
-                CoreError::ArithmeticOverflow,
-            )?)
+            .checked_add(
+                manifest_position
+                    .checked_mul(MANIFEST_ENTRY_BYTES)
+                    .ok_or(CoreError::ArithmeticOverflow)?,
+            )
             .ok_or(CoreError::ArithmeticOverflow)?;
         let mut byte_offset = 0_usize;
         while byte_offset < MANIFEST_ENTRY_BYTES {
@@ -387,6 +383,11 @@ fn finalize(
 ///
 /// All functions share one ISA plan, one cipher stream, one integrity binding,
 /// and one runtime. Each function receives a blinded entry state in input order.
+///
+/// # Errors
+///
+/// Returns a typed error for invalid options, empty or oversized function sets,
+/// invalid CFG targets, MBA or encoder capacity exhaustion, and payload overflow.
 #[inline]
 pub fn compile(
     functions: &[LiftedFunction],
@@ -408,7 +409,9 @@ pub fn compile(
 
     let mut function_index = 0_usize;
     while function_index < functions.len() {
-        let function = &functions[function_index];
+        let Some(function) = functions.get(function_index) else {
+            return Err(CoreError::InvalidFunctionSize { size: 0 });
+        };
         let block_count = function.blocks.len();
         if block_count == 0 || usize::from(function.entry_block) >= block_count {
             return Err(CoreError::InvalidBlock {
@@ -442,23 +445,23 @@ pub fn compile(
 
     function_index = 0;
     while function_index < functions.len() {
-        let function = &functions[function_index];
+        let Some(function) = functions.get(function_index) else {
+            return Err(CoreError::InvalidFunctionSize { size: 0 });
+        };
         let original = function.blocks.len();
         let mut candidates = BoundedVec::<u16, MAX_BLOCKS>::new();
         let mut block_index = 0_usize;
         while block_index < original {
             let Some(block) = function.blocks.get(block_index) else {
                 return Err(CoreError::InvalidBlock {
-                    block: u16::try_from(block_index).map_err(|_| CoreError::InvalidBlock {
-                        block: u16::MAX,
-                    })?,
+                    block: u16::try_from(block_index)
+                        .map_err(|_| CoreError::InvalidBlock { block: u16::MAX })?,
                 });
             };
             if matches!(block.terminator, Terminator::Jump { .. }) {
                 candidates.push(
-                    u16::try_from(block_index).map_err(|_| CoreError::InvalidBlock {
-                        block: u16::MAX,
-                    })?,
+                    u16::try_from(block_index)
+                        .map_err(|_| CoreError::InvalidBlock { block: u16::MAX })?,
                 )?;
             }
             block_index = block_index.saturating_add(1);
@@ -506,7 +509,9 @@ pub fn compile(
 
     function_index = 0;
     while function_index < functions.len() {
-        let function = &functions[function_index];
+        let Some(function) = functions.get(function_index) else {
+            return Err(CoreError::InvalidFunctionSize { size: 0 });
+        };
         let original = function.blocks.len();
         let total = counts
             .get(function_index)
@@ -522,16 +527,14 @@ pub fn compile(
         while block_index < original {
             let Some(block) = function.blocks.get(block_index) else {
                 return Err(CoreError::InvalidBlock {
-                    block: u16::try_from(block_index).map_err(|_| CoreError::InvalidBlock {
-                        block: u16::MAX,
-                    })?,
+                    block: u16::try_from(block_index)
+                        .map_err(|_| CoreError::InvalidBlock { block: u16::MAX })?,
                 });
             };
             if matches!(block.terminator, Terminator::Jump { .. }) {
                 candidates.push(
-                    u16::try_from(block_index).map_err(|_| CoreError::InvalidBlock {
-                        block: u16::MAX,
-                    })?,
+                    u16::try_from(block_index)
+                        .map_err(|_| CoreError::InvalidBlock { block: u16::MAX })?,
                 )?;
             }
             block_index = block_index.saturating_add(1);
@@ -547,9 +550,8 @@ pub fn compile(
                 .checked_add(decoy_index.saturating_mul(2))
                 .ok_or(CoreError::ArithmeticOverflow)?;
             if let Some(slot) = guard_for.get_mut(usize::from(candidate)) {
-                *slot = u16::try_from(guard).map_err(|_| CoreError::InvalidBlock {
-                    block: u16::MAX,
-                })?;
+                *slot = u16::try_from(guard)
+                    .map_err(|_| CoreError::InvalidBlock { block: u16::MAX })?;
             }
             decoy_index = decoy_index.saturating_add(1);
         }
@@ -558,23 +560,21 @@ pub fn compile(
         while block_index < original {
             let Some(block) = function.blocks.get(block_index) else {
                 return Err(CoreError::InvalidBlock {
-                    block: u16::try_from(block_index).map_err(|_| CoreError::InvalidBlock {
-                        block: u16::MAX,
-                    })?,
+                    block: u16::try_from(block_index)
+                        .map_err(|_| CoreError::InvalidBlock { block: u16::MAX })?,
                 });
             };
             let Some(ops) = function.block_ops(block) else {
                 return Err(CoreError::InvalidBlock {
-                    block: u16::try_from(block_index).map_err(|_| CoreError::InvalidBlock {
-                        block: u16::MAX,
-                    })?,
+                    block: u16::try_from(block_index)
+                        .map_err(|_| CoreError::InvalidBlock { block: u16::MAX })?,
                 });
             };
             let guard = guard_for.get(block_index).copied().unwrap_or(u16::MAX);
-            let terminator = if guard != u16::MAX {
-                Terminator::Jump { target: guard }
-            } else {
+            let terminator = if guard == u16::MAX {
                 block.terminator
+            } else {
+                Terminator::Jump { target: guard }
             };
             let body = encode_block(
                 ops,
@@ -654,11 +654,8 @@ pub fn compile(
                 Terminator::Branch {
                     cond: REG_TMP0,
                     when_true: target,
-                    when_false: u16::try_from(decoy_index_value).map_err(|_| {
-                        CoreError::InvalidBlock {
-                            block: u16::MAX,
-                        }
-                    })?,
+                    when_false: u16::try_from(decoy_index_value)
+                        .map_err(|_| CoreError::InvalidBlock { block: u16::MAX })?,
                 },
                 state_slice,
                 &tables,
@@ -730,7 +727,9 @@ pub fn compile(
     let mut entry_states = BoundedVec::<[u64; 2], MAX_FUNCTIONS>::new();
     function_index = 0;
     while function_index < functions.len() {
-        let function = &functions[function_index];
+        let Some(function) = functions.get(function_index) else {
+            return Err(CoreError::InvalidFunctionSize { size: 0 });
+        };
         let entry_index = usize::from(function.entry_block);
         let entry_state = states
             .get(function_index)
@@ -742,7 +741,7 @@ pub fn compile(
         function_index = function_index.saturating_add(1);
     }
 
-    let stats = ProgramStats {
+    let summary_stats = ProgramStats {
         functions: functions.len(),
         original_blocks: total_original,
         decoy_blocks: decoy_count,
@@ -758,13 +757,13 @@ pub fn compile(
         &bodies,
         &entries,
         entry_states,
-        stats,
+        summary_stats,
     )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{compile, CompileOptions};
+    use super::{CompileOptions, compile};
     use crate::ir::BoundedVec;
     use crate::lifter::lift_function;
 
@@ -788,7 +787,7 @@ mod tests {
             assert_eq!(first.entry_states(), second.entry_states());
             assert_eq!(first.expected_hash(), second.expected_hash());
             assert_eq!(first.entry_states().len(), 1);
-            assert!(!first.payload().is_empty());
+            assert!(first.stats().payload_bytes > 0);
             assert_eq!(first.stats().functions, 1);
         }
     }
@@ -810,7 +809,7 @@ mod tests {
         let function = lift_function(&code, 0).expect("lift");
         let mut bad = CompileOptions::new();
         bad.mba_depth = 9;
-        assert!(compile(&[function.clone()], [0_u8; 32], bad).is_err());
+        assert!(compile(&[function], [0_u8; 32], bad).is_err());
         let empty: [crate::ir::LiftedFunction; 0] = [];
         assert!(compile(&empty, [0_u8; 32], CompileOptions::new()).is_err());
         let _ = BoundedVec::<u8, 1>::new();

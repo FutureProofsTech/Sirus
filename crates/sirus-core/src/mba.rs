@@ -129,7 +129,7 @@ impl ExprArena {
     }
 
     #[inline]
-    pub(crate) fn reset(&mut self) {
+    pub(crate) const fn reset(&mut self) {
         self.len = 0;
     }
 
@@ -478,7 +478,7 @@ pub(crate) fn expand(
 
 #[cfg(test)]
 mod tests {
-    use super::{expand, BuildRng, ExprArena, ExprOp};
+    use super::{BuildRng, ExprArena, ExprOp, expand};
     use crate::shared::derive::Seed;
 
     fn evaluate(arena: &ExprArena, id: u32, registers: &[u64; 64]) -> u64 {
@@ -491,49 +491,46 @@ mod tests {
                 .copied()
                 .unwrap_or(0),
             ExprOp::Const => node.imm,
-            ExprOp::Add => evaluate(arena, node.a, registers)
-                .wrapping_add(evaluate(arena, node.b, registers)),
-            ExprOp::Sub => evaluate(arena, node.a, registers)
-                .wrapping_sub(evaluate(arena, node.b, registers)),
-            ExprOp::Mul => evaluate(arena, node.a, registers)
-                .wrapping_mul(evaluate(arena, node.b, registers)),
+            ExprOp::Add => {
+                evaluate(arena, node.a, registers).wrapping_add(evaluate(arena, node.b, registers))
+            }
+            ExprOp::Sub => {
+                evaluate(arena, node.a, registers).wrapping_sub(evaluate(arena, node.b, registers))
+            }
+            ExprOp::Mul => {
+                evaluate(arena, node.a, registers).wrapping_mul(evaluate(arena, node.b, registers))
+            }
             ExprOp::And => evaluate(arena, node.a, registers) & evaluate(arena, node.b, registers),
             ExprOp::Or => evaluate(arena, node.a, registers) | evaluate(arena, node.b, registers),
             ExprOp::Xor => evaluate(arena, node.a, registers) ^ evaluate(arena, node.b, registers),
             ExprOp::Not => !evaluate(arena, node.a, registers),
             ExprOp::Neg => evaluate(arena, node.a, registers).wrapping_neg(),
-            ExprOp::Shl => evaluate(arena, node.a, registers).wrapping_shl(
-                u32::try_from(evaluate(arena, node.b, registers) & 63).unwrap_or(0),
-            ),
-            ExprOp::ShrU => evaluate(arena, node.a, registers).wrapping_shr(
-                u32::try_from(evaluate(arena, node.b, registers) & 63).unwrap_or(0),
-            ),
+            ExprOp::Shl => evaluate(arena, node.a, registers)
+                .wrapping_shl(u32::try_from(evaluate(arena, node.b, registers) & 63).unwrap_or(0)),
+            ExprOp::ShrU => evaluate(arena, node.a, registers)
+                .wrapping_shr(u32::try_from(evaluate(arena, node.b, registers) & 63).unwrap_or(0)),
             ExprOp::ShrS => {
-                let value =
-                    i64::from_ne_bytes(evaluate(arena, node.a, registers).to_ne_bytes());
-                let shift =
-                    u32::try_from(evaluate(arena, node.b, registers) & 63).unwrap_or(0);
+                let value = i64::from_ne_bytes(evaluate(arena, node.a, registers).to_ne_bytes());
+                let shift = u32::try_from(evaluate(arena, node.b, registers) & 63).unwrap_or(0);
                 u64::from_ne_bytes(value.wrapping_shr(shift).to_ne_bytes())
             }
-            ExprOp::RotL => evaluate(arena, node.a, registers).rotate_left(
-                u32::try_from(evaluate(arena, node.b, registers) & 63).unwrap_or(0),
-            ),
-            ExprOp::RotR => evaluate(arena, node.a, registers).rotate_right(
-                u32::try_from(evaluate(arena, node.b, registers) & 63).unwrap_or(0),
-            ),
-            ExprOp::CmpEq => u64::from(
-                evaluate(arena, node.a, registers) == evaluate(arena, node.b, registers),
-            ),
-            ExprOp::CmpLtU => u64::from(
-                evaluate(arena, node.a, registers) < evaluate(arena, node.b, registers),
-            ),
+            ExprOp::RotL => evaluate(arena, node.a, registers)
+                .rotate_left(u32::try_from(evaluate(arena, node.b, registers) & 63).unwrap_or(0)),
+            ExprOp::RotR => evaluate(arena, node.a, registers)
+                .rotate_right(u32::try_from(evaluate(arena, node.b, registers) & 63).unwrap_or(0)),
+            ExprOp::CmpEq => {
+                u64::from(evaluate(arena, node.a, registers) == evaluate(arena, node.b, registers))
+            }
+            ExprOp::CmpLtU => {
+                u64::from(evaluate(arena, node.a, registers) < evaluate(arena, node.b, registers))
+            }
             ExprOp::CmpLtS => u64::from(
                 i64::from_ne_bytes(evaluate(arena, node.a, registers).to_ne_bytes())
                     < i64::from_ne_bytes(evaluate(arena, node.b, registers).to_ne_bytes()),
             ),
-            ExprOp::CmpLeU => u64::from(
-                evaluate(arena, node.a, registers) <= evaluate(arena, node.b, registers),
-            ),
+            ExprOp::CmpLeU => {
+                u64::from(evaluate(arena, node.a, registers) <= evaluate(arena, node.b, registers))
+            }
             ExprOp::CmpLeS => u64::from(
                 i64::from_ne_bytes(evaluate(arena, node.a, registers).to_ne_bytes())
                     <= i64::from_ne_bytes(evaluate(arena, node.b, registers).to_ne_bytes()),

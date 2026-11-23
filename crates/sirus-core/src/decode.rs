@@ -50,7 +50,7 @@ pub enum Condition {
 
 impl Condition {
     #[inline]
-    fn from_nibble(nibble: u8) -> Option<Self> {
+    const fn from_nibble(nibble: u8) -> Option<Self> {
         match nibble & 0x0f {
             0x0 => Some(Self::Overflow),
             0x1 => Some(Self::NoOverflow),
@@ -210,17 +210,17 @@ pub struct Instruction {
 }
 
 #[inline]
-fn decode_error(offset: u64, reason: DecodeReason) -> CoreError {
+const fn decode_error(offset: u64, reason: DecodeReason) -> CoreError {
     CoreError::Decode(DecodeError { offset, reason })
 }
 
 #[inline]
-fn as_i64(value: u64) -> i64 {
+const fn as_i64(value: u64) -> i64 {
     i64::from_ne_bytes(value.to_ne_bytes())
 }
 
 #[inline]
-fn sign_extend(value: u64, bits: u32) -> u64 {
+const fn sign_extend(value: u64, bits: u32) -> u64 {
     if bits >= 64 {
         value
     } else {
@@ -288,22 +288,22 @@ fn read_signed(code: &[u8], index: &mut usize, bytes: usize, offset: u64) -> Res
 }
 
 #[inline]
-fn register_number(low: u8, extension: u8) -> u8 {
+const fn register_number(low: u8, extension: u8) -> u8 {
     low | extension
 }
 
 #[inline]
-fn rex_r(rex: u8) -> u8 {
+const fn rex_r(rex: u8) -> u8 {
     (rex & 0x04) << 1
 }
 
 #[inline]
-fn rex_x(rex: u8) -> u8 {
+const fn rex_x(rex: u8) -> u8 {
     (rex & 0x02) << 2
 }
 
 #[inline]
-fn rex_b(rex: u8) -> u8 {
+const fn rex_b(rex: u8) -> u8 {
     (rex & 0x01) << 3
 }
 
@@ -416,8 +416,7 @@ fn no_operands(
     width: Width,
 ) -> Result<Instruction> {
     let _ = length_offset;
-    let length = u8::try_from(index)
-        .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+    let length = u8::try_from(index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
     Ok(Instruction {
         offset,
         length,
@@ -453,18 +452,12 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
                 operand_override = true;
                 index = index.saturating_add(1);
             }
-            0x67 => {
-                return Err(decode_error(offset, DecodeReason::UnsupportedPrefix));
-            }
-            0xf0 => {
+            0x67 | 0xf0 | 0x2e | 0x36 | 0x3e | 0x26 | 0x64 | 0x65 => {
                 return Err(decode_error(offset, DecodeReason::UnsupportedPrefix));
             }
             0xf2 | 0xf3 => {
                 rep_prefix = Some(byte);
                 index = index.saturating_add(1);
-            }
-            0x2e | 0x36 | 0x3e | 0x26 | 0x64 | 0x65 => {
-                return Err(decode_error(offset, DecodeReason::UnsupportedPrefix));
             }
             _ => break,
         }
@@ -488,10 +481,8 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
             let second = read_u8(code, &mut index, offset)?;
             if second == 0x1e {
                 let third = read_u8(code, &mut index, offset)?;
-                if third == 0xfa || third == 0xfb {
-                    if third == 0xfa && (rex & 0x08) == 0 {
-                        return no_operands(offset, index, offset, Mnemonic::Endbr, Width::W64);
-                    }
+                if third == 0xfa && (rex & 0x08) == 0 {
+                    return no_operands(offset, index, offset, Mnemonic::Endbr, Width::W64);
                 }
             }
         }
@@ -520,8 +511,8 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
                 offset,
             )?;
             check_register_operand(&modrm, Width::W64, rex_present, offset)?;
-            let length = u8::try_from(index)
-                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let length =
+                u8::try_from(index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
             Ok(Instruction {
                 offset,
                 length,
@@ -543,8 +534,8 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
                 Width::W16 => (read_unsigned(code, &mut index, 2, offset)?, Width::W16),
                 _ => (read_unsigned(code, &mut index, 4, offset)?, Width::W32),
             };
-            let length = u8::try_from(index)
-                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let length =
+                u8::try_from(index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
             Ok(Instruction {
                 offset,
                 length,
@@ -565,8 +556,8 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
         0xb0..=0xb7 => {
             let register = register_number(opcode & 0x07, rex_b(rex));
             let value = read_unsigned(code, &mut index, 1, offset)?;
-            let length = u8::try_from(index)
-                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let length =
+                u8::try_from(index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
             Ok(Instruction {
                 offset,
                 length,
@@ -586,8 +577,8 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
         }
         0x50..=0x57 => {
             let register = register_number(opcode & 0x07, rex_b(rex));
-            let length = u8::try_from(index)
-                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let length =
+                u8::try_from(index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
             Ok(Instruction {
                 offset,
                 length,
@@ -604,8 +595,8 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
         }
         0x58..=0x5f => {
             let register = register_number(opcode & 0x07, rex_b(rex));
-            let length = u8::try_from(index)
-                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let length =
+                u8::try_from(index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
             Ok(Instruction {
                 offset,
                 length,
@@ -630,10 +621,10 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
         }
         0xeb => {
             let displacement = read_signed(code, &mut index, 1, offset)?;
-            let length = u8::try_from(index)
-                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let length =
+                u8::try_from(index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
             let target = offset
-                .wrapping_add(u64::try_from(length).unwrap_or(0))
+                .wrapping_add(u64::from(length))
                 .wrapping_add(u64::from_ne_bytes(displacement.to_ne_bytes()));
             Ok(Instruction {
                 offset,
@@ -648,10 +639,10 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
         }
         0xe9 => {
             let displacement = read_signed(code, &mut index, 4, offset)?;
-            let length = u8::try_from(index)
-                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let length =
+                u8::try_from(index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
             let target = offset
-                .wrapping_add(u64::try_from(length).unwrap_or(0))
+                .wrapping_add(u64::from(length))
                 .wrapping_add(u64::from_ne_bytes(displacement.to_ne_bytes()));
             Ok(Instruction {
                 offset,
@@ -668,10 +659,10 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
             let condition = Condition::from_nibble(opcode & 0x0f)
                 .ok_or_else(|| decode_error(offset, DecodeReason::UnsupportedOpcode))?;
             let displacement = read_signed(code, &mut index, 1, offset)?;
-            let length = u8::try_from(index)
-                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let length =
+                u8::try_from(index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
             let target = offset
-                .wrapping_add(u64::try_from(length).unwrap_or(0))
+                .wrapping_add(u64::from(length))
                 .wrapping_add(u64::from_ne_bytes(displacement.to_ne_bytes()));
             Ok(Instruction {
                 offset,
@@ -684,21 +675,13 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
                 target: Some(target),
             })
         }
-        0x88 | 0x89 | 0x8a | 0x8b => {
+        0x88..=0x8b => {
             let width = if opcode == 0x88 || opcode == 0x8a {
                 Width::W8
             } else {
                 operand_width
             };
-            let modrm = decode_modrm(
-                code,
-                &mut index,
-                rex,
-                rex_present,
-                width,
-                width,
-                offset,
-            )?;
+            let modrm = decode_modrm(code, &mut index, rex, rex_present, width, width, offset)?;
             check_register_operand(&modrm, width, rex_present, offset)?;
             let register = Operand::Reg {
                 index: modrm.reg,
@@ -709,8 +692,8 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
             } else {
                 (register, modrm.rm)
             };
-            let length = u8::try_from(index)
-                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let length =
+                u8::try_from(index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
             Ok(Instruction {
                 offset,
                 length,
@@ -736,8 +719,8 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
                 return Err(decode_error(offset, DecodeReason::UnsupportedForm));
             }
             check_register_operand(&modrm, operand_width, rex_present, offset)?;
-            let length = u8::try_from(index)
-                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let length =
+                u8::try_from(index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
             Ok(Instruction {
                 offset,
                 length,
@@ -758,23 +741,13 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
             } else {
                 operand_width
             };
-            let modrm = decode_modrm(
-                code,
-                &mut index,
-                rex,
-                rex_present,
-                width,
-                width,
-                offset,
-            )?;
+            let modrm = decode_modrm(code, &mut index, rex, rex_present, width, width, offset)?;
             let operation = modrm.reg & 0x07;
             let immediate_bytes = match opcode {
-                0x80 => 1,
-                0x83 => 1,
+                0x80 | 0x83 => 1,
                 _ => match width {
                     Width::W16 => 2,
-                    Width::W32 => 4,
-                    Width::W64 => 4,
+                    Width::W32 | Width::W64 => 4,
                     Width::W8 => 1,
                 },
             };
@@ -791,15 +764,14 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
             let mnemonic = match operation {
                 0 => Mnemonic::Add,
                 1 => Mnemonic::Or,
-                2 | 3 => return Err(decode_error(offset, DecodeReason::UnsupportedOpcode)),
                 4 => Mnemonic::And,
                 5 => Mnemonic::Sub,
                 6 => Mnemonic::Xor,
                 7 => Mnemonic::Cmp,
                 _ => return Err(decode_error(offset, DecodeReason::UnsupportedOpcode)),
             };
-            let length = u8::try_from(index)
-                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let length =
+                u8::try_from(index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
             Ok(Instruction {
                 offset,
                 length,
@@ -826,23 +798,14 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
             } else {
                 operand_width
             };
-            let modrm = decode_modrm(
-                code,
-                &mut index,
-                rex,
-                rex_present,
-                width,
-                width,
-                offset,
-            )?;
+            let modrm = decode_modrm(code, &mut index, rex, rex_present, width, width, offset)?;
             if (modrm.reg & 0x07) != 0 {
                 return Err(decode_error(offset, DecodeReason::UnsupportedOpcode));
             }
             let bytes = match width {
                 Width::W8 => 1,
                 Width::W16 => 2,
-                Width::W32 => 4,
-                Width::W64 => 4,
+                Width::W32 | Width::W64 => 4,
             };
             let raw = read_unsigned(code, &mut index, bytes, offset)?;
             let value = if width == Width::W64 {
@@ -850,8 +813,8 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
             } else {
                 raw & width.mask()
             };
-            let length = u8::try_from(index)
-                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let length =
+                u8::try_from(index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
             Ok(Instruction {
                 offset,
                 length,
@@ -860,7 +823,13 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
                 dst: modrm.rm,
                 src: Operand::Imm {
                     value,
-                    width: if bytes == 1 { Width::W8 } else if bytes == 2 { Width::W16 } else { Width::W32 },
+                    width: if bytes == 1 {
+                        Width::W8
+                    } else if bytes == 2 {
+                        Width::W16
+                    } else {
+                        Width::W32
+                    },
                 },
                 aux: Operand::None,
                 target: None,
@@ -873,15 +842,7 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
             } else {
                 operand_width
             };
-            let modrm = decode_modrm(
-                code,
-                &mut index,
-                rex,
-                rex_present,
-                width,
-                width,
-                offset,
-            )?;
+            let modrm = decode_modrm(code, &mut index, rex, rex_present, width, width, offset)?;
             check_register_operand(&modrm, width, rex_present, offset)?;
             let register = Operand::Reg {
                 index: modrm.reg,
@@ -901,8 +862,8 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
             } else {
                 (register, modrm.rm)
             };
-            let length = u8::try_from(index)
-                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let length =
+                u8::try_from(index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
             Ok(Instruction {
                 offset,
                 length,
@@ -920,18 +881,10 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
             } else {
                 operand_width
             };
-            let modrm = decode_modrm(
-                code,
-                &mut index,
-                rex,
-                rex_present,
-                width,
-                width,
-                offset,
-            )?;
+            let modrm = decode_modrm(code, &mut index, rex, rex_present, width, width, offset)?;
             check_register_operand(&modrm, width, rex_present, offset)?;
-            let length = u8::try_from(index)
-                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let length =
+                u8::try_from(index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
             Ok(Instruction {
                 offset,
                 length,
@@ -956,8 +909,7 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
             let bytes = match width {
                 Width::W8 => 1,
                 Width::W16 => 2,
-                Width::W32 => 4,
-                Width::W64 => 4,
+                Width::W32 | Width::W64 => 4,
             };
             let raw = read_unsigned(code, &mut index, bytes, offset)?;
             let value = if width == Width::W64 {
@@ -975,17 +927,14 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
                 21 => Mnemonic::Test,
                 _ => return Err(decode_error(offset, DecodeReason::UnsupportedOpcode)),
             };
-            let length = u8::try_from(index)
-                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let length =
+                u8::try_from(index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
             Ok(Instruction {
                 offset,
                 length,
                 mnemonic,
                 width,
-                dst: Operand::Reg {
-                    index: 0,
-                    width,
-                },
+                dst: Operand::Reg { index: 0, width },
                 src: Operand::Imm {
                     value,
                     width: if bytes == 1 {
@@ -1006,15 +955,7 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
             } else {
                 operand_width
             };
-            let modrm = decode_modrm(
-                code,
-                &mut index,
-                rex,
-                rex_present,
-                width,
-                width,
-                offset,
-            )?;
+            let modrm = decode_modrm(code, &mut index, rex, rex_present, width, width, offset)?;
             let operation = modrm.reg & 0x07;
             let mnemonic = match operation {
                 0 => Mnemonic::Rol,
@@ -1039,8 +980,8 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
                     width: Width::W8,
                 },
             };
-            let length = u8::try_from(index)
-                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let length =
+                u8::try_from(index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
             Ok(Instruction {
                 offset,
                 length,
@@ -1054,15 +995,7 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
         }
         0x69 | 0x6b => {
             let width = operand_width;
-            let modrm = decode_modrm(
-                code,
-                &mut index,
-                rex,
-                rex_present,
-                width,
-                width,
-                offset,
-            )?;
+            let modrm = decode_modrm(code, &mut index, rex, rex_present, width, width, offset)?;
             check_register_operand(&modrm, width, rex_present, offset)?;
             let imm_bytes = if opcode == 0x6b {
                 1
@@ -1079,8 +1012,8 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
             } else {
                 raw & width.mask()
             };
-            let length = u8::try_from(index)
-                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let length =
+                u8::try_from(index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
             Ok(Instruction {
                 offset,
                 length,
@@ -1110,23 +1043,14 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
             } else {
                 operand_width
             };
-            let modrm = decode_modrm(
-                code,
-                &mut index,
-                rex,
-                rex_present,
-                width,
-                width,
-                offset,
-            )?;
+            let modrm = decode_modrm(code, &mut index, rex, rex_present, width, width, offset)?;
             let operation = modrm.reg & 0x07;
             let (mnemonic, src) = match operation {
                 0 => {
                     let bytes = match width {
                         Width::W8 => 1,
                         Width::W16 => 2,
-                        Width::W32 => 4,
-                        Width::W64 => 4,
+                        Width::W32 | Width::W64 => 4,
                     };
                     let raw = read_unsigned(code, &mut index, bytes, offset)?;
                     let value = if width == Width::W64 {
@@ -1152,8 +1076,8 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
                 3 => (Mnemonic::Neg, Operand::None),
                 _ => return Err(decode_error(offset, DecodeReason::UnsupportedOpcode)),
             };
-            let length = u8::try_from(index)
-                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let length =
+                u8::try_from(index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
             Ok(Instruction {
                 offset,
                 length,
@@ -1171,15 +1095,7 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
             } else {
                 operand_width
             };
-            let modrm = decode_modrm(
-                code,
-                &mut index,
-                rex,
-                rex_present,
-                width,
-                width,
-                offset,
-            )?;
+            let modrm = decode_modrm(code, &mut index, rex, rex_present, width, width, offset)?;
             let operation = modrm.reg & 0x07;
             let mnemonic = match operation {
                 0 => Mnemonic::Inc,
@@ -1187,8 +1103,8 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
                 6 if opcode == 0xff => Mnemonic::Push,
                 _ => return Err(decode_error(offset, DecodeReason::UnsupportedOpcode)),
             };
-            let length = u8::try_from(index)
-                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let length =
+                u8::try_from(index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
             Ok(Instruction {
                 offset,
                 length,
@@ -1230,8 +1146,8 @@ fn decode_two_byte(
                 offset,
             )?;
             let _ = modrm;
-            let length = u8::try_from(*index)
-                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let length =
+                u8::try_from(*index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
             Ok(Instruction {
                 offset,
                 length,
@@ -1247,10 +1163,10 @@ fn decode_two_byte(
             let condition = Condition::from_nibble(opcode & 0x0f)
                 .ok_or_else(|| decode_error(offset, DecodeReason::UnsupportedOpcode))?;
             let displacement = read_signed(code, index, 4, offset)?;
-            let length = u8::try_from(*index)
-                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let length =
+                u8::try_from(*index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
             let target = offset
-                .wrapping_add(u64::try_from(length).unwrap_or(0))
+                .wrapping_add(u64::from(length))
                 .wrapping_add(u64::from_ne_bytes(displacement.to_ne_bytes()));
             Ok(Instruction {
                 offset,
@@ -1276,8 +1192,8 @@ fn decode_two_byte(
                 offset,
             )?;
             check_register_operand(&modrm, operand_width, rex_present, offset)?;
-            let length = u8::try_from(*index)
-                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let length =
+                u8::try_from(*index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
             Ok(Instruction {
                 offset,
                 length,
@@ -1295,17 +1211,9 @@ fn decode_two_byte(
         0x90..=0x9f => {
             let condition = Condition::from_nibble(opcode & 0x0f)
                 .ok_or_else(|| decode_error(offset, DecodeReason::UnsupportedOpcode))?;
-            let modrm = decode_modrm(
-                code,
-                index,
-                rex,
-                rex_present,
-                Width::W8,
-                Width::W8,
-                offset,
-            )?;
-            let length = u8::try_from(*index)
-                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let modrm = decode_modrm(code, index, rex, rex_present, Width::W8, Width::W8, offset)?;
+            let length =
+                u8::try_from(*index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
             Ok(Instruction {
                 offset,
                 length,
@@ -1328,8 +1236,8 @@ fn decode_two_byte(
                 offset,
             )?;
             check_register_operand(&modrm, operand_width, rex_present, offset)?;
-            let length = u8::try_from(*index)
-                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let length =
+                u8::try_from(*index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
             Ok(Instruction {
                 offset,
                 length,
@@ -1364,8 +1272,8 @@ fn decode_two_byte(
                 source_width,
                 offset,
             )?;
-            let length = u8::try_from(*index)
-                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let length =
+                u8::try_from(*index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
             Ok(Instruction {
                 offset,
                 length,
@@ -1388,6 +1296,11 @@ fn decode_two_byte(
 }
 
 /// Decodes one instruction at the start of `code`.
+///
+/// # Errors
+///
+/// Returns a typed decode error for truncation, unsupported prefixes, opcodes,
+/// addressing forms, high-byte registers, or instruction length violations.
 #[inline]
 pub fn decode(code: &[u8], address: u64) -> Result<Instruction> {
     let instruction = decode_inner(code, address)?;
@@ -1399,7 +1312,7 @@ pub fn decode(code: &[u8], address: u64) -> Result<Instruction> {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode, Condition, Mnemonic, Operand};
+    use super::{Condition, Mnemonic, Operand, decode};
     use crate::error::CoreError;
     use crate::ir::Width;
 
@@ -1408,7 +1321,6 @@ mod tests {
             Ok(instruction) => instruction,
             Err(error) => {
                 assert!(matches!(error, CoreError::Decode(_)));
-                assert_eq!(error, error);
                 super::Instruction {
                     offset: address,
                     length: 0,

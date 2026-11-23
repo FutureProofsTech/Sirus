@@ -7,21 +7,21 @@
 
 use crate::error::{CoreError, Result};
 use crate::ir::{ByteBuf, IrOp, Terminator, Width};
-use crate::mba::{expand, BuildRng, ExprArena, ExprOp};
+use crate::mba::{BuildRng, ExprArena, ExprOp, expand};
 use crate::shared::derive::Tables;
 use crate::shared::format::{
-    format, ALIASES_PER_SEMANTIC, MAX_OPERANDS, REG_ONE, REG_TEMP_BASE, REG_TEMP_COUNT,
-    SEM_ADD_RR, SEM_AND_RR, SEM_CMPEQ_RR, SEM_CMPLES_RR, SEM_CMPLEU_RR, SEM_CMPLTS_RR,
-    SEM_CMPLTU_RR, SEM_JCC, SEM_JMP, SEM_LOAD16, SEM_LOAD32, SEM_LOAD64, SEM_LOAD8, SEM_MOV_RI,
-    SEM_MOV_RR, SEM_MUL_RR, SEM_NEG_R, SEM_NOT_R, SEM_OR_RR, SEM_RET, SEM_ROTL_RR, SEM_ROTR_RR,
-    SEM_SAR_RR, SEM_SELECT_RRRR, SEM_SHL_RR, SEM_SHR_RR, SEM_STORE16, SEM_STORE32, SEM_STORE64,
-    SEM_STORE8, SEM_SUB_RR, SEM_TRAP, SEM_XOR_RR, ROLE_IMM, ROLE_REG,
+    ALIASES_PER_SEMANTIC, MAX_OPERANDS, REG_ONE, REG_TEMP_BASE, ROLE_IMM, ROLE_REG, SEM_ADD_RR,
+    SEM_AND_RR, SEM_CMPEQ_RR, SEM_CMPLES_RR, SEM_CMPLEU_RR, SEM_CMPLTS_RR, SEM_CMPLTU_RR, SEM_JCC,
+    SEM_JMP, SEM_LOAD8, SEM_LOAD16, SEM_LOAD32, SEM_LOAD64, SEM_MOV_RI, SEM_MOV_RR, SEM_MUL_RR,
+    SEM_NEG_R, SEM_NOT_R, SEM_OR_RR, SEM_RET, SEM_ROTL_RR, SEM_ROTR_RR, SEM_SAR_RR,
+    SEM_SELECT_RRRR, SEM_SHL_RR, SEM_SHR_RR, SEM_STORE8, SEM_STORE16, SEM_STORE32, SEM_STORE64,
+    SEM_SUB_RR, SEM_TRAP, SEM_XOR_RR, format,
 };
 
 /// Maximum plaintext size of one encoded block body.
 pub const MAX_BLOCK_BODY: usize = 32_768;
 
-const TEMP_COUNT: usize = REG_TEMP_COUNT as usize;
+const TEMP_COUNT: usize = 36;
 
 #[derive(Clone, Copy, Debug)]
 struct CompiledValue {
@@ -190,11 +190,7 @@ impl<'a> BlockEncoder<'a> {
                     owned: true,
                 })
             }
-            ExprOp::CmpEq
-            | ExprOp::CmpLtU
-            | ExprOp::CmpLtS
-            | ExprOp::CmpLeU
-            | ExprOp::CmpLeS => {
+            ExprOp::CmpEq | ExprOp::CmpLtU | ExprOp::CmpLtS | ExprOp::CmpLeU | ExprOp::CmpLeS => {
                 let left = self.compile_expr(node.a)?;
                 let right = self.compile_expr(node.b)?;
                 let target = self.alloc_temp()?;
@@ -294,13 +290,7 @@ impl<'a> BlockEncoder<'a> {
     }
 
     fn apply_expression(&mut self, dst: u8, root: u32) -> Result<()> {
-        let expanded = expand(
-            &mut self.arena,
-            root,
-            self.rng,
-            self.depth,
-            self.budget,
-        );
+        let expanded = expand(&mut self.arena, root, self.rng, self.depth, self.budget);
         let compiled = self.compile_expr(expanded)?;
         if compiled.register != dst {
             self.emit(
@@ -515,10 +505,7 @@ impl<'a> BlockEncoder<'a> {
                     Width::W32 => SEM_LOAD32,
                     Width::W64 => SEM_LOAD64,
                 };
-                self.emit(
-                    semantic,
-                    [u64::from(dst), u64::from(addr), 0, 0],
-                )
+                self.emit(semantic, [u64::from(dst), u64::from(addr), 0, 0])
             }
             IrOp::Store { addr, src, width } => {
                 let semantic = match width {
@@ -527,10 +514,7 @@ impl<'a> BlockEncoder<'a> {
                     Width::W32 => SEM_STORE32,
                     Width::W64 => SEM_STORE64,
                 };
-                self.emit(
-                    semantic,
-                    [u64::from(addr), u64::from(src), 0, 0],
-                )
+                self.emit(semantic, [u64::from(addr), u64::from(src), 0, 0])
             }
         }
     }
@@ -557,17 +541,10 @@ impl<'a> BlockEncoder<'a> {
                 let false_state = self.target_state(when_false)?;
                 self.emit(
                     SEM_JCC,
-                    [
-                        u64::from(cond),
-                        true_state,
-                        false_state,
-                        u64::from(REG_ONE),
-                    ],
+                    [u64::from(cond), true_state, false_state, u64::from(REG_ONE)],
                 )
             }
-            Terminator::Return { value } => {
-                self.emit(SEM_RET, [u64::from(value), 0, 0, 0])
-            }
+            Terminator::Return { value } => self.emit(SEM_RET, [u64::from(value), 0, 0, 0]),
             Terminator::Trap => self.emit(SEM_TRAP, [0_u64; MAX_OPERANDS]),
         }
     }
@@ -598,13 +575,11 @@ pub(crate) fn encode_block(
 
 #[cfg(test)]
 mod tests {
-    use super::{encode_block, MAX_BLOCK_BODY};
+    use super::{MAX_BLOCK_BODY, encode_block};
     use crate::ir::{ByteBuf, IrOp, Terminator};
     use crate::mba::BuildRng;
     use crate::shared::derive::Tables;
-    use crate::shared::format::{
-        format, REG_ONE, REG_RAX, SEM_MOV_RI, SEM_RET,
-    };
+    use crate::shared::format::{REG_ONE, REG_RAX, SEM_MOV_RI, SEM_RET, format};
 
     fn seed() -> [u8; 32] {
         [0x5a_u8; 32]

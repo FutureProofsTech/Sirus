@@ -64,7 +64,7 @@ pub fn base_key(seed: &Seed) -> u64 {
 /// An intact payload yields `base_a ^ base_b`; any mutation alters the key.
 #[inline]
 #[must_use]
-pub fn effective_key(base_a: u64, base_b: u64, actual_hash: u64, expected_hash: u64) -> u64 {
+pub const fn effective_key(base_a: u64, base_b: u64, actual_hash: u64, expected_hash: u64) -> u64 {
     base_a ^ base_b ^ actual_hash ^ expected_hash
 }
 
@@ -87,7 +87,7 @@ pub fn manifest_byte(key: u64, index: usize, byte: u8) -> u8 {
 /// Decodes a manifest integer according to the build's chosen byte order.
 #[inline]
 #[must_use]
-pub fn decode_manifest_u32(bytes: &[u8; 4], big_endian: bool) -> u32 {
+pub const fn decode_manifest_u32(bytes: &[u8; 4], big_endian: bool) -> u32 {
     if big_endian {
         u32::from_be_bytes(*bytes)
     } else {
@@ -98,7 +98,7 @@ pub fn decode_manifest_u32(bytes: &[u8; 4], big_endian: bool) -> u32 {
 /// Encodes a manifest integer according to the build's chosen byte order.
 #[inline]
 #[must_use]
-pub fn encode_manifest_u32(value: u32, big_endian: bool) -> [u8; 4] {
+pub const fn encode_manifest_u32(value: u32, big_endian: bool) -> [u8; 4] {
     if big_endian {
         value.to_be_bytes()
     } else {
@@ -109,7 +109,7 @@ pub fn encode_manifest_u32(value: u32, big_endian: bool) -> [u8; 4] {
 /// Decodes a manifest integer according to the build's chosen byte order.
 #[inline]
 #[must_use]
-pub fn decode_manifest_u64(bytes: &[u8; 8], big_endian: bool) -> u64 {
+pub const fn decode_manifest_u64(bytes: &[u8; 8], big_endian: bool) -> u64 {
     if big_endian {
         u64::from_be_bytes(*bytes)
     } else {
@@ -120,7 +120,7 @@ pub fn decode_manifest_u64(bytes: &[u8; 8], big_endian: bool) -> u64 {
 /// Encodes a manifest integer according to the build's chosen byte order.
 #[inline]
 #[must_use]
-pub fn encode_manifest_u64(value: u64, big_endian: bool) -> [u8; 8] {
+pub const fn encode_manifest_u64(value: u64, big_endian: bool) -> [u8; 8] {
     if big_endian {
         value.to_be_bytes()
     } else {
@@ -141,10 +141,7 @@ impl BodyCipher {
     #[must_use]
     pub fn new(global_key: u64, block_state: u64, body_offset: usize) -> Self {
         let offset = u64::try_from(body_offset).unwrap_or(u64::MAX);
-        let state = global_key
-            ^ block_state.rotate_left(17)
-            ^ offset
-            ^ BODY_DOMAIN;
+        let state = global_key ^ block_state.rotate_left(17) ^ offset ^ BODY_DOMAIN;
         Self { state }
     }
 
@@ -182,8 +179,7 @@ fn read_u64(bytes: &[u8], offset: usize) -> u64 {
     bytes
         .get(offset..offset.wrapping_add(8))
         .and_then(|slice| <[u8; 8]>::try_from(slice).ok())
-        .map(u64::from_le_bytes)
-        .unwrap_or(0)
+        .map_or(0, u64::from_le_bytes)
 }
 
 /// Returns the default fuel so generated sources can reference one constant.
@@ -196,8 +192,8 @@ pub const fn default_fuel() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        base_key, decode_manifest_u64, effective_key, encode_manifest_u64, manifest_byte,
-        manifest_size, payload_hash, BodyCipher, MANIFEST_ENTRY_BYTES, MAX_PAYLOAD_BLOCKS,
+        BodyCipher, MANIFEST_ENTRY_BYTES, MAX_PAYLOAD_BLOCKS, base_key, decode_manifest_u64,
+        effective_key, encode_manifest_u64, manifest_byte, manifest_size, payload_hash,
     };
 
     fn seed(value: u8) -> [u8; 32] {
@@ -207,10 +203,7 @@ mod tests {
     #[test]
     fn manifest_size_is_checked() {
         assert_eq!(manifest_size(0), Some(8));
-        assert_eq!(
-            manifest_size(3),
-            Some(8 + 3 * MANIFEST_ENTRY_BYTES)
-        );
+        assert_eq!(manifest_size(3), Some(8 + 3 * MANIFEST_ENTRY_BYTES));
         assert_eq!(manifest_size(MAX_PAYLOAD_BLOCKS + 1), None);
     }
 
@@ -267,9 +260,9 @@ mod tests {
         }
         assert_eq!(plain, decrypted);
         assert_ne!(encryptor.state(), 0);
-        assert!(
-            BodyCipher::new(99, 0xaaaa_bbbb, 64).apply(64, 0, 1)
-                != BodyCipher::new(99, 0xaaaa_bbbb, 65).apply(65, 0, 1)
+        assert_ne!(
+            BodyCipher::new(99, 0xaaaa_bbbb, 64).apply(64, 0, 1),
+            BodyCipher::new(99, 0xaaaa_bbbb, 65).apply(65, 0, 1)
         );
     }
 
@@ -281,10 +274,7 @@ mod tests {
         let expected = actual;
         let base = base_key(&seed);
         assert_eq!(effective_key(base, 0, actual, expected), base);
-        assert_ne!(
-            effective_key(base, 0, actual ^ 1, expected),
-            base
-        );
+        assert_ne!(effective_key(base, 0, actual ^ 1, expected), base);
         assert_ne!(payload_hash(&seed, b"other"), actual);
     }
 }

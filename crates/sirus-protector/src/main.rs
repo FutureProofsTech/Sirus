@@ -3,6 +3,8 @@
 #![forbid(unsafe_code)]
 
 fn main() -> std::process::ExitCode {
-    println!("sirus: not yet wired");
+    use std::io::Write as _;
+    let mut stdout = std::io::stdout();
+    drop(writeln!(stdout, "sirus: not yet wired"));
     std::process::ExitCode::SUCCESS
 }
