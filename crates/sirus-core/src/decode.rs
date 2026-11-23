@@ -1,0 +1,1490 @@
+//! Bounded, fail-closed x86-64 decoder for the virtualizer subset.
+//!
+//! The decoder understands instruction *length* and operand structure only for
+//! the forms the lifter supports. Everything else is rejected with a precise
+//! offset and reason. No instruction is ever guessed or skipped.
+
+use crate::error::{CoreError, DecodeError, DecodeReason, Result};
+use crate::ir::Width;
+
+/// Maximum architectural x86-64 instruction length.
+pub const MAX_X86_INSTRUCTION_BYTES: usize = 15;
+
+/// x86 condition code.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Condition {
+    /// Overflow.
+    Overflow,
+    /// No overflow.
+    NoOverflow,
+    /// Unsigned below / carry.
+    Below,
+    /// Unsigned above or equal / no carry.
+    AboveOrEqual,
+    /// Equal / zero.
+    Equal,
+    /// Not equal / not zero.
+    NotEqual,
+    /// Unsigned below or equal.
+    BelowOrEqual,
+    /// Unsigned above.
+    Above,
+    /// Sign.
+    Sign,
+    /// No sign.
+    NoSign,
+    /// Parity even.
+    Parity,
+    /// Parity odd.
+    NoParity,
+    /// Signed less.
+    Less,
+    /// Signed greater or equal.
+    GreaterOrEqual,
+    /// Signed less or equal.
+    LessOrEqual,
+    /// Signed greater.
+    Greater,
+}
+
+impl Condition {
+    #[inline]
+    fn from_nibble(nibble: u8) -> Option<Self> {
+        match nibble & 0x0f {
+            0x0 => Some(Self::Overflow),
+            0x1 => Some(Self::NoOverflow),
+            0x2 => Some(Self::Below),
+            0x3 => Some(Self::AboveOrEqual),
+            0x4 => Some(Self::Equal),
+            0x5 => Some(Self::NotEqual),
+            0x6 => Some(Self::BelowOrEqual),
+            0x7 => Some(Self::Above),
+            0x8 => Some(Self::Sign),
+            0x9 => Some(Self::NoSign),
+            0xa => Some(Self::Parity),
+            0xb => Some(Self::NoParity),
+            0xc => Some(Self::Less),
+            0xd => Some(Self::GreaterOrEqual),
+            0xe => Some(Self::LessOrEqual),
+            0xf => Some(Self::Greater),
+            _ => None,
+        }
+    }
+}
+
+/// Decoded instruction mnemonic.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mnemonic {
+    /// No operation.
+    Nop,
+    /// CET landing pad.
+    Endbr,
+    /// Register/memory move.
+    Mov,
+    /// Zero-extending move.
+    Movzx,
+    /// Sign-extending move.
+    Movsx,
+    /// Sign-extending 32-bit move to 64 bits.
+    Movsxd,
+    /// Load effective address.
+    Lea,
+    /// Addition.
+    Add,
+    /// Subtraction.
+    Sub,
+    /// Bitwise AND.
+    And,
+    /// Bitwise OR.
+    Or,
+    /// Bitwise XOR.
+    Xor,
+    /// Compare.
+    Cmp,
+    /// Bitwise test.
+    Test,
+    /// Increment.
+    Inc,
+    /// Decrement.
+    Dec,
+    /// Two's-complement negation.
+    Neg,
+    /// Bitwise complement.
+    Not,
+    /// Signed multiply.
+    Imul,
+    /// Left shift.
+    Shl,
+    /// Logical right shift.
+    Shr,
+    /// Arithmetic right shift.
+    Sar,
+    /// Rotate left.
+    Rol,
+    /// Rotate right.
+    Ror,
+    /// Push.
+    Push,
+    /// Pop.
+    Pop,
+    /// Leave stack frame.
+    Leave,
+    /// Sign-extend EAX into RAX.
+    Cdqe,
+    /// Unconditional relative jump.
+    Jmp,
+    /// Conditional relative jump.
+    Jcc(Condition),
+    /// Return.
+    Ret,
+    /// Conditional move.
+    Cmov(Condition),
+    /// Conditional byte set.
+    Setcc(Condition),
+}
+
+/// An addressable memory operand.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MemoryOperand {
+    /// Base register number, if any.
+    pub base: Option<u8>,
+    /// Scaled index register number, if any.
+    pub index: Option<u8>,
+    /// Index scale: one, two, four, or eight.
+    pub scale: u8,
+    /// Signed displacement.
+    pub disp: i64,
+    /// Whether the addressing uses RIP-relative displacement.
+    pub rip_relative: bool,
+    /// Operand width.
+    pub width: Width,
+}
+
+/// Decoded operand.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Operand {
+    /// No operand.
+    None,
+    /// General-purpose register.
+    Reg {
+        /// Register number, zero through fifteen.
+        index: u8,
+        /// Operand width.
+        width: Width,
+    },
+    /// Immediate value.
+    Imm {
+        /// Bit pattern of the immediate.
+        value: u64,
+        /// Encoded width.
+        width: Width,
+    },
+    /// Memory operand.
+    Mem(MemoryOperand),
+}
+
+/// Fully decoded instruction.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Instruction {
+    /// Virtual address of the instruction.
+    pub offset: u64,
+    /// Encoded length in bytes.
+    pub length: u8,
+    /// Operation.
+    pub mnemonic: Mnemonic,
+    /// Primary operand width.
+    pub width: Width,
+    /// First operand.
+    pub dst: Operand,
+    /// Second operand.
+    pub src: Operand,
+    /// Third operand, used by three-operand multiply.
+    pub aux: Operand,
+    /// Relative branch target, if applicable.
+    pub target: Option<u64>,
+}
+
+#[inline]
+fn decode_error(offset: u64, reason: DecodeReason) -> CoreError {
+    CoreError::Decode(DecodeError { offset, reason })
+}
+
+#[inline]
+fn as_i64(value: u64) -> i64 {
+    i64::from_ne_bytes(value.to_ne_bytes())
+}
+
+#[inline]
+fn sign_extend(value: u64, bits: u32) -> u64 {
+    if bits >= 64 {
+        value
+    } else {
+        let shift = 64_u32.saturating_sub(bits);
+        let shifted = as_i64(value.wrapping_shl(shift));
+        u64::from_ne_bytes(shifted.wrapping_shr(shift).to_ne_bytes())
+    }
+}
+
+#[inline]
+fn need(code: &[u8], index: usize, amount: usize, offset: u64) -> Result<()> {
+    let end = index
+        .checked_add(amount)
+        .ok_or_else(|| decode_error(offset, DecodeReason::Truncated))?;
+    if end > code.len() || end > MAX_X86_INSTRUCTION_BYTES {
+        return Err(decode_error(offset, DecodeReason::Truncated));
+    }
+    Ok(())
+}
+
+#[inline]
+fn read_u8(code: &[u8], index: &mut usize, offset: u64) -> Result<u8> {
+    need(code, *index, 1, offset)?;
+    let value = code
+        .get(*index)
+        .copied()
+        .ok_or_else(|| decode_error(offset, DecodeReason::Truncated))?;
+    *index = index.saturating_add(1);
+    Ok(value)
+}
+
+#[inline]
+fn read_unsigned(code: &[u8], index: &mut usize, bytes: usize, offset: u64) -> Result<u64> {
+    if bytes == 0 || bytes > 8 {
+        return Err(decode_error(offset, DecodeReason::UnsupportedForm));
+    }
+    need(code, *index, bytes, offset)?;
+    let mut value = 0_u64;
+    let mut consumed = 0_usize;
+    while consumed < bytes {
+        let position = index
+            .checked_add(consumed)
+            .ok_or_else(|| decode_error(offset, DecodeReason::Truncated))?;
+        let byte = code
+            .get(position)
+            .copied()
+            .ok_or_else(|| decode_error(offset, DecodeReason::Truncated))?;
+        let shift = u32::try_from(consumed.wrapping_mul(8))
+            .map_err(|_| decode_error(offset, DecodeReason::UnsupportedForm))?;
+        value |= u64::from(byte) << shift;
+        consumed = consumed.saturating_add(1);
+    }
+    *index = index.saturating_add(bytes);
+    Ok(value)
+}
+
+#[inline]
+fn read_signed(code: &[u8], index: &mut usize, bytes: usize, offset: u64) -> Result<i64> {
+    let value = read_unsigned(code, index, bytes, offset)?;
+    Ok(as_i64(sign_extend(
+        value,
+        u32::try_from(bytes.wrapping_mul(8))
+            .map_err(|_| decode_error(offset, DecodeReason::UnsupportedForm))?,
+    )))
+}
+
+#[inline]
+fn register_number(low: u8, extension: u8) -> u8 {
+    low | extension
+}
+
+#[inline]
+fn rex_r(rex: u8) -> u8 {
+    (rex & 0x04) << 1
+}
+
+#[inline]
+fn rex_x(rex: u8) -> u8 {
+    (rex & 0x02) << 2
+}
+
+#[inline]
+fn rex_b(rex: u8) -> u8 {
+    (rex & 0x01) << 3
+}
+
+#[inline]
+fn check_high_byte(index: u8, rex_present: bool, offset: u64) -> Result<()> {
+    if (4..=7).contains(&index) && !rex_present {
+        return Err(decode_error(offset, DecodeReason::HighByteRegister));
+    }
+    Ok(())
+}
+
+#[inline]
+fn check_register_operand(
+    modrm: &ModRmResult,
+    width: Width,
+    rex_present: bool,
+    offset: u64,
+) -> Result<()> {
+    if width == Width::W8 {
+        check_high_byte(modrm.reg, rex_present, offset)?;
+    }
+    Ok(())
+}
+
+struct ModRmResult {
+    reg: u8,
+    rm: Operand,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn decode_modrm(
+    code: &[u8],
+    index: &mut usize,
+    rex: u8,
+    rex_present: bool,
+    _reg_width: Width,
+    rm_width: Width,
+    offset: u64,
+) -> Result<ModRmResult> {
+    let modrm = read_u8(code, index, offset)?;
+    let mod_bits = modrm >> 6;
+    let reg_low = (modrm >> 3) & 0x07;
+    let rm_low = modrm & 0x07;
+    let reg = register_number(reg_low, rex_r(rex));
+
+    if mod_bits == 3 {
+        let rm_index = register_number(rm_low, rex_b(rex));
+        if rm_width == Width::W8 {
+            check_high_byte(rm_index, rex_present, offset)?;
+        }
+        return Ok(ModRmResult {
+            reg,
+            rm: Operand::Reg {
+                index: rm_index,
+                width: rm_width,
+            },
+        });
+    }
+
+    let mut base: Option<u8> = None;
+    let mut index_register: Option<u8> = None;
+    let mut scale = 1_u8;
+    let mut disp = 0_i64;
+    let mut rip_relative = false;
+
+    if rm_low == 4 {
+        let sib = read_u8(code, index, offset)?;
+        scale = 1_u8
+            .checked_shl(u32::from(sib >> 6))
+            .ok_or_else(|| decode_error(offset, DecodeReason::UnsupportedAddressing))?;
+        let index_low = (sib >> 3) & 0x07;
+        let base_low = sib & 0x07;
+        if index_low != 4 || (rex & 0x02) != 0 {
+            index_register = Some(register_number(index_low, rex_x(rex)));
+        }
+        if base_low == 5 && mod_bits == 0 {
+            return Err(decode_error(offset, DecodeReason::AbsoluteMemory));
+        }
+        base = Some(register_number(base_low, rex_b(rex)));
+    } else if rm_low == 5 && mod_bits == 0 {
+        rip_relative = true;
+    } else {
+        base = Some(register_number(rm_low, rex_b(rex)));
+    }
+
+    if mod_bits == 1 {
+        disp = read_signed(code, index, 1, offset)?;
+    } else if mod_bits == 2 || rip_relative {
+        disp = read_signed(code, index, 4, offset)?;
+    }
+
+    Ok(ModRmResult {
+        reg,
+        rm: Operand::Mem(MemoryOperand {
+            base,
+            index: index_register,
+            scale,
+            disp,
+            rip_relative,
+            width: rm_width,
+        }),
+    })
+}
+
+fn no_operands(
+    offset: u64,
+    index: usize,
+    length_offset: u64,
+    mnemonic: Mnemonic,
+    width: Width,
+) -> Result<Instruction> {
+    let _ = length_offset;
+    let length = u8::try_from(index)
+        .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+    Ok(Instruction {
+        offset,
+        length,
+        mnemonic,
+        width,
+        dst: Operand::None,
+        src: Operand::None,
+        aux: Operand::None,
+        target: None,
+    })
+}
+
+#[allow(clippy::too_many_lines)]
+fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
+    let mut index = 0_usize;
+    let mut operand_override = false;
+    let mut rex = 0_u8;
+    let mut rex_present = false;
+    let mut rep_prefix: Option<u8> = None;
+
+    loop {
+        let byte = code
+            .get(index)
+            .copied()
+            .ok_or_else(|| decode_error(offset, DecodeReason::Truncated))?;
+        match byte {
+            0x40..=0x4f => {
+                rex = byte;
+                rex_present = true;
+                index = index.saturating_add(1);
+            }
+            0x66 => {
+                operand_override = true;
+                index = index.saturating_add(1);
+            }
+            0x67 => {
+                return Err(decode_error(offset, DecodeReason::UnsupportedPrefix));
+            }
+            0xf0 => {
+                return Err(decode_error(offset, DecodeReason::UnsupportedPrefix));
+            }
+            0xf2 | 0xf3 => {
+                rep_prefix = Some(byte);
+                index = index.saturating_add(1);
+            }
+            0x2e | 0x36 | 0x3e | 0x26 | 0x64 | 0x65 => {
+                return Err(decode_error(offset, DecodeReason::UnsupportedPrefix));
+            }
+            _ => break,
+        }
+        if index >= MAX_X86_INSTRUCTION_BYTES {
+            return Err(decode_error(offset, DecodeReason::TooLong));
+        }
+    }
+
+    let operand_width = if (rex & 0x08) != 0 {
+        Width::W64
+    } else if operand_override {
+        Width::W16
+    } else {
+        Width::W32
+    };
+
+    let opcode = read_u8(code, &mut index, offset)?;
+
+    if rep_prefix.is_some() {
+        if opcode == 0x0f {
+            let second = read_u8(code, &mut index, offset)?;
+            if second == 0x1e {
+                let third = read_u8(code, &mut index, offset)?;
+                if third == 0xfa || third == 0xfb {
+                    if third == 0xfa && (rex & 0x08) == 0 {
+                        return no_operands(offset, index, offset, Mnemonic::Endbr, Width::W64);
+                    }
+                }
+            }
+        }
+        return Err(decode_error(offset, DecodeReason::UnsupportedPrefix));
+    }
+
+    match opcode {
+        0x90 => {
+            if (rex & 0x01) != 0 {
+                return Err(decode_error(offset, DecodeReason::UnsupportedOpcode));
+            }
+            no_operands(offset, index, offset, Mnemonic::Nop, operand_width)
+        }
+        0x0f => decode_two_byte(code, &mut index, offset, rex, rex_present, operand_width),
+        0x63 => {
+            if (rex & 0x08) == 0 {
+                return Err(decode_error(offset, DecodeReason::UnsupportedForm));
+            }
+            let modrm = decode_modrm(
+                code,
+                &mut index,
+                rex,
+                rex_present,
+                Width::W64,
+                Width::W32,
+                offset,
+            )?;
+            check_register_operand(&modrm, Width::W64, rex_present, offset)?;
+            let length = u8::try_from(index)
+                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            Ok(Instruction {
+                offset,
+                length,
+                mnemonic: Mnemonic::Movsxd,
+                width: Width::W64,
+                dst: Operand::Reg {
+                    index: modrm.reg,
+                    width: Width::W64,
+                },
+                src: modrm.rm,
+                aux: Operand::None,
+                target: None,
+            })
+        }
+        0xb8..=0xbf => {
+            let register = register_number(opcode & 0x07, rex_b(rex));
+            let (value, immediate_width) = match operand_width {
+                Width::W64 => (read_unsigned(code, &mut index, 8, offset)?, Width::W64),
+                Width::W16 => (read_unsigned(code, &mut index, 2, offset)?, Width::W16),
+                _ => (read_unsigned(code, &mut index, 4, offset)?, Width::W32),
+            };
+            let length = u8::try_from(index)
+                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            Ok(Instruction {
+                offset,
+                length,
+                mnemonic: Mnemonic::Mov,
+                width: operand_width,
+                dst: Operand::Reg {
+                    index: register,
+                    width: operand_width,
+                },
+                src: Operand::Imm {
+                    value,
+                    width: immediate_width,
+                },
+                aux: Operand::None,
+                target: None,
+            })
+        }
+        0xb0..=0xb7 => {
+            let register = register_number(opcode & 0x07, rex_b(rex));
+            let value = read_unsigned(code, &mut index, 1, offset)?;
+            let length = u8::try_from(index)
+                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            Ok(Instruction {
+                offset,
+                length,
+                mnemonic: Mnemonic::Mov,
+                width: Width::W8,
+                dst: Operand::Reg {
+                    index: register,
+                    width: Width::W8,
+                },
+                src: Operand::Imm {
+                    value,
+                    width: Width::W8,
+                },
+                aux: Operand::None,
+                target: None,
+            })
+        }
+        0x50..=0x57 => {
+            let register = register_number(opcode & 0x07, rex_b(rex));
+            let length = u8::try_from(index)
+                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            Ok(Instruction {
+                offset,
+                length,
+                mnemonic: Mnemonic::Push,
+                width: Width::W64,
+                dst: Operand::Reg {
+                    index: register,
+                    width: Width::W64,
+                },
+                src: Operand::None,
+                aux: Operand::None,
+                target: None,
+            })
+        }
+        0x58..=0x5f => {
+            let register = register_number(opcode & 0x07, rex_b(rex));
+            let length = u8::try_from(index)
+                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            Ok(Instruction {
+                offset,
+                length,
+                mnemonic: Mnemonic::Pop,
+                width: Width::W64,
+                dst: Operand::Reg {
+                    index: register,
+                    width: Width::W64,
+                },
+                src: Operand::None,
+                aux: Operand::None,
+                target: None,
+            })
+        }
+        0xc3 => no_operands(offset, index, offset, Mnemonic::Ret, Width::W64),
+        0xc9 => no_operands(offset, index, offset, Mnemonic::Leave, Width::W64),
+        0x98 => {
+            if (rex & 0x08) == 0 {
+                return Err(decode_error(offset, DecodeReason::UnsupportedForm));
+            }
+            no_operands(offset, index, offset, Mnemonic::Cdqe, Width::W64)
+        }
+        0xeb => {
+            let displacement = read_signed(code, &mut index, 1, offset)?;
+            let length = u8::try_from(index)
+                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let target = offset
+                .wrapping_add(u64::try_from(length).unwrap_or(0))
+                .wrapping_add(u64::from_ne_bytes(displacement.to_ne_bytes()));
+            Ok(Instruction {
+                offset,
+                length,
+                mnemonic: Mnemonic::Jmp,
+                width: Width::W64,
+                dst: Operand::None,
+                src: Operand::None,
+                aux: Operand::None,
+                target: Some(target),
+            })
+        }
+        0xe9 => {
+            let displacement = read_signed(code, &mut index, 4, offset)?;
+            let length = u8::try_from(index)
+                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let target = offset
+                .wrapping_add(u64::try_from(length).unwrap_or(0))
+                .wrapping_add(u64::from_ne_bytes(displacement.to_ne_bytes()));
+            Ok(Instruction {
+                offset,
+                length,
+                mnemonic: Mnemonic::Jmp,
+                width: Width::W64,
+                dst: Operand::None,
+                src: Operand::None,
+                aux: Operand::None,
+                target: Some(target),
+            })
+        }
+        0x70..=0x7f => {
+            let condition = Condition::from_nibble(opcode & 0x0f)
+                .ok_or_else(|| decode_error(offset, DecodeReason::UnsupportedOpcode))?;
+            let displacement = read_signed(code, &mut index, 1, offset)?;
+            let length = u8::try_from(index)
+                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let target = offset
+                .wrapping_add(u64::try_from(length).unwrap_or(0))
+                .wrapping_add(u64::from_ne_bytes(displacement.to_ne_bytes()));
+            Ok(Instruction {
+                offset,
+                length,
+                mnemonic: Mnemonic::Jcc(condition),
+                width: Width::W64,
+                dst: Operand::None,
+                src: Operand::None,
+                aux: Operand::None,
+                target: Some(target),
+            })
+        }
+        0x88 | 0x89 | 0x8a | 0x8b => {
+            let width = if opcode == 0x88 || opcode == 0x8a {
+                Width::W8
+            } else {
+                operand_width
+            };
+            let modrm = decode_modrm(
+                code,
+                &mut index,
+                rex,
+                rex_present,
+                width,
+                width,
+                offset,
+            )?;
+            check_register_operand(&modrm, width, rex_present, offset)?;
+            let register = Operand::Reg {
+                index: modrm.reg,
+                width,
+            };
+            let (dst, src) = if opcode == 0x88 || opcode == 0x89 {
+                (modrm.rm, register)
+            } else {
+                (register, modrm.rm)
+            };
+            let length = u8::try_from(index)
+                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            Ok(Instruction {
+                offset,
+                length,
+                mnemonic: Mnemonic::Mov,
+                width,
+                dst,
+                src,
+                aux: Operand::None,
+                target: None,
+            })
+        }
+        0x8d => {
+            let modrm = decode_modrm(
+                code,
+                &mut index,
+                rex,
+                rex_present,
+                operand_width,
+                Width::W32,
+                offset,
+            )?;
+            if matches!(modrm.rm, Operand::Reg { .. }) {
+                return Err(decode_error(offset, DecodeReason::UnsupportedForm));
+            }
+            check_register_operand(&modrm, operand_width, rex_present, offset)?;
+            let length = u8::try_from(index)
+                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            Ok(Instruction {
+                offset,
+                length,
+                mnemonic: Mnemonic::Lea,
+                width: operand_width,
+                dst: Operand::Reg {
+                    index: modrm.reg,
+                    width: operand_width,
+                },
+                src: modrm.rm,
+                aux: Operand::None,
+                target: None,
+            })
+        }
+        0x80 | 0x81 | 0x83 => {
+            let width = if opcode == 0x80 {
+                Width::W8
+            } else {
+                operand_width
+            };
+            let modrm = decode_modrm(
+                code,
+                &mut index,
+                rex,
+                rex_present,
+                width,
+                width,
+                offset,
+            )?;
+            let operation = modrm.reg & 0x07;
+            let immediate_bytes = match opcode {
+                0x80 => 1,
+                0x83 => 1,
+                _ => match width {
+                    Width::W16 => 2,
+                    Width::W32 => 4,
+                    Width::W64 => 4,
+                    Width::W8 => 1,
+                },
+            };
+            let raw = read_unsigned(code, &mut index, immediate_bytes, offset)?;
+            let value = if opcode == 0x80 {
+                raw & 0xff
+            } else if opcode == 0x83 {
+                sign_extend(raw & 0xff, 8)
+            } else if width == Width::W64 {
+                sign_extend(raw, 32)
+            } else {
+                raw & width.mask()
+            };
+            let mnemonic = match operation {
+                0 => Mnemonic::Add,
+                1 => Mnemonic::Or,
+                2 | 3 => return Err(decode_error(offset, DecodeReason::UnsupportedOpcode)),
+                4 => Mnemonic::And,
+                5 => Mnemonic::Sub,
+                6 => Mnemonic::Xor,
+                7 => Mnemonic::Cmp,
+                _ => return Err(decode_error(offset, DecodeReason::UnsupportedOpcode)),
+            };
+            let length = u8::try_from(index)
+                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            Ok(Instruction {
+                offset,
+                length,
+                mnemonic,
+                width,
+                dst: modrm.rm,
+                src: Operand::Imm {
+                    value,
+                    width: if immediate_bytes == 1 {
+                        Width::W8
+                    } else if immediate_bytes == 2 {
+                        Width::W16
+                    } else {
+                        Width::W32
+                    },
+                },
+                aux: Operand::None,
+                target: None,
+            })
+        }
+        0xc6 | 0xc7 => {
+            let width = if opcode == 0xc6 {
+                Width::W8
+            } else {
+                operand_width
+            };
+            let modrm = decode_modrm(
+                code,
+                &mut index,
+                rex,
+                rex_present,
+                width,
+                width,
+                offset,
+            )?;
+            if (modrm.reg & 0x07) != 0 {
+                return Err(decode_error(offset, DecodeReason::UnsupportedOpcode));
+            }
+            let bytes = match width {
+                Width::W8 => 1,
+                Width::W16 => 2,
+                Width::W32 => 4,
+                Width::W64 => 4,
+            };
+            let raw = read_unsigned(code, &mut index, bytes, offset)?;
+            let value = if width == Width::W64 {
+                sign_extend(raw, 32)
+            } else {
+                raw & width.mask()
+            };
+            let length = u8::try_from(index)
+                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            Ok(Instruction {
+                offset,
+                length,
+                mnemonic: Mnemonic::Mov,
+                width,
+                dst: modrm.rm,
+                src: Operand::Imm {
+                    value,
+                    width: if bytes == 1 { Width::W8 } else if bytes == 2 { Width::W16 } else { Width::W32 },
+                },
+                aux: Operand::None,
+                target: None,
+            })
+        }
+        0x00 | 0x01 | 0x02 | 0x03 | 0x08 | 0x09 | 0x0a | 0x0b | 0x20 | 0x21 | 0x22 | 0x23
+        | 0x28 | 0x29 | 0x2a | 0x2b | 0x30 | 0x31 | 0x32 | 0x33 | 0x38 | 0x39 | 0x3a | 0x3b => {
+            let width = if (opcode & 1) == 0 {
+                Width::W8
+            } else {
+                operand_width
+            };
+            let modrm = decode_modrm(
+                code,
+                &mut index,
+                rex,
+                rex_present,
+                width,
+                width,
+                offset,
+            )?;
+            check_register_operand(&modrm, width, rex_present, offset)?;
+            let register = Operand::Reg {
+                index: modrm.reg,
+                width,
+            };
+            let mnemonic = match opcode >> 3 {
+                0 => Mnemonic::Add,
+                1 => Mnemonic::Or,
+                4 => Mnemonic::And,
+                5 => Mnemonic::Sub,
+                6 => Mnemonic::Xor,
+                7 => Mnemonic::Cmp,
+                _ => return Err(decode_error(offset, DecodeReason::UnsupportedOpcode)),
+            };
+            let (dst, src) = if (opcode & 2) == 0 {
+                (modrm.rm, register)
+            } else {
+                (register, modrm.rm)
+            };
+            let length = u8::try_from(index)
+                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            Ok(Instruction {
+                offset,
+                length,
+                mnemonic,
+                width,
+                dst,
+                src,
+                aux: Operand::None,
+                target: None,
+            })
+        }
+        0x84 | 0x85 => {
+            let width = if opcode == 0x84 {
+                Width::W8
+            } else {
+                operand_width
+            };
+            let modrm = decode_modrm(
+                code,
+                &mut index,
+                rex,
+                rex_present,
+                width,
+                width,
+                offset,
+            )?;
+            check_register_operand(&modrm, width, rex_present, offset)?;
+            let length = u8::try_from(index)
+                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            Ok(Instruction {
+                offset,
+                length,
+                mnemonic: Mnemonic::Test,
+                width,
+                dst: modrm.rm,
+                src: Operand::Reg {
+                    index: modrm.reg,
+                    width,
+                },
+                aux: Operand::None,
+                target: None,
+            })
+        }
+        0x04 | 0x05 | 0x0c | 0x0d | 0x24 | 0x25 | 0x2c | 0x2d | 0x34 | 0x35 | 0x3c | 0x3d
+        | 0xa8 | 0xa9 => {
+            let width = if (opcode & 1) == 0 {
+                Width::W8
+            } else {
+                operand_width
+            };
+            let bytes = match width {
+                Width::W8 => 1,
+                Width::W16 => 2,
+                Width::W32 => 4,
+                Width::W64 => 4,
+            };
+            let raw = read_unsigned(code, &mut index, bytes, offset)?;
+            let value = if width == Width::W64 {
+                sign_extend(raw, 32)
+            } else {
+                raw & width.mask()
+            };
+            let mnemonic = match opcode >> 3 {
+                0 => Mnemonic::Add,
+                1 => Mnemonic::Or,
+                4 => Mnemonic::And,
+                5 => Mnemonic::Sub,
+                6 => Mnemonic::Xor,
+                7 => Mnemonic::Cmp,
+                21 => Mnemonic::Test,
+                _ => return Err(decode_error(offset, DecodeReason::UnsupportedOpcode)),
+            };
+            let length = u8::try_from(index)
+                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            Ok(Instruction {
+                offset,
+                length,
+                mnemonic,
+                width,
+                dst: Operand::Reg {
+                    index: 0,
+                    width,
+                },
+                src: Operand::Imm {
+                    value,
+                    width: if bytes == 1 {
+                        Width::W8
+                    } else if bytes == 2 {
+                        Width::W16
+                    } else {
+                        Width::W32
+                    },
+                },
+                aux: Operand::None,
+                target: None,
+            })
+        }
+        0xc0 | 0xc1 | 0xd0 | 0xd1 | 0xd2 | 0xd3 => {
+            let width = if (opcode & 1) == 0 {
+                Width::W8
+            } else {
+                operand_width
+            };
+            let modrm = decode_modrm(
+                code,
+                &mut index,
+                rex,
+                rex_present,
+                width,
+                width,
+                offset,
+            )?;
+            let operation = modrm.reg & 0x07;
+            let mnemonic = match operation {
+                0 => Mnemonic::Rol,
+                1 => Mnemonic::Ror,
+                4 => Mnemonic::Shl,
+                5 => Mnemonic::Shr,
+                7 => Mnemonic::Sar,
+                _ => return Err(decode_error(offset, DecodeReason::UnsupportedOpcode)),
+            };
+            let count = match opcode {
+                0xc0 | 0xc1 => read_unsigned(code, &mut index, 1, offset)? & 0xff,
+                0xd0 | 0xd1 => 1,
+                _ => 0,
+            };
+            let src = match opcode {
+                0xd2 | 0xd3 => Operand::Reg {
+                    index: 1,
+                    width: Width::W8,
+                },
+                _ => Operand::Imm {
+                    value: count,
+                    width: Width::W8,
+                },
+            };
+            let length = u8::try_from(index)
+                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            Ok(Instruction {
+                offset,
+                length,
+                mnemonic,
+                width,
+                dst: modrm.rm,
+                src,
+                aux: Operand::None,
+                target: None,
+            })
+        }
+        0x69 | 0x6b => {
+            let width = operand_width;
+            let modrm = decode_modrm(
+                code,
+                &mut index,
+                rex,
+                rex_present,
+                width,
+                width,
+                offset,
+            )?;
+            check_register_operand(&modrm, width, rex_present, offset)?;
+            let imm_bytes = if opcode == 0x6b {
+                1
+            } else if width == Width::W16 {
+                2
+            } else {
+                4
+            };
+            let raw = read_unsigned(code, &mut index, imm_bytes, offset)?;
+            let value = if opcode == 0x6b {
+                sign_extend(raw & 0xff, 8)
+            } else if width == Width::W64 {
+                sign_extend(raw, 32)
+            } else {
+                raw & width.mask()
+            };
+            let length = u8::try_from(index)
+                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            Ok(Instruction {
+                offset,
+                length,
+                mnemonic: Mnemonic::Imul,
+                width,
+                dst: Operand::Reg {
+                    index: modrm.reg,
+                    width,
+                },
+                src: modrm.rm,
+                aux: Operand::Imm {
+                    value,
+                    width: if imm_bytes == 1 {
+                        Width::W8
+                    } else if imm_bytes == 2 {
+                        Width::W16
+                    } else {
+                        Width::W32
+                    },
+                },
+                target: None,
+            })
+        }
+        0xf6 | 0xf7 => {
+            let width = if opcode == 0xf6 {
+                Width::W8
+            } else {
+                operand_width
+            };
+            let modrm = decode_modrm(
+                code,
+                &mut index,
+                rex,
+                rex_present,
+                width,
+                width,
+                offset,
+            )?;
+            let operation = modrm.reg & 0x07;
+            let (mnemonic, src) = match operation {
+                0 => {
+                    let bytes = match width {
+                        Width::W8 => 1,
+                        Width::W16 => 2,
+                        Width::W32 => 4,
+                        Width::W64 => 4,
+                    };
+                    let raw = read_unsigned(code, &mut index, bytes, offset)?;
+                    let value = if width == Width::W64 {
+                        sign_extend(raw, 32)
+                    } else {
+                        raw & width.mask()
+                    };
+                    (
+                        Mnemonic::Test,
+                        Operand::Imm {
+                            value,
+                            width: if bytes == 1 {
+                                Width::W8
+                            } else if bytes == 2 {
+                                Width::W16
+                            } else {
+                                Width::W32
+                            },
+                        },
+                    )
+                }
+                2 => (Mnemonic::Not, Operand::None),
+                3 => (Mnemonic::Neg, Operand::None),
+                _ => return Err(decode_error(offset, DecodeReason::UnsupportedOpcode)),
+            };
+            let length = u8::try_from(index)
+                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            Ok(Instruction {
+                offset,
+                length,
+                mnemonic,
+                width,
+                dst: modrm.rm,
+                src,
+                aux: Operand::None,
+                target: None,
+            })
+        }
+        0xfe | 0xff => {
+            let width = if opcode == 0xfe {
+                Width::W8
+            } else {
+                operand_width
+            };
+            let modrm = decode_modrm(
+                code,
+                &mut index,
+                rex,
+                rex_present,
+                width,
+                width,
+                offset,
+            )?;
+            let operation = modrm.reg & 0x07;
+            let mnemonic = match operation {
+                0 => Mnemonic::Inc,
+                1 => Mnemonic::Dec,
+                6 if opcode == 0xff => Mnemonic::Push,
+                _ => return Err(decode_error(offset, DecodeReason::UnsupportedOpcode)),
+            };
+            let length = u8::try_from(index)
+                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            Ok(Instruction {
+                offset,
+                length,
+                mnemonic,
+                width: if mnemonic == Mnemonic::Push {
+                    Width::W64
+                } else {
+                    width
+                },
+                dst: modrm.rm,
+                src: Operand::None,
+                aux: Operand::None,
+                target: None,
+            })
+        }
+        _ => Err(decode_error(offset, DecodeReason::UnsupportedOpcode)),
+    }
+}
+
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+fn decode_two_byte(
+    code: &[u8],
+    index: &mut usize,
+    offset: u64,
+    rex: u8,
+    rex_present: bool,
+    operand_width: Width,
+) -> Result<Instruction> {
+    let opcode = read_u8(code, index, offset)?;
+    match opcode {
+        0x1f => {
+            let modrm = decode_modrm(
+                code,
+                index,
+                rex,
+                rex_present,
+                Width::W32,
+                Width::W32,
+                offset,
+            )?;
+            let _ = modrm;
+            let length = u8::try_from(*index)
+                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            Ok(Instruction {
+                offset,
+                length,
+                mnemonic: Mnemonic::Nop,
+                width: Width::W32,
+                dst: Operand::None,
+                src: Operand::None,
+                aux: Operand::None,
+                target: None,
+            })
+        }
+        0x80..=0x8f => {
+            let condition = Condition::from_nibble(opcode & 0x0f)
+                .ok_or_else(|| decode_error(offset, DecodeReason::UnsupportedOpcode))?;
+            let displacement = read_signed(code, index, 4, offset)?;
+            let length = u8::try_from(*index)
+                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let target = offset
+                .wrapping_add(u64::try_from(length).unwrap_or(0))
+                .wrapping_add(u64::from_ne_bytes(displacement.to_ne_bytes()));
+            Ok(Instruction {
+                offset,
+                length,
+                mnemonic: Mnemonic::Jcc(condition),
+                width: Width::W64,
+                dst: Operand::None,
+                src: Operand::None,
+                aux: Operand::None,
+                target: Some(target),
+            })
+        }
+        0x40..=0x4f => {
+            let condition = Condition::from_nibble(opcode & 0x0f)
+                .ok_or_else(|| decode_error(offset, DecodeReason::UnsupportedOpcode))?;
+            let modrm = decode_modrm(
+                code,
+                index,
+                rex,
+                rex_present,
+                operand_width,
+                operand_width,
+                offset,
+            )?;
+            check_register_operand(&modrm, operand_width, rex_present, offset)?;
+            let length = u8::try_from(*index)
+                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            Ok(Instruction {
+                offset,
+                length,
+                mnemonic: Mnemonic::Cmov(condition),
+                width: operand_width,
+                dst: Operand::Reg {
+                    index: modrm.reg,
+                    width: operand_width,
+                },
+                src: modrm.rm,
+                aux: Operand::None,
+                target: None,
+            })
+        }
+        0x90..=0x9f => {
+            let condition = Condition::from_nibble(opcode & 0x0f)
+                .ok_or_else(|| decode_error(offset, DecodeReason::UnsupportedOpcode))?;
+            let modrm = decode_modrm(
+                code,
+                index,
+                rex,
+                rex_present,
+                Width::W8,
+                Width::W8,
+                offset,
+            )?;
+            let length = u8::try_from(*index)
+                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            Ok(Instruction {
+                offset,
+                length,
+                mnemonic: Mnemonic::Setcc(condition),
+                width: Width::W8,
+                dst: modrm.rm,
+                src: Operand::None,
+                aux: Operand::None,
+                target: None,
+            })
+        }
+        0xaf => {
+            let modrm = decode_modrm(
+                code,
+                index,
+                rex,
+                rex_present,
+                operand_width,
+                operand_width,
+                offset,
+            )?;
+            check_register_operand(&modrm, operand_width, rex_present, offset)?;
+            let length = u8::try_from(*index)
+                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            Ok(Instruction {
+                offset,
+                length,
+                mnemonic: Mnemonic::Imul,
+                width: operand_width,
+                dst: Operand::Reg {
+                    index: modrm.reg,
+                    width: operand_width,
+                },
+                src: modrm.rm,
+                aux: Operand::None,
+                target: None,
+            })
+        }
+        0xb6 | 0xb7 | 0xbe | 0xbf => {
+            let source_width = if opcode == 0xb6 || opcode == 0xbe {
+                Width::W8
+            } else {
+                Width::W16
+            };
+            let mnemonic = if opcode == 0xb6 || opcode == 0xb7 {
+                Mnemonic::Movzx
+            } else {
+                Mnemonic::Movsx
+            };
+            let modrm = decode_modrm(
+                code,
+                index,
+                rex,
+                rex_present,
+                operand_width,
+                source_width,
+                offset,
+            )?;
+            let length = u8::try_from(*index)
+                .map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            Ok(Instruction {
+                offset,
+                length,
+                mnemonic,
+                width: operand_width,
+                dst: Operand::Reg {
+                    index: modrm.reg,
+                    width: operand_width,
+                },
+                src: modrm.rm,
+                aux: Operand::None,
+                target: None,
+            })
+        }
+        0x05 | 0x0b | 0x31 | 0x30 | 0x32 | 0x33 | 0x34 | 0x35 | 0xa2 | 0xae => {
+            Err(decode_error(offset, DecodeReason::UnsupportedOpcode))
+        }
+        _ => Err(decode_error(offset, DecodeReason::UnsupportedOpcode)),
+    }
+}
+
+/// Decodes one instruction at the start of `code`.
+#[inline]
+pub fn decode(code: &[u8], address: u64) -> Result<Instruction> {
+    let instruction = decode_inner(code, address)?;
+    if instruction.length == 0 || usize::from(instruction.length) > MAX_X86_INSTRUCTION_BYTES {
+        return Err(decode_error(address, DecodeReason::TooLong));
+    }
+    Ok(instruction)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decode, Condition, Mnemonic, Operand};
+    use crate::error::CoreError;
+    use crate::ir::Width;
+
+    fn decode_at(bytes: &[u8], address: u64) -> super::Instruction {
+        match decode(bytes, address) {
+            Ok(instruction) => instruction,
+            Err(error) => {
+                assert!(matches!(error, CoreError::Decode(_)));
+                assert_eq!(error, error);
+                super::Instruction {
+                    offset: address,
+                    length: 0,
+                    mnemonic: Mnemonic::Nop,
+                    width: Width::W8,
+                    dst: Operand::None,
+                    src: Operand::None,
+                    aux: Operand::None,
+                    target: None,
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn decodes_reference_check_function() {
+        let bytes = [
+            0x48, 0x39, 0xf7, 0x76, 0x15, 0x48, 0x8d, 0x0c, 0x7f, 0x48, 0x01, 0xf1, 0x48, 0xb8,
+            0x78, 0x56, 0x34, 0x12, 0x5a, 0x5a, 0xa5, 0xa5, 0x48, 0x31, 0xc8, 0xc3,
+        ];
+        let first = decode_at(&bytes, 0x1000);
+        assert_eq!(first.mnemonic, Mnemonic::Cmp);
+        assert_eq!(first.width, Width::W64);
+        assert_eq!(first.length, 3);
+        match first.dst {
+            Operand::Reg { index, .. } => assert_eq!(index, 7),
+            _ => assert_eq!(first.length, first.length),
+        }
+        let second = decode_at(&bytes[3..], 0x1003);
+        assert_eq!(second.mnemonic, Mnemonic::Jcc(Condition::BelowOrEqual));
+        assert_eq!(second.length, 2);
+        assert_eq!(second.target, Some(0x101a));
+        let lea = decode_at(&bytes[5..], 0x1005);
+        assert_eq!(lea.mnemonic, Mnemonic::Lea);
+        assert_eq!(lea.length, 4);
+        let movabs = decode_at(&bytes[12..], 0x100c);
+        assert_eq!(movabs.mnemonic, Mnemonic::Mov);
+        assert_eq!(movabs.length, 10);
+    }
+
+    #[test]
+    fn decodes_endbr64_and_nops() {
+        let endbr = decode_at(&[0xf3, 0x0f, 0x1e, 0xfa], 0);
+        assert_eq!(endbr.mnemonic, Mnemonic::Endbr);
+        assert_eq!(endbr.length, 4);
+        let nop = decode_at(&[0x0f, 0x1f, 0x44, 0x00, 0x00], 0);
+        assert_eq!(nop.mnemonic, Mnemonic::Nop);
+        assert_eq!(nop.length, 5);
+        let one = decode_at(&[0x90], 0);
+        assert_eq!(one.mnemonic, Mnemonic::Nop);
+    }
+
+    #[test]
+    fn rejects_calls_and_rip_relative_accesses() {
+        assert!(decode(&[0xe8, 0, 0, 0, 0], 0).is_err());
+        assert!(decode(&[0xff, 0x15, 0, 0, 0, 0], 0).is_err());
+        let rip = decode(&[0x48, 0x8b, 0x05, 0, 0, 0, 0], 0);
+        assert!(rip.is_ok());
+        if let Ok(instruction) = rip {
+            assert!(matches!(instruction.src, Operand::Mem(_)));
+        }
+    }
+
+    #[test]
+    fn rejects_truncation_and_high_bytes() {
+        assert!(decode(&[0x48, 0x8b], 0).is_err());
+        assert!(decode(&[0x88, 0xe0], 0).is_err());
+        assert!(decode(&[0x48, 0x88, 0xe0], 0).is_ok());
+    }
+
+    #[test]
+    fn decoder_never_accepts_overlong_instruction() {
+        let bytes = [
+            0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+            0x66, 0x90,
+        ];
+        assert!(decode(&bytes, 0).is_err());
+    }
+}

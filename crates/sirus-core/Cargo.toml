@@ -1,0 +1,20 @@
+[package]
+name = "sirus-core"
+description = "Deterministic, allocation-free compiler and cryptography core for the Sirus code virtualizer."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+
+[lints]
+workspace = true
