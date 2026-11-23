@@ -763,9 +763,10 @@ pub fn compile(
 
 #[cfg(test)]
 mod tests {
-    use super::{CompileOptions, compile};
+    use super::{CompileOptions, ProgramStats, compile};
     use crate::ir::BoundedVec;
     use crate::lifter::lift_function;
+    use crate::shared::format::DEFAULT_FUEL;
 
     fn options() -> CompileOptions {
         let mut options = CompileOptions::new();
@@ -813,5 +814,77 @@ mod tests {
         let empty: [crate::ir::LiftedFunction; 0] = [];
         assert!(compile(&empty, [0_u8; 32], CompileOptions::new()).is_err());
         let _ = BoundedVec::<u8, 1>::new();
+    }
+    #[test]
+    fn exposes_all_compiled_constants() {
+        let code = [0x48, 0x89, 0xf8, 0xc3];
+        let function = lift_function(&code, 0x1000).expect("lift");
+        let program = compile(&[function], [0x5a_u8; 32], options()).expect("compile");
+        assert_ne!(program.payload().len(), 0);
+        assert_eq!(program.seed(), &[0x5a_u8; 32]);
+        assert_eq!(program.entry_states().len(), 1);
+        assert_eq!(program.expected_hash(), program.expected_hash());
+        assert!(program.base_a() ^ program.base_b() != 0);
+        assert_eq!(program.fuel(), options().fuel);
+        assert_eq!(program.stats().functions, 1);
+        assert!(program.stats().payload_bytes >= program.payload().len());
+    }
+
+    #[test]
+    fn decoys_can_be_disabled_and_shared_by_many_functions() {
+        let code = [0x48, 0x89, 0xf8, 0xc3];
+        let function = lift_function(&code, 0x1000).expect("lift");
+        let mut no_decoys = options();
+        no_decoys.decoys = 0;
+        let program =
+            compile(&[function.clone(), function], [6_u8; 32], no_decoys).expect("compile");
+        assert_eq!(program.entry_states().len(), 2);
+        assert_eq!(program.stats().decoy_blocks, 0);
+        assert_eq!(program.stats().functions, 2);
+        let mut with_decoys = CompileOptions::new();
+        with_decoys.decoys = 2;
+        let function = lift_function(&code, 0x1000).expect("lift");
+        let program = compile(&[function], [7_u8; 32], with_decoys).expect("compile");
+        assert_eq!(program.stats().decoy_blocks, 0);
+    }
+
+    #[test]
+    fn rejects_invalid_entry_blocks_and_too_many_functions() {
+        let code = [0xc3];
+        let mut function = lift_function(&code, 0).expect("lift");
+        function.entry_block = 99;
+        assert!(compile(&[function], [0_u8; 32], CompileOptions::new()).is_err());
+        let code = [0xc3];
+        let function = lift_function(&code, 0).expect("lift");
+        let functions = [
+            function.clone(),
+            function.clone(),
+            function.clone(),
+            function.clone(),
+            function.clone(),
+            function.clone(),
+            function.clone(),
+            function.clone(),
+            function,
+        ];
+        assert!(compile(&functions, [0_u8; 32], CompileOptions::new()).is_err());
+    }
+
+    #[test]
+    fn options_defaults_and_validation() {
+        let options = CompileOptions::default();
+        assert_eq!(options, CompileOptions::new());
+        assert_eq!(options.mba_depth, 3);
+        assert_eq!(options.mba_budget, 512);
+        assert_eq!(options.decoys, 2);
+        assert_eq!(options.fuel, DEFAULT_FUEL);
+        let _ = ProgramStats {
+            functions: 0,
+            original_blocks: 0,
+            decoy_blocks: 0,
+            manifest_entries: 0,
+            payload_bytes: 0,
+            body_bytes: 0,
+        };
     }
 }

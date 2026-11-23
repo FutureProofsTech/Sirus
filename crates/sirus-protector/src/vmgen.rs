@@ -428,3 +428,51 @@ pub fn ensure_readable(path: &Path) -> Result<()> {
         )))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{ensure_readable, source_for_audit, validate_blob};
+    use sirus_core::lifter::lift_function;
+    use sirus_core::program::{CompileOptions, CompiledProgram, compile};
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn program() -> CompiledProgram {
+        let function = lift_function(&[0x48, 0x89, 0xf8, 0xc3], 0x1000).expect("lift");
+        compile(&[function], [0x55_u8; 32], CompileOptions::new()).expect("compile")
+    }
+
+    #[test]
+    fn generated_source_contains_runtime_and_symbols() {
+        let program = program();
+        let first = source_for_audit(&program, 0x10_000).expect("source");
+        let second = source_for_audit(&program, 0x10_000).expect("source");
+        assert_eq!(first, second);
+        assert!(first.contains("#![forbid(unsafe_code)]"));
+        assert!(first.contains("sirus_entry_"));
+        assert!(first.contains("SIRUS_PAYLOAD_"));
+        assert!(first.contains("engine::execute"));
+    }
+
+    #[test]
+    fn malformed_blobs_are_rejected() {
+        let program = program();
+        assert!(validate_blob(&[], &program, "deadbeef").is_err());
+        assert!(validate_blob(b"not an elf", &program, "deadbeef").is_err());
+    }
+
+    #[test]
+    fn readable_path_checks_are_explicit() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path =
+            std::env::temp_dir().join(format!("sirus-readable-{}-{nanos}", std::process::id()));
+        fs::write(&path, b"data").expect("write");
+        assert!(ensure_readable(&path).is_ok());
+        drop(fs::remove_file(&path));
+        assert!(ensure_readable(&path).is_err());
+        assert!(ensure_readable(&std::env::temp_dir()).is_err());
+    }
+}

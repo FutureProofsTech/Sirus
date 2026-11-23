@@ -1313,26 +1313,17 @@ pub fn decode(code: &[u8], address: u64) -> Result<Instruction> {
 #[cfg(test)]
 mod tests {
     use super::{Condition, Mnemonic, Operand, decode};
-    use crate::error::CoreError;
     use crate::ir::Width;
 
     fn decode_at(bytes: &[u8], address: u64) -> super::Instruction {
         match decode(bytes, address) {
             Ok(instruction) => instruction,
-            Err(error) => {
-                assert!(matches!(error, CoreError::Decode(_)));
-                super::Instruction {
-                    offset: address,
-                    length: 0,
-                    mnemonic: Mnemonic::Nop,
-                    width: Width::W8,
-                    dst: Operand::None,
-                    src: Operand::None,
-                    aux: Operand::None,
-                    target: None,
-                }
-            }
+            Err(error) => panic!("decode failed: {error}"),
         }
+    }
+
+    fn rejected(bytes: &[u8]) -> bool {
+        decode(bytes, 0x1000).is_err()
     }
 
     #[test]
@@ -1398,5 +1389,185 @@ mod tests {
             0x66, 0x90,
         ];
         assert!(decode(&bytes, 0).is_err());
+    }
+    #[test]
+    fn decodes_all_move_forms() {
+        for bytes in [
+            &[0x48, 0xb8, 0x78, 0x56, 0x34, 0x12, 0, 0, 0, 0][..],
+            &[0xb8, 0x78, 0x56, 0x34, 0x12][..],
+            &[0x66, 0xb8, 0x34, 0x12][..],
+            &[0xb0, 0x7f][..],
+            &[0x48, 0x89, 0xf8][..],
+            &[0x48, 0x8b, 0xc7][..],
+            &[0x48, 0xc7, 0xc0, 0xff, 0xff, 0xff, 0xff][..],
+            &[0xc6, 0x00, 0x01][..],
+            &[0x48, 0x89, 0x44, 0x24, 0x08][..],
+        ] {
+            let instruction = decode_at(bytes, 0x1000);
+            assert_eq!(instruction.mnemonic, Mnemonic::Mov);
+            assert_eq!(usize::from(instruction.length), bytes.len());
+        }
+        assert_eq!(
+            decode_at(&[0x48, 0x0f, 0xb6, 0xc7], 0).mnemonic,
+            Mnemonic::Movzx
+        );
+        assert_eq!(
+            decode_at(&[0x48, 0x0f, 0xbe, 0xc7], 0).mnemonic,
+            Mnemonic::Movsx
+        );
+        assert_eq!(decode_at(&[0x48, 0x63, 0xc7], 0).mnemonic, Mnemonic::Movsxd);
+    }
+
+    #[test]
+    fn decodes_all_arithmetic_forms() {
+        let instructions = [
+            (&[0x48, 0x01, 0xf8][..], Mnemonic::Add),
+            (&[0x48, 0x03, 0xc7][..], Mnemonic::Add),
+            (&[0x48, 0x83, 0xc0, 0x05][..], Mnemonic::Add),
+            (&[0x48, 0x81, 0xe8, 0x05, 0, 0, 0][..], Mnemonic::Sub),
+            (&[0x48, 0x31, 0xc0][..], Mnemonic::Xor),
+            (&[0x48, 0x21, 0xf8][..], Mnemonic::And),
+            (&[0x48, 0x09, 0xf8][..], Mnemonic::Or),
+            (&[0x48, 0x39, 0xf8][..], Mnemonic::Cmp),
+            (&[0x48, 0x85, 0xc0][..], Mnemonic::Test),
+            (&[0x48, 0x05, 0x05, 0, 0, 0][..], Mnemonic::Add),
+            (&[0x48, 0xff, 0xc0][..], Mnemonic::Inc),
+            (&[0x48, 0xff, 0xc8][..], Mnemonic::Dec),
+            (&[0xfe, 0xc0][..], Mnemonic::Inc),
+            (&[0xff, 0xc0][..], Mnemonic::Inc),
+            (&[0x48, 0xf7, 0xd8][..], Mnemonic::Neg),
+            (&[0x48, 0xf7, 0xd0][..], Mnemonic::Not),
+            (&[0x48, 0x0f, 0xaf, 0xc7][..], Mnemonic::Imul),
+            (&[0x48, 0x6b, 0xc7, 0x05][..], Mnemonic::Imul),
+            (&[0x48, 0x69, 0xc7, 0x05, 0, 0, 0][..], Mnemonic::Imul),
+            (&[0x48, 0xc1, 0xe0, 0x05][..], Mnemonic::Shl),
+            (&[0x48, 0xd1, 0xe8][..], Mnemonic::Shr),
+            (&[0x48, 0xd3, 0xf8][..], Mnemonic::Sar),
+            (&[0x48, 0xc1, 0xc0, 0x05][..], Mnemonic::Rol),
+            (&[0x48, 0xc1, 0xc8, 0x05][..], Mnemonic::Ror),
+            (&[0xd0, 0xc0][..], Mnemonic::Rol),
+        ];
+        for (bytes, mnemonic) in instructions {
+            let instruction = decode_at(bytes, 0x1000);
+            assert_eq!(instruction.mnemonic, mnemonic);
+            assert_eq!(usize::from(instruction.length), bytes.len());
+        }
+    }
+
+    #[test]
+    fn decodes_control_flow_and_misc_forms() {
+        assert_eq!(decode_at(&[0x50], 0).mnemonic, Mnemonic::Push);
+        assert_eq!(decode_at(&[0x5f], 0).mnemonic, Mnemonic::Pop);
+        assert_eq!(decode_at(&[0xc9], 0).mnemonic, Mnemonic::Leave);
+        assert_eq!(decode_at(&[0x48, 0x98], 0).mnemonic, Mnemonic::Cdqe);
+        assert_eq!(decode_at(&[0xeb, 0], 0).mnemonic, Mnemonic::Jmp);
+        assert_eq!(decode_at(&[0xe9, 0, 0, 0, 0], 0).mnemonic, Mnemonic::Jmp);
+        assert_eq!(
+            decode_at(&[0x74, 0], 0).mnemonic,
+            Mnemonic::Jcc(Condition::Equal)
+        );
+        assert_eq!(
+            decode_at(&[0x0f, 0x84, 0, 0, 0, 0], 0).mnemonic,
+            Mnemonic::Jcc(Condition::Equal)
+        );
+        assert_eq!(
+            decode_at(&[0x48, 0x0f, 0x4f, 0xc6], 0).mnemonic,
+            Mnemonic::Cmov(Condition::Greater)
+        );
+        assert_eq!(
+            decode_at(&[0x0f, 0x9f, 0xc0], 0).mnemonic,
+            Mnemonic::Setcc(Condition::Greater)
+        );
+        assert_eq!(
+            decode_at(&[0x48, 0x8d, 0x44, 0x24, 0x08], 0).mnemonic,
+            Mnemonic::Lea
+        );
+        assert_eq!(
+            decode_at(&[0xf3, 0x0f, 0x1e, 0xfa], 0).mnemonic,
+            Mnemonic::Endbr
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_and_malformed_encodings() {
+        for bytes in [
+            &[0x48, 0x8b][..],
+            &[0xe8, 0, 0, 0, 0][..],
+            &[0xff, 0xd0][..],
+            &[0xff, 0xe0][..],
+            &[0x67, 0x48, 0x8b, 0x00][..],
+            &[0xf0, 0x48, 0x8b, 0x00][..],
+            &[0x2e, 0x48, 0x8b, 0x00][..],
+            &[0x88, 0xe0][..],
+            &[0x48, 0x8b, 0x04, 0x25, 0, 0, 0, 0][..],
+            &[0xc5, 0xf8, 0x77][..],
+            &[0x62, 0xf1, 0x7c, 0x48, 0x58, 0xc0][..],
+            &[0x0f, 0x0b][..],
+            &[0x0f, 0x05][..],
+            &[0xc7, 0xc8, 0, 0, 0, 0][..],
+            &[0x48, 0x81, 0xd0, 0, 0, 0, 0][..],
+            &[0x48, 0xf7, 0xf0][..],
+        ] {
+            assert!(rejected(bytes), "accepted {bytes:02x?}");
+        }
+    }
+
+    #[test]
+    fn accepts_rip_relative_at_decode_layer() {
+        let instruction = decode_at(&[0x48, 0x8b, 0x05, 0, 0, 0, 0], 0x1000);
+        match instruction.src {
+            Operand::Mem(memory) => assert!(memory.rip_relative),
+            _ => panic!("expected RIP-relative memory"),
+        }
+    }
+
+    #[test]
+    fn decodes_memory_widths_and_scales() {
+        let instruction = decode_at(&[0x48, 0x8b, 0x44, 0x8f, 0x10], 0x1000);
+        match instruction.src {
+            Operand::Mem(memory) => {
+                assert_eq!(memory.scale, 4);
+                assert_eq!(memory.disp, 0x10);
+                assert_eq!(memory.index, Some(1));
+            }
+            _ => panic!("expected memory operand"),
+        }
+    }
+}
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::{read_signed, read_unsigned, sign_extend};
+
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn read_unsigned_is_bounded() {
+        let bytes: [u8; 8] = kani::any();
+        let start: usize = kani::any();
+        let count: usize = kani::any();
+        kani::assume(start < 8);
+        kani::assume(count >= 1 && count <= 8 - start);
+        let mut index = start;
+        let _ = read_unsigned(&bytes, &mut index, count, 0);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn read_signed_is_bounded() {
+        let bytes: [u8; 8] = kani::any();
+        let start: usize = kani::any();
+        let count: usize = kani::any();
+        kani::assume(start < 8);
+        kani::assume(count >= 1 && count <= 8 - start);
+        let mut index = start;
+        let _ = read_signed(&bytes, &mut index, count, 0);
+    }
+
+    #[kani::proof]
+    fn sign_extend_is_total() {
+        let value: u64 = kani::any();
+        let bits: u32 = kani::any();
+        kani::assume(bits <= 64);
+        let _ = sign_extend(value, bits);
     }
 }

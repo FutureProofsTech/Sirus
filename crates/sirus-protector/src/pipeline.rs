@@ -8,6 +8,7 @@ use std::path::Path;
 use sirus_binfmt::elf::{
     Elf64, Injection, PF_X, PT_LOAD, STT_OBJECT, inject, overwrite_vaddr, patch_relative_jump,
 };
+use sirus_binfmt::pe::Pe64;
 use sirus_core::ir::MAX_FUNCTION_BYTES;
 use sirus_core::lifter::lift_function;
 use sirus_core::program::{ProgramStats, compile};
@@ -203,6 +204,11 @@ pub fn protect(arguments: &ProtectArgs) -> Result<ProtectReport> {
     vmgen::ensure_readable(&arguments.input)?;
     let input = fs::read(&arguments.input)
         .map_err(|error| ProtectError::io("read input executable", &error))?;
+    if input.starts_with(b"MZ") {
+        return Err(ProtectError::Format(
+            sirus_binfmt::FormatError::UnsupportedAction,
+        ));
+    }
     let elf = Elf64::parse(&input)?;
     if elf.find_section(".sirus").is_some() {
         return Err(ProtectError::Format(
@@ -350,6 +356,9 @@ pub fn print_report(report: &ProtectReport, output: &mut impl Write) -> Result<(
 /// Propagates parse and output errors.
 pub fn inspect(path: &Path, output: &mut impl Write) -> Result<()> {
     let bytes = fs::read(path).map_err(|error| ProtectError::io("read inspected file", &error))?;
+    if bytes.starts_with(b"MZ") {
+        return inspect_pe(&bytes, output);
+    }
     let elf = Elf64::parse(&bytes)?;
     writeln!(
         output,
@@ -390,6 +399,41 @@ pub fn inspect(path: &Path, output: &mut impl Write) -> Result<()> {
             function.value, function.size, function.name
         )
         .map_err(|error| ProtectError::io("write inspection", &error))?;
+    }
+    Ok(())
+}
+
+fn inspect_pe(bytes: &[u8], output: &mut impl Write) -> Result<()> {
+    let pe = Pe64::parse(bytes)?;
+    writeln!(
+        output,
+        "PE32+ machine={} entry-rva={:#x} image-base={:#x} sections={}",
+        pe.coff_header().machine,
+        pe.optional_header().entry_rva,
+        pe.optional_header().image_base,
+        pe.sections().len()
+    )
+    .map_err(|error| ProtectError::io("write PE inspection", &error))?;
+    writeln!(
+        output,
+        "size-of-image={:#x} headers={:#x} checksum={:#x} protected={}",
+        pe.optional_header().size_of_image,
+        pe.optional_header().size_of_headers,
+        pe.optional_header().checksum,
+        pe.find_section(".sirus").is_some()
+    )
+    .map_err(|error| ProtectError::io("write PE inspection", &error))?;
+    for (index, section) in pe.sections().iter().enumerate() {
+        writeln!(
+            output,
+            "SECTION[{index}] {:<8} rva={:#x} vsize={:#x} raw={:#x} flags={:#x}",
+            section.name_str().unwrap_or("<invalid>"),
+            section.virtual_address,
+            section.virtual_size,
+            section.raw_size,
+            section.characteristics
+        )
+        .map_err(|error| ProtectError::io("write PE inspection", &error))?;
     }
     Ok(())
 }

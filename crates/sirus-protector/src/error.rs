@@ -5,7 +5,7 @@ use core::fmt;
 use sirus_binfmt::FormatError;
 
 /// Errors produced by the protector.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ProtectError {
     /// Command-line usage error.
     Usage(String),
@@ -100,3 +100,45 @@ impl ProtectError {
 
 /// Protector result alias.
 pub type Result<T> = std::result::Result<T, ProtectError>;
+
+#[cfg(test)]
+mod tests {
+    use super::ProtectError;
+    use sirus_binfmt::FormatError;
+    use sirus_core::error::CoreError;
+
+    #[test]
+    fn every_error_type_has_a_message_and_source() {
+        let errors = [
+            ProtectError::Usage("usage".to_owned()),
+            ProtectError::Format(FormatError::Malformed),
+            ProtectError::Core(CoreError::InvalidPlan),
+            ProtectError::Io("io".to_owned()),
+            ProtectError::Tool("tool".to_owned()),
+            ProtectError::Internal("internal".to_owned()),
+        ];
+        for error in errors {
+            assert_ne!(error.to_string(), "");
+            assert!(std::error::Error::source(&error).is_none());
+        }
+        let context = ProtectError::context("context", ProtectError::Tool("inner".to_owned()));
+        assert_ne!(context.to_string(), "");
+        assert!(std::error::Error::source(&context).is_some());
+    }
+
+    #[test]
+    fn constructors_and_conversions_are_total() {
+        let io = std::io::Error::new(std::io::ErrorKind::NotFound, "missing");
+        let errors = [
+            ProtectError::io("context", &io),
+            ProtectError::internal("internal"),
+            ProtectError::tool("tool"),
+            ProtectError::usage("usage"),
+            ProtectError::from(FormatError::Bounds),
+            ProtectError::from(CoreError::InvalidPlan),
+        ];
+        for error in errors {
+            assert_ne!(error.to_string(), "");
+        }
+    }
+}

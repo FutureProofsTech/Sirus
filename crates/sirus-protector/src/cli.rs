@@ -21,7 +21,7 @@ pub enum Selector {
 
 /// Parsed protect command.
 #[non_exhaustive]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProtectArgs {
     /// Input executable.
     pub input: PathBuf,
@@ -44,7 +44,7 @@ pub struct ProtectArgs {
 }
 
 /// Top-level action.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
     /// Protect an executable.
     Protect(ProtectArgs),
@@ -57,8 +57,18 @@ pub enum Action {
 }
 
 /// Parses process arguments.
+///
+/// # Errors
+///
+/// Returns a usage error for unknown commands, flags, missing values, invalid
+/// numbers, or invalid marker pairs.
+#[inline]
 pub fn parse() -> Result<Action> {
-    let arguments: Vec<OsString> = std::env::args_os().skip(1).collect();
+    parse_from(std::env::args_os().skip(1))
+}
+
+fn parse_from<I: IntoIterator<Item = OsString>>(values: I) -> Result<Action> {
+    let arguments: Vec<OsString> = values.into_iter().collect();
     let Some(first) = arguments.first() else {
         return Ok(Action::Help);
     };
@@ -251,4 +261,192 @@ pub const fn help_text() -> &'static str {
      \x20 --emit-source <path>     write generated VM source for audit\n\
      \x20 --keep-temp              keep compiler temporary files\n\
      \x20 --no-scrub               do not destroy original function bodies\n"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Action, Selector, parse_from};
+    use crate::error::ProtectError;
+    use sirus_core::program::CompileOptions;
+    use std::ffi::OsString;
+
+    fn arguments(values: &[&str]) -> Vec<OsString> {
+        values.iter().map(OsString::from).collect()
+    }
+
+    fn usage_error(result: &super::Result<Action>) -> bool {
+        matches!(result, Err(ProtectError::Usage(_)))
+    }
+
+    const SEED: &str = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+
+    #[test]
+    fn parses_help_and_version() {
+        assert_eq!(parse_from(arguments(&[])), Ok(Action::Help));
+        assert_eq!(parse_from(arguments(&["help"])), Ok(Action::Help));
+        assert_eq!(parse_from(arguments(&["version"])), Ok(Action::Version));
+        assert!(super::help_text().contains("sirus protect"));
+    }
+
+    #[test]
+    fn parses_full_protect_command() {
+        let result = parse_from(arguments(&[
+            "protect",
+            "--input",
+            "in",
+            "--output",
+            "out",
+            "--function-contains",
+            "demo",
+            "--seed",
+            SEED,
+            "--fuel",
+            "100",
+            "--mba-depth",
+            "1",
+            "--mba-budget",
+            "32",
+            "--decoys",
+            "0",
+            "--vm-base",
+            "0x10000",
+            "--emit-source",
+            "vm.rs",
+            "--keep-temp",
+            "--no-scrub",
+        ]));
+        let action = result.expect("protect parse");
+        let Action::Protect(parsed) = action else {
+            panic!("expected protect");
+        };
+        assert_eq!(parsed.input, std::path::PathBuf::from("in"));
+        assert_eq!(parsed.output, std::path::PathBuf::from("out"));
+        assert_eq!(
+            parsed.selectors,
+            vec![Selector::Contains("demo".to_owned())]
+        );
+        assert_eq!(parsed.seed.as_deref(), Some(SEED));
+        assert_eq!(parsed.options.fuel, 100);
+        assert_eq!(parsed.options.mba_depth, 1);
+        assert_eq!(parsed.options.mba_budget, 32);
+        assert_eq!(parsed.options.decoys, 0);
+        assert_eq!(parsed.vm_base, Some(0x10000));
+        assert_eq!(parsed.emit_source, Some(std::path::PathBuf::from("vm.rs")));
+        assert!(parsed.keep_temp);
+        assert!(!parsed.scrub);
+    }
+
+    #[test]
+    fn parses_markers_and_exact_symbols() {
+        let result = parse_from(arguments(&[
+            "protect",
+            "--input",
+            "in",
+            "--output",
+            "out",
+            "--function",
+            "exact",
+            "--marker-begin",
+            "48 8b",
+            "--marker-end",
+            "c3",
+        ]));
+        let action = result.expect("parse markers");
+        let Action::Protect(parsed) = action else {
+            panic!("expected protect");
+        };
+        assert_eq!(parsed.selectors.len(), 2);
+        assert_eq!(
+            parsed.selectors.first(),
+            Some(&Selector::Exact("exact".to_owned()))
+        );
+        assert!(
+            matches!(parsed.selectors.get(1), Some(Selector::Markers { begin, end }) if begin == &[0x48, 0x8b] && end == &[0xc3])
+        );
+    }
+
+    #[test]
+    fn parses_inspect() {
+        assert_eq!(
+            parse_from(arguments(&["inspect", "binary"])),
+            Ok(Action::Inspect(std::path::PathBuf::from("binary")))
+        );
+        assert_eq!(
+            parse_from(arguments(&["inspect", "--help"])),
+            Ok(Action::Help)
+        );
+    }
+
+    #[test]
+    fn rejects_bad_commands_and_flags() {
+        assert!(usage_error(&parse_from(arguments(&["unknown"]))));
+        assert!(usage_error(&parse_from(arguments(&["protect"]))));
+        assert!(usage_error(&parse_from(arguments(&[
+            "protect",
+            "--input",
+            "in",
+            "--output",
+            "out",
+            "--function",
+            "f",
+            "--unknown"
+        ]))));
+        assert!(usage_error(&parse_from(arguments(&["protect", "--input"]))));
+        assert!(usage_error(&parse_from(arguments(&["inspect"]))));
+        assert!(usage_error(&parse_from(arguments(&["inspect", "a", "b"]))));
+    }
+
+    #[test]
+    fn rejects_invalid_numbers_and_markers() {
+        let base = [
+            "protect",
+            "--input",
+            "in",
+            "--output",
+            "out",
+            "--function",
+            "f",
+        ];
+        let mut bad_fuel = base.to_vec();
+        bad_fuel.extend(["--fuel", "not-a-number"]);
+        assert!(usage_error(&parse_from(arguments(&bad_fuel))));
+        let mut bad_depth = base.to_vec();
+        bad_depth.extend(["--mba-depth", "999"]);
+        assert!(usage_error(&parse_from(arguments(&bad_depth))));
+        let mut bad_budget = base.to_vec();
+        bad_budget.extend(["--mba-budget", "x"]);
+        assert!(usage_error(&parse_from(arguments(&bad_budget))));
+        let mut bad_vm_base = base.to_vec();
+        bad_vm_base.extend(["--vm-base", "not-hex"]);
+        assert!(usage_error(&parse_from(arguments(&bad_vm_base))));
+        let mut bad_hex = base.to_vec();
+        bad_hex.extend(["--marker-begin", "zz"]);
+        assert!(usage_error(&parse_from(arguments(&bad_hex))));
+        let mut missing_end = base.to_vec();
+        missing_end.extend(["--marker-begin", "aa"]);
+        assert!(usage_error(&parse_from(arguments(&missing_end))));
+        let mut missing_begin = base.to_vec();
+        missing_begin.extend(["--marker-end", "aa"]);
+        assert!(usage_error(&parse_from(arguments(&missing_begin))));
+    }
+
+    #[test]
+    fn default_options_are_production_defaults() {
+        let result = parse_from(arguments(&[
+            "protect",
+            "--input",
+            "in",
+            "--output",
+            "out",
+            "--function",
+            "f",
+        ]));
+        let Action::Protect(parsed) = result.expect("protect") else {
+            panic!("expected protect");
+        };
+        let defaults = CompileOptions::new();
+        assert_eq!(parsed.options, defaults);
+        assert!(parsed.scrub);
+        assert!(!parsed.keep_temp);
+    }
 }

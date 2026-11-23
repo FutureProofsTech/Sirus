@@ -261,3 +261,80 @@ fn multiple_functions_share_one_payload_and_engine() {
         assert_eq!(result.value, expected, "entry {index}");
     }
 }
+
+#[test]
+fn executes_private_virtual_stack_memory() {
+    // sub rsp,16; mov [rsp],rdi; mov [rsp+8],rsi; mov rax,[rsp];
+    // add rax,[rsp+8]; add rsp,16; ret
+    let code = [
+        0x48, 0x83, 0xec, 0x10, 0x48, 0x89, 0x3c, 0x24, 0x48, 0x89, 0x74, 0x24, 0x08, 0x48, 0x8b,
+        0x04, 0x24, 0x48, 0x03, 0x44, 0x24, 0x08, 0x48, 0x83, 0xc4, 0x10, 0xc3,
+    ];
+    let program = compile_code(&code, 0xaa, options());
+    let (value, status) = run(&program, [0xdead_beef, 0x1234_5678, 0, 0, 0, 0]);
+    assert_eq!(status, Status::Returned);
+    assert_eq!(value, 0xdead_beef_u64.wrapping_add(0x1234_5678));
+}
+
+#[test]
+fn executes_push_and_pop() {
+    // push rdi; push rsi; pop rax; pop rcx; add rax,rcx; ret
+    let code = [0x57, 0x56, 0x58, 0x59, 0x48, 0x01, 0xc8, 0xc3];
+    let program = compile_code(&code, 0xbb, options());
+    let (value, status) = run(&program, [u64::MAX, 2, 0, 0, 0, 0]);
+    assert_eq!(status, Status::Returned);
+    assert_eq!(value, 1);
+}
+
+#[test]
+fn executes_conditional_move() {
+    // mov rax,rdi; cmp rdi,rsi; cmovg rax,rsi; ret
+    let code = [
+        0x48, 0x89, 0xf8, 0x48, 0x39, 0xf7, 0x48, 0x0f, 0x4f, 0xc6, 0xc3,
+    ];
+    let program = compile_code(&code, 0xcc, options());
+    let (value, status) = run(&program, [9, 4, 0, 0, 0, 0]);
+    assert_eq!(status, Status::Returned);
+    assert_eq!(value, 4);
+    let (value, status) = run(&program, [4, 9, 0, 0, 0, 0]);
+    assert_eq!(status, Status::Returned);
+    assert_eq!(value, 4);
+}
+
+#[test]
+fn executes_setcc_and_signed_compare() {
+    // xor eax,eax; cmp edi,esi; setl al; movzx eax,al; ret
+    let code = [
+        0x31, 0xc0, 0x39, 0xf7, 0x0f, 0x9c, 0xc0, 0x0f, 0xb6, 0xc0, 0xc3,
+    ];
+    let program = compile_code(&code, 0xdd, options());
+    let (value, status) = run(&program, [u64::MAX, 0, 0, 0, 0, 0]);
+    assert_eq!(status, Status::Returned);
+    assert_eq!(value, 1);
+    let (value, status) = run(&program, [0, u64::MAX, 0, 0, 0, 0]);
+    assert_eq!(status, Status::Returned);
+    assert_eq!(value, 0);
+}
+
+#[test]
+fn executes_32_bit_zero_extension() {
+    // mov eax,edi; add eax,esi; ret
+    let code = [0x89, 0xf8, 0x01, 0xf0, 0xc3];
+    let program = compile_code(&code, 0xee, options());
+    let (value, status) = run(&program, [0xffff_ffff, 1, 0, 0, 0, 0]);
+    assert_eq!(status, Status::Returned);
+    assert_eq!(value, 0);
+    let (value, status) = run(&program, [0x1234_5678, 0x1111_1111, 0, 0, 0, 0]);
+    assert_eq!(status, Status::Returned);
+    assert_eq!(value, 0x2345_6789);
+}
+
+#[test]
+fn executes_variable_shift_by_cl() {
+    // mov rax,rdi; mov rcx,rsi; shl rax,cl; ret
+    let code = [0x48, 0x89, 0xf8, 0x48, 0x89, 0xf1, 0x48, 0xd3, 0xe0, 0xc3];
+    let program = compile_code(&code, 0xff, options());
+    let (value, status) = run(&program, [1, 65, 0, 0, 0, 0]);
+    assert_eq!(status, Status::Returned);
+    assert_eq!(value, 2);
+}

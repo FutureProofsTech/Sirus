@@ -60,4 +60,5 @@ pub mod ir;
 pub mod lifter;
 pub(crate) mod mba;
 pub mod program;
+pub(crate) mod proofs;
 pub mod shared;

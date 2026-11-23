@@ -247,10 +247,10 @@ fn shift_amount(value: u64) -> u32 {
 }
 
 #[inline]
-fn load_memory(memory: &[u8; VM_MEMORY_SIZE], address: u64, width: usize) -> Option<u64> {
+fn load_memory(memory: &[u8], address: u64, width: usize) -> Option<u64> {
     let start = usize::try_from(address).ok()?;
     let end = start.checked_add(width)?;
-    if end > VM_MEMORY_SIZE || width > 8 {
+    if end > memory.len() || width > 8 {
         return None;
     }
     let mut value = 0_u64;
@@ -265,15 +265,10 @@ fn load_memory(memory: &[u8; VM_MEMORY_SIZE], address: u64, width: usize) -> Opt
 }
 
 #[inline]
-fn store_memory(
-    memory: &mut [u8; VM_MEMORY_SIZE],
-    address: u64,
-    width: usize,
-    value: u64,
-) -> Option<()> {
+fn store_memory(memory: &mut [u8], address: u64, width: usize, value: u64) -> Option<()> {
     let start = usize::try_from(address).ok()?;
     let end = start.checked_add(width)?;
-    if end > VM_MEMORY_SIZE || width > 8 {
+    if end > memory.len() || width > 8 {
         return None;
     }
     let mut index = 0_usize;
@@ -293,7 +288,7 @@ fn store_memory(
 fn execute_semantic(
     decoded: &Decoded,
     registers: &mut [u64; VM_REGISTERS],
-    memory: &mut [u8; VM_MEMORY_SIZE],
+    memory: &mut [u8],
 ) -> Option<Flow> {
     let values = &decoded.values;
     let write_binary =
@@ -1050,5 +1045,31 @@ mod tests {
             ],
         );
         assert_eq!(execute_semantic(&instruction, &mut regs, &mut mem), None);
+    }
+}
+
+#[cfg(kani)]
+mod proofs {
+    use super::{load_memory, store_memory};
+
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn load_memory_is_bounded() {
+        let memory: [u8; 64] = kani::any();
+        let address: u64 = kani::any();
+        let width: usize = kani::any();
+        kani::assume(width >= 1 && width <= 8);
+        let _ = load_memory(&memory, address, width);
+    }
+
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn store_memory_is_bounded() {
+        let mut memory: [u8; 64] = kani::any();
+        let address: u64 = kani::any();
+        let width: usize = kani::any();
+        let value: u64 = kani::any();
+        kani::assume(width >= 1 && width <= 8);
+        let _ = store_memory(&mut memory, address, width, value);
     }
 }

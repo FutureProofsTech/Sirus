@@ -50,6 +50,7 @@
 extern crate alloc;
 
 pub mod elf;
+pub mod pe;
 
 /// Result alias for binary format operations.
 pub type Result<T> = core::result::Result<T, FormatError>;

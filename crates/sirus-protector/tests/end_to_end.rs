@@ -200,6 +200,16 @@ fn end_to_end_protection_and_adversarial_mutations() {
     }
     assert!(sirus_executable);
 
+    let inspection = Command::new(protected_binary())
+        .arg("inspect")
+        .arg(&protected)
+        .output()
+        .expect("inspect protected");
+    assert!(inspection.status.success());
+    let inspection_text = String::from_utf8_lossy(&inspection.stdout);
+    assert!(inspection_text.contains("protected=true"));
+    assert!(inspection_text.contains("functions="));
+
     let arguments = ["7", "3"];
     let native_output = run_bounded(&victim, &arguments, Duration::from_secs(5));
     let protected_output = run_bounded(&protected, &arguments, Duration::from_secs(5));

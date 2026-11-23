@@ -202,3 +202,107 @@ impl fmt::Display for CoreError {
 
 /// Convenient result alias.
 pub type Result<T> = core::result::Result<T, CoreError>;
+
+#[cfg(test)]
+mod tests {
+    use super::{CoreError, DecodeError, DecodeReason};
+    use core::fmt::Write as _;
+
+    struct Buffer {
+        bytes: [u8; 512],
+        len: usize,
+    }
+
+    impl Buffer {
+        fn new() -> Self {
+            Self {
+                bytes: [0; 512],
+                len: 0,
+            }
+        }
+
+        fn text(&self) -> &str {
+            core::str::from_utf8(self.bytes.get(..self.len).unwrap_or(&[])).unwrap_or("")
+        }
+    }
+
+    impl core::fmt::Write for Buffer {
+        fn write_str(&mut self, value: &str) -> core::fmt::Result {
+            let end = self.len.saturating_add(value.len());
+            if end > 512 {
+                return Err(core::fmt::Error);
+            }
+            if let Some(slot) = self.bytes.get_mut(self.len..end) {
+                slot.copy_from_slice(value.as_bytes());
+                self.len = end;
+                Ok(())
+            } else {
+                Err(core::fmt::Error)
+            }
+        }
+    }
+
+    #[test]
+    fn every_error_has_a_message() {
+        let reasons = [
+            DecodeReason::Truncated,
+            DecodeReason::UnsupportedPrefix,
+            DecodeReason::UnsupportedEncoding,
+            DecodeReason::UnsupportedOpcode,
+            DecodeReason::UnsupportedAddressing,
+            DecodeReason::RipRelativeMemory,
+            DecodeReason::AbsoluteMemory,
+            DecodeReason::HighByteRegister,
+            DecodeReason::TooLong,
+            DecodeReason::UnsupportedForm,
+        ];
+        for reason in reasons {
+            let mut buffer = Buffer::new();
+            if let Err(error) = write!(&mut buffer, "{reason}") {
+                assert_eq!(error, core::fmt::Error);
+            }
+            assert_ne!(buffer.text(), "");
+        }
+        let errors = [
+            CoreError::CapacityExceeded,
+            CoreError::Decode(DecodeError {
+                offset: 1,
+                reason: DecodeReason::Truncated,
+            }),
+            CoreError::InvalidBranchTarget {
+                offset: 1,
+                target: 2,
+            },
+            CoreError::OverlappingInstruction { offset: 1 },
+            CoreError::MissingTerminator { offset: 1 },
+            CoreError::UnknownFlags { offset: 1 },
+            CoreError::UnsupportedCondition { offset: 1 },
+            CoreError::InvalidRegister { register: 1 },
+            CoreError::InvalidBlock { block: 1 },
+            CoreError::ArithmeticOverflow,
+            CoreError::PayloadTooLarge,
+            CoreError::InvalidPlan,
+            CoreError::DerivationFailed,
+            CoreError::InvalidState,
+            CoreError::InvalidFunctionSize { size: 1 },
+            CoreError::RangeOutsideExecutable,
+            CoreError::UnsupportedBinaryFormat,
+            CoreError::MalformedBinary,
+            CoreError::TargetNotFound,
+            CoreError::AmbiguousTarget,
+            CoreError::TargetsOverlap,
+            CoreError::JumpOutOfRange,
+            CoreError::InvalidBlob,
+            CoreError::ToolFailure,
+            CoreError::Io,
+            CoreError::UnsupportedAbi,
+        ];
+        for error in errors {
+            let mut buffer = Buffer::new();
+            if let Err(write_error) = write!(&mut buffer, "{error}") {
+                assert_eq!(write_error, core::fmt::Error);
+            }
+            assert_ne!(buffer.text(), "");
+        }
+    }
+}

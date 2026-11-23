@@ -1,6 +1,6 @@
 # Code Standard Compliance Matrix
 
-**Snapshot:** current working tree, pre-final integration. This document states
+**Snapshot:** current working tree. This document states
 what is enforced now, what is intentionally deferred, and what is impossible
 under the project's zero-unsafe/no-runtime-dependency constraints. It must be
 updated whenever a lint tier, test exemption, or tool gate changes.
@@ -194,16 +194,16 @@ Implemented exactly in the root `Cargo.toml`:
 | `cargo clippy` | stable | executed with `-D warnings`, passing |
 | `cargo test` | stable | executed, passing |
 | `cargo doc` | stable | executed with `-D warnings`, passing |
-| `cargo-audit` | installed | not yet run (zero dependencies) |
-| `cargo-deny` | installed | not yet configured/run |
-| `cargo-nextest` | installed | not yet used in script |
-| `cargo-tarpaulin` | installed | not yet run |
-| `cargo-fuzz` | installed | no fuzz target yet |
-| Kani 0.68.0 | installed | no proof harness yet |
-| Miri | available on nightly toolchain | not yet run |
-| valgrind | installed | not yet run on protected sample |
-| gdb/strace/perf | installed | not yet used in red-team script |
-| cargo-show-asm | **missing** | install required |
+| `cargo-audit` | installed | executed; 0 vulnerabilities |
+| `cargo-deny` | installed | executed; advisories/bans/licenses/sources pass |
+| `cargo-nextest` | installed | executed; 138/138 tests |
+| `cargo-tarpaulin` | installed | executed; 87.23% lines, 100% target not met |
+| `cargo-fuzz` | installed | 66,962 runs, no crash |
+| Kani 0.68.0 | installed | 5 core + 2 VM harnesses verified |
+| Miri | nightly | core and VM unit/execution suites pass |
+| valgrind | installed | protected sample clean |
+| gdb/strace/perf | installed | available; no scripted gate yet |
+| cargo-show-asm | installed | used for assembly inspection |
 | Creusot | **missing** | install required |
 | AORAI | **missing** | research tool; optional |
 | Ferrocene | **missing** | optional certified toolchain |
@@ -212,20 +212,18 @@ Implemented exactly in the root `Cargo.toml`:
 
 ### Not yet satisfied gates
 
-These are implementation tasks, not claims:
+These remain open, not claimed:
 
-1. Kani harnesses and executable proof gate.
-2. Miri on nightly for the full workspace.
-3. Fuzz target and corpus under `cargo-fuzz`.
-4. Tarpaulin coverage run with the 100% branch target and justified exclusions.
-5. cargo-deny/audit pass on the zero-dependency graph.
-6. cargo-show-asm assembly inspection.
-7. Timing side-channel harness.
-8. Full red-team command suite and differential reports.
-9. Wire all new protector modules into the crate so Clippy covers them; until
-   that is done, “all targets green” does not include the new files.
+1. 100% coverage: measured 87.23% line coverage; uncovered defensive branches are
+   enumerated from LCOV.
+2. Full red-team external tooling: Ghidra/IDA/Binary Ninja, GAMBA/SiMBA, angr/KLEE,
+   Creusot, AORAI, Ferrocene, dudect-style timing.
+3. Live process memory-dump scanner.
+4. Full handler-layout mutation across builds (full `.sirus` equality 28.6%).
+5. Windows PE runtime execution and Win64 ABI validation.
 
-**No release claim may be made while any item in this section is open.**
+All protector modules are now wired into the crate and included in the Clippy
+graph. **No release claim may be made while any item in this section is open.**
 
 ---
 

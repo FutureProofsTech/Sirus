@@ -181,3 +181,54 @@ pub fn parse_hex_bytes(text: &str) -> Result<Vec<u8>> {
     }
     Ok(output)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{build_id, format_seed, junk, parse_hex_bytes, parse_seed, seed};
+
+    const HEX: &str = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+
+    #[test]
+    fn reads_os_entropy() {
+        let value = seed();
+        assert_eq!(value.len(), 32);
+    }
+
+    #[test]
+    fn parses_and_formats_seed() {
+        let parsed = parse_seed(HEX).expect("seed");
+        assert_eq!(format_seed(&parsed), HEX);
+        assert!(parse_seed("00").is_err());
+        assert!(parse_seed(&"z".repeat(64)).is_err());
+    }
+
+    #[test]
+    fn build_ids_are_deterministic_and_seed_sensitive() {
+        let first = build_id(&[1_u8; 32], 7, 10);
+        let second = build_id(&[1_u8; 32], 7, 10);
+        let third = build_id(&[2_u8; 32], 7, 10);
+        assert_eq!(first, second);
+        assert_ne!(first, third);
+        assert_eq!(first.len(), 32);
+    }
+
+    #[test]
+    fn junk_is_deterministic_and_bounded() {
+        let first = junk(&[3_u8; 32], 7, 64);
+        let second = junk(&[3_u8; 32], 7, 64);
+        let third = junk(&[3_u8; 32], 8, 64);
+        assert_eq!(first, second);
+        assert_ne!(first, third);
+        assert_eq!(first.len(), 64);
+    }
+
+    #[test]
+    fn parses_hex_patterns() {
+        assert_eq!(parse_hex_bytes("48 8b 05").unwrap(), vec![0x48, 0x8b, 0x05]);
+        assert_eq!(parse_hex_bytes("48_8b:05").unwrap(), vec![0x48, 0x8b, 0x05]);
+        assert!(parse_hex_bytes("").is_err());
+        assert!(parse_hex_bytes("4").is_err());
+        assert!(parse_hex_bytes("zz").is_err());
+        assert!(parse_hex_bytes("12-34").is_err());
+    }
+}

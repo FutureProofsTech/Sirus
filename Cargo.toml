@@ -1,5 +1,6 @@
 [workspace]
 resolver = "3"
+exclude = ["fuzz"]
 members = [
     "crates/sirus-core",
     "crates/sirus-vm",
@@ -36,6 +37,7 @@ let_underscore_drop = "deny"
 non_ascii_idents = "deny"
 noop_method_call = "warn"
 meta_variable_misuse = "deny"
+unexpected_cfgs = { level = "deny", check-cfg = ["cfg(kani)", "cfg(miri)"] }
 
 [workspace.lints.clippy]
 all = "deny"

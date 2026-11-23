@@ -661,4 +661,191 @@ mod tests {
         );
         assert!(result.is_err());
     }
+    #[test]
+    fn encodes_every_ir_variant() {
+        use crate::ir::Width;
+        use crate::shared::format::{REG_RAX, REG_RBX, REG_RCX, REG_RDX};
+        let tables = Tables::derive(&seed());
+        let mut rng = BuildRng::new(&seed(), 9);
+        let states = [7_u64];
+        let operations = [
+            IrOp::Nop,
+            IrOp::Mov {
+                dst: REG_RAX,
+                src: REG_RBX,
+            },
+            IrOp::MovImm {
+                dst: REG_RAX,
+                value: 1,
+            },
+            IrOp::Add {
+                dst: REG_RAX,
+                src: REG_RBX,
+            },
+            IrOp::AddImm {
+                dst: REG_RAX,
+                value: 2,
+            },
+            IrOp::Sub {
+                dst: REG_RAX,
+                src: REG_RBX,
+            },
+            IrOp::SubImm {
+                dst: REG_RAX,
+                value: 2,
+            },
+            IrOp::Mul {
+                dst: REG_RAX,
+                src: REG_RBX,
+            },
+            IrOp::And {
+                dst: REG_RAX,
+                src: REG_RBX,
+            },
+            IrOp::AndImm {
+                dst: REG_RAX,
+                value: 3,
+            },
+            IrOp::Or {
+                dst: REG_RAX,
+                src: REG_RBX,
+            },
+            IrOp::OrImm {
+                dst: REG_RAX,
+                value: 3,
+            },
+            IrOp::Xor {
+                dst: REG_RAX,
+                src: REG_RBX,
+            },
+            IrOp::XorImm {
+                dst: REG_RAX,
+                value: 3,
+            },
+            IrOp::Not { dst: REG_RAX },
+            IrOp::Neg { dst: REG_RAX },
+            IrOp::Shl {
+                dst: REG_RAX,
+                src: REG_RCX,
+            },
+            IrOp::ShlImm {
+                dst: REG_RAX,
+                value: 1,
+            },
+            IrOp::ShrU {
+                dst: REG_RAX,
+                src: REG_RCX,
+            },
+            IrOp::ShrUImm {
+                dst: REG_RAX,
+                value: 1,
+            },
+            IrOp::ShrS {
+                dst: REG_RAX,
+                src: REG_RCX,
+            },
+            IrOp::ShrSImm {
+                dst: REG_RAX,
+                value: 1,
+            },
+            IrOp::RotL {
+                dst: REG_RAX,
+                src: REG_RCX,
+            },
+            IrOp::RotLImm {
+                dst: REG_RAX,
+                value: 1,
+            },
+            IrOp::RotR {
+                dst: REG_RAX,
+                src: REG_RCX,
+            },
+            IrOp::RotRImm {
+                dst: REG_RAX,
+                value: 1,
+            },
+            IrOp::CmpEq {
+                dst: REG_RAX,
+                lhs: REG_RAX,
+                rhs: REG_RBX,
+            },
+            IrOp::CmpLtU {
+                dst: REG_RAX,
+                lhs: REG_RAX,
+                rhs: REG_RBX,
+            },
+            IrOp::CmpLtS {
+                dst: REG_RAX,
+                lhs: REG_RAX,
+                rhs: REG_RBX,
+            },
+            IrOp::CmpLeU {
+                dst: REG_RAX,
+                lhs: REG_RAX,
+                rhs: REG_RBX,
+            },
+            IrOp::CmpLeS {
+                dst: REG_RAX,
+                lhs: REG_RAX,
+                rhs: REG_RBX,
+            },
+            IrOp::Select {
+                dst: REG_RAX,
+                cond: REG_RCX,
+                when_true: REG_RBX,
+                when_false: REG_RDX,
+            },
+            IrOp::Load {
+                dst: REG_RAX,
+                addr: REG_RBX,
+                width: Width::W8,
+            },
+            IrOp::Load {
+                dst: REG_RAX,
+                addr: REG_RBX,
+                width: Width::W16,
+            },
+            IrOp::Load {
+                dst: REG_RAX,
+                addr: REG_RBX,
+                width: Width::W32,
+            },
+            IrOp::Load {
+                dst: REG_RAX,
+                addr: REG_RBX,
+                width: Width::W64,
+            },
+            IrOp::Store {
+                addr: REG_RBX,
+                src: REG_RAX,
+                width: Width::W8,
+            },
+            IrOp::Store {
+                addr: REG_RBX,
+                src: REG_RAX,
+                width: Width::W16,
+            },
+            IrOp::Store {
+                addr: REG_RBX,
+                src: REG_RAX,
+                width: Width::W32,
+            },
+            IrOp::Store {
+                addr: REG_RBX,
+                src: REG_RAX,
+                width: Width::W64,
+            },
+        ];
+        let body = encode_block(
+            &operations,
+            Terminator::Return { value: REG_RAX },
+            &states,
+            &tables,
+            &mut rng,
+            0,
+            0,
+        )
+        .expect("encode all");
+        assert!(!body.is_empty());
+    }
 }

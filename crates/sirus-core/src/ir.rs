@@ -902,4 +902,99 @@ mod tests {
         buffer.truncate(1);
         assert_eq!(buffer.as_slice(), &[1]);
     }
+    #[test]
+    fn bounded_vector_full_interface() {
+        let mut vector = BoundedVec::<u32, 4>::new();
+        assert_eq!(vector.capacity(), 4);
+        assert!(vector.is_empty());
+        assert_eq!(vector.last(), None);
+        assert_eq!(vector.pop(), None);
+        assert_eq!(vector.push(9), Ok(()));
+        assert_eq!(vector.push(2), Ok(()));
+        assert_eq!(vector.push(7), Ok(()));
+        assert_eq!(vector.last(), Some(&7));
+        assert!(vector.contains(&2));
+        assert!(!vector.contains(&5));
+        *vector.get_mut(0).expect("get_mut") = 1;
+        vector.sort_unstable_by(|left, right| left < right);
+        assert_eq!(vector.as_slice(), &[1, 2, 7]);
+        assert_eq!(vector.iter().count(), 3);
+        let mut sum = 0_u32;
+        for value in &vector {
+            sum += *value;
+        }
+        assert_eq!(sum, 10);
+        assert_eq!(vector.pop(), Some(7));
+        vector.truncate(1);
+        assert_eq!(vector.as_mut_slice(), &[1]);
+        vector.clear();
+        assert!(vector.is_empty());
+        let default = BoundedVec::<u8, 1>::default();
+        assert!(default.is_empty());
+    }
+
+    #[test]
+    fn byte_buffer_full_interface() {
+        let mut buffer = super::ByteBuf::<4>::new();
+        assert_eq!(buffer.capacity(), 4);
+        assert!(buffer.is_empty());
+        assert_eq!(buffer.get(0), None);
+        assert_eq!(buffer.push(1), Ok(()));
+        assert_eq!(buffer.extend_from_slice(&[2, 3]), Ok(()));
+        assert_eq!(buffer.as_slice(), &[1, 2, 3]);
+        assert_eq!(buffer.get(1), Some(2));
+        *buffer.get_mut(1).expect("get_mut") = 9;
+        assert_eq!(buffer.as_slice(), &[1, 9, 3]);
+        buffer.truncate(2);
+        assert_eq!(buffer.as_slice(), &[1, 9]);
+        buffer.clear();
+        assert!(buffer.is_empty());
+        assert_eq!(
+            buffer.extend_from_slice(&[1, 2, 3, 4, 5]),
+            Err(CoreError::PayloadTooLarge)
+        );
+        let default = super::ByteBuf::<1>::default();
+        assert!(default.is_empty());
+    }
+
+    #[test]
+    fn widths_cover_all_bit_sizes() {
+        for (bytes, bits, mask, sign) in [
+            (1_u8, 8_u32, 0xff_u64, 7_u32),
+            (2, 16, 0xffff, 15),
+            (4, 32, 0xffff_ffff, 31),
+            (8, 64, u64::MAX, 63),
+        ] {
+            let width = Width::from_bytes(bytes).expect("width");
+            assert_eq!(width.bits(), bits);
+            assert_eq!(width.mask(), mask);
+            assert_eq!(width.sign_bit(), sign);
+            assert_eq!(width.bytes(), bytes);
+        }
+        assert_eq!(Width::default(), Width::W64);
+    }
+
+    #[test]
+    fn lifted_block_ops_are_bounded() {
+        let function = super::LiftedFunction {
+            entry_block: 0,
+            blocks: BoundedVec::new(),
+            ops: BoundedVec::new(),
+            byte_len: 0,
+        };
+        let block = super::Block {
+            start_va: 0,
+            ops_start: 0,
+            ops_len: 0,
+            terminator: super::Terminator::Trap,
+        };
+        assert_eq!(function.block_ops(&block), Some(&[][..]));
+        let invalid = super::Block {
+            start_va: 0,
+            ops_start: 100,
+            ops_len: 1,
+            terminator: super::Terminator::Trap,
+        };
+        assert_eq!(function.block_ops(&invalid), None);
+    }
 }

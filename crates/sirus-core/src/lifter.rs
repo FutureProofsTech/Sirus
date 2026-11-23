@@ -1142,4 +1142,74 @@ mod tests {
     fn rejects_empty_function() {
         assert!(lift_function(&[], 0).is_err());
     }
+    #[test]
+    fn lifts_stack_frame_and_leave() {
+        let code = [
+            0x55, 0x48, 0x89, 0xe5, 0x57, 0x48, 0x89, 0xf8, 0x5f, 0xc9, 0xc3,
+        ];
+        let function = lift_function(&code, 0x2000).expect("lift");
+        assert_eq!(function.entry_block, 0);
+        assert_eq!(function.blocks.len(), 1);
+        if let Some(block) = function.blocks.get(0) {
+            assert_eq!(block.terminator, Terminator::Return { value: REG_RAX });
+        }
+    }
+
+    #[test]
+    fn lifts_inc_dec_neg_not() {
+        let code = [
+            0x48, 0xff, 0xc0, 0x48, 0xff, 0xc8, 0x48, 0xf7, 0xd8, 0x48, 0xf7, 0xd0, 0xc3,
+        ];
+        assert!(lift_function(&code, 0x3000).is_ok());
+    }
+
+    #[test]
+    fn lifts_setcc_and_cmov() {
+        let code = [
+            0x48, 0x39, 0xf7, 0x0f, 0x9f, 0xc0, 0x48, 0x0f, 0x4f, 0xc6, 0xc3,
+        ];
+        assert!(lift_function(&code, 0x4000).is_ok());
+    }
+
+    #[test]
+    fn lifts_every_non_parity_condition() {
+        for opcode in 0x70_u8..=0x7f {
+            let code = [0x48, 0x39, 0xf7, opcode, 0x00, 0xc3];
+            let result = lift_function(&code, 0x5000);
+            if opcode == 0x7a || opcode == 0x7b {
+                assert!(result.is_err(), "parity must fail closed");
+            } else {
+                assert!(result.is_ok(), "condition {opcode:#x} failed");
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_conditions_after_unsupported_flag_setter() {
+        let code = [0x48, 0xc1, 0xe0, 0x01, 0x74, 0x00, 0xc3];
+        assert!(lift_function(&code, 0x6000).is_err());
+    }
+
+    #[test]
+    fn lifts_memory_operands_and_address_forms() {
+        let code = [
+            0x48, 0x83, 0xec, 0x10, 0x48, 0x89, 0x3c, 0x24, 0x48, 0x8b, 0x04, 0x24, 0x48, 0x83,
+            0xc4, 0x10, 0xc3,
+        ];
+        assert!(lift_function(&code, 0x7000).is_ok());
+        let lea = [0x48, 0x8d, 0x44, 0x24, 0x08, 0xc3];
+        assert!(lift_function(&lea, 0x7100).is_ok());
+    }
+
+    #[test]
+    fn rejects_missing_terminator_and_out_of_range_branch() {
+        assert!(lift_function(&[0x48, 0x89, 0xf8], 0x8000).is_err());
+        assert!(lift_function(&[0xeb, 0x7f], 0x9000).is_err());
+    }
+
+    #[test]
+    fn rejects_unsupported_flag_use_at_block_start() {
+        let code = [0x74, 0x00, 0xc3];
+        assert!(lift_function(&code, 0xa000).is_err());
+    }
 }

@@ -1,6 +1,18 @@
 //! Sirus protector command line.
 
 #![forbid(unsafe_code)]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        clippy::panic,
+        clippy::indexing_slicing,
+        clippy::large_stack_arrays,
+        clippy::large_stack_frames,
+        reason = "unit tests use assertion panics and fixed parser fixtures"
+    )
+)]
 
 mod cli;
 mod entropy;
@@ -31,21 +43,49 @@ fn main() -> ExitCode {
 fn run() -> Result<()> {
     let action = cli::parse()?;
     let mut stdout = std::io::stdout().lock();
+    run_with_writer(action, &mut stdout)
+}
+
+fn run_with_writer(action: cli::Action, output: &mut impl std::io::Write) -> Result<()> {
     match action {
         cli::Action::Help => {
-            write!(stdout, "{}", cli::help_text())
+            write!(output, "{}", cli::help_text())
                 .map_err(|error| ProtectError::io("write help", &error))?;
             Ok(())
         }
         cli::Action::Version => {
-            writeln!(stdout, "sirus {}", env!("CARGO_PKG_VERSION"))
+            writeln!(output, "sirus {}", env!("CARGO_PKG_VERSION"))
                 .map_err(|error| ProtectError::io("write version", &error))?;
             Ok(())
         }
-        cli::Action::Inspect(path) => pipeline::inspect(&path, &mut stdout),
+        cli::Action::Inspect(path) => pipeline::inspect(&path, output),
         cli::Action::Protect(arguments) => {
             let report = pipeline::protect(&arguments)?;
-            pipeline::print_report(&report, &mut stdout)
+            pipeline::print_report(&report, output)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::run_with_writer;
+    use crate::cli::Action;
+    use crate::error::ProtectError;
+
+    #[test]
+    fn help_and_version_write_output() {
+        let mut output = Vec::new();
+        assert!(run_with_writer(Action::Help, &mut output).is_ok());
+        assert_ne!(output.len(), 0);
+        let mut output = Vec::new();
+        assert!(run_with_writer(Action::Version, &mut output).is_ok());
+        assert!(String::from_utf8_lossy(&output).contains("sirus"));
+    }
+
+    #[test]
+    fn inspect_failure_is_propagated() {
+        let mut output = Vec::new();
+        let result = run_with_writer(Action::Inspect("definitely-missing".into()), &mut output);
+        assert!(matches!(result, Err(ProtectError::Io(_))));
     }
 }

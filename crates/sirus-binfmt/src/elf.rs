@@ -1135,15 +1135,15 @@ pub fn inject(original: &[u8], injection: &Injection<'_>) -> Result<InjectionRes
     let old_sections = elf.section_headers();
     let old_shstrndx = usize::from(elf.header().shstrndx);
     let has_sections = !old_sections.is_empty();
-    let old_shstrtab = if has_sections {
-        old_sections.get(old_shstrndx).copied()
+    let old_shstrtab = if has_sections && old_shstrndx != 0 {
+        old_sections
+            .get(old_shstrndx)
+            .copied()
+            .filter(|section| section.sh_type == SHT_STRTAB)
     } else {
         None
     };
     let old_names = if let Some(section) = old_shstrtab {
-        if section.sh_type != SHT_STRTAB {
-            return Err(FormatError::SectionTableInvalid);
-        }
         let start = usize::try_from(section.sh_offset).map_err(|_| FormatError::Bounds)?;
         let size = usize::try_from(section.sh_size).map_err(|_| FormatError::Bounds)?;
         original
@@ -1163,22 +1163,33 @@ pub fn inject(original: &[u8], injection: &Injection<'_>) -> Result<InjectionRes
     new_names.extend_from_slice(b".sirus.payload\0");
 
     let mut new_sections: Vec<SectionHeader> =
-        Vec::with_capacity(old_sections.len().saturating_add(2));
+        Vec::with_capacity(old_sections.len().saturating_add(3));
+    let new_shstrndx: u16;
     if has_sections {
         new_sections.extend_from_slice(old_sections);
-        let shstrtab_section = new_sections
-            .get_mut(old_shstrndx)
-            .ok_or(FormatError::SectionTableInvalid)?;
-        shstrtab_section.sh_type = SHT_STRTAB;
-        shstrtab_section.sh_flags = 0;
-        shstrtab_section.sh_addr = 0;
-        shstrtab_section.sh_offset = 0;
-        shstrtab_section.sh_size = 0;
-        shstrtab_section.sh_link = 0;
-        shstrtab_section.sh_info = 0;
-        shstrtab_section.sh_addralign = 1;
-        shstrtab_section.sh_entsize = 0;
-        let sirus_index = new_sections.len();
+        if old_shstrtab.is_some() {
+            let shstrtab_section = new_sections
+                .get_mut(old_shstrndx)
+                .ok_or(FormatError::SectionTableInvalid)?;
+            shstrtab_section.sh_type = SHT_STRTAB;
+            shstrtab_section.sh_flags = 0;
+            shstrtab_section.sh_addr = 0;
+            shstrtab_section.sh_offset = 0;
+            shstrtab_section.sh_size = 0;
+            shstrtab_section.sh_link = 0;
+            shstrtab_section.sh_info = 0;
+            shstrtab_section.sh_addralign = 1;
+            shstrtab_section.sh_entsize = 0;
+            new_shstrndx = u16::try_from(old_shstrndx).map_err(|_| FormatError::TooManyItems)?;
+        } else {
+            let index = new_sections.len();
+            new_sections.push(SectionHeader {
+                sh_type: SHT_STRTAB,
+                sh_addralign: 1,
+                ..SectionHeader::default()
+            });
+            new_shstrndx = u16::try_from(index).map_err(|_| FormatError::TooManyItems)?;
+        }
         new_sections.push(SectionHeader {
             sh_name: u32::try_from(sirus_name_offset).map_err(|_| FormatError::Bounds)?,
             sh_type: SHT_PROGBITS,
@@ -1191,7 +1202,6 @@ pub fn inject(original: &[u8], injection: &Injection<'_>) -> Result<InjectionRes
             sh_addralign: 0x1000,
             sh_entsize: 0,
         });
-        let payload_index = new_sections.len();
         new_sections.push(SectionHeader {
             sh_name: u32::try_from(payload_name_offset).map_err(|_| FormatError::Bounds)?,
             sh_type: SHT_PROGBITS,
@@ -1214,10 +1224,13 @@ pub fn inject(original: &[u8], injection: &Injection<'_>) -> Result<InjectionRes
             sh_addralign: 1,
             sh_entsize: 0,
         });
-        let _ = (sirus_index, payload_index);
     } else {
         new_sections.push(SectionHeader::default());
-        new_sections.push(SectionHeader::default());
+        new_sections.push(SectionHeader {
+            sh_type: SHT_STRTAB,
+            sh_addralign: 1,
+            ..SectionHeader::default()
+        });
         new_sections.push(SectionHeader {
             sh_name: u32::try_from(sirus_name_offset).map_err(|_| FormatError::Bounds)?,
             sh_type: SHT_PROGBITS,
@@ -1252,6 +1265,7 @@ pub fn inject(original: &[u8], injection: &Injection<'_>) -> Result<InjectionRes
             sh_addralign: 1,
             sh_entsize: 0,
         });
+        new_shstrndx = 1;
     }
     let new_section_indices = if has_sections {
         let count = new_sections.len();
@@ -1270,11 +1284,6 @@ pub fn inject(original: &[u8], injection: &Injection<'_>) -> Result<InjectionRes
     }
     let section_count_u16 =
         u16::try_from(new_sections.len()).map_err(|_| FormatError::TooManyItems)?;
-    let new_shstrndx = if has_sections {
-        elf.header().shstrndx
-    } else {
-        1
-    };
 
     let after_vm = vm_file_offset
         .checked_add(vm_len)
@@ -1421,7 +1430,8 @@ fn serialize_section_headers(sections: &[SectionHeader]) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Elf64, Injection, PT_LOAD, PT_PHDR, inject, patch_relative_jump};
+    use super::{Elf64, Injection, PT_LOAD, PT_PHDR, inject, overwrite_vaddr, patch_relative_jump};
+    use crate::FormatError;
     use alloc::vec;
     use alloc::vec::Vec;
 
@@ -1533,5 +1543,119 @@ mod tests {
         assert_eq!(patch, 0x1004);
         let bytes = data.get(0x1004..0x1009).expect("bytes");
         assert_eq!(bytes.first(), Some(&0xe9));
+    }
+    #[test]
+    fn rejects_malformed_headers() {
+        let base = synthetic_elf();
+        let mut cases = Vec::new();
+        cases.push(Vec::new());
+        let mut wrong_magic = base.clone();
+        wrong_magic[0] = 0;
+        cases.push(wrong_magic);
+        let mut wrong_class = base.clone();
+        wrong_class[4] = 1;
+        cases.push(wrong_class);
+        let mut wrong_machine = base.clone();
+        wrong_machine[18..20].copy_from_slice(&3_u16.to_le_bytes());
+        cases.push(wrong_machine);
+        let mut wrong_kind = base.clone();
+        wrong_kind[16..18].copy_from_slice(&1_u16.to_le_bytes());
+        cases.push(wrong_kind);
+        let mut bad_phoff = base.clone();
+        bad_phoff[32..40].copy_from_slice(&u64::MAX.to_le_bytes());
+        cases.push(bad_phoff);
+        let mut invalid_section_offset = base.clone();
+        invalid_section_offset[40..48].copy_from_slice(&u64::MAX.to_le_bytes());
+        cases.push(invalid_section_offset);
+        let mut huge_phnum = base.clone();
+        huge_phnum[56..58].copy_from_slice(&u16::MAX.to_le_bytes());
+        cases.push(huge_phnum);
+        let mut zero_phentsize = base.clone();
+        zero_phentsize[54..56].copy_from_slice(&0_u16.to_le_bytes());
+        cases.push(zero_phentsize);
+        let mut no_section_entry_size = base;
+        no_section_entry_size[58..60].copy_from_slice(&0_u16.to_le_bytes());
+        cases.push(no_section_entry_size);
+        for case in cases {
+            assert!(Elf64::parse(&case).is_err());
+        }
+    }
+
+    #[test]
+    fn reports_symbol_and_section_queries() {
+        let data = synthetic_elf();
+        let elf = Elf64::parse(&data).expect("parse");
+        assert_eq!(elf.section_name(2), Some(".text"));
+        assert_eq!(elf.section_name(99), None);
+        assert_eq!(elf.functions().expect("functions").len(), 0);
+        assert_eq!(elf.symbols().expect("symbols").len(), 0);
+        assert_eq!(elf.undefined_symbols().expect("undefined").len(), 0);
+        assert_eq!(elf.find_function("missing"), Err(FormatError::NotFound));
+        assert_eq!(
+            elf.find_functions_containing("anything")
+                .expect("contains")
+                .len(),
+            0
+        );
+        assert_eq!(elf.offset_to_vaddr(0x1000), Some(0x1000));
+        assert_eq!(elf.offset_to_vaddr(0x1fff), Some(0x1fff));
+        assert_eq!(elf.offset_to_vaddr(0x2000), None);
+        assert_eq!(elf.read_vaddr(0x1000, 4).map(<[u8]>::len), Some(4));
+        assert!(elf.read_vaddr(0x1fff, 4).is_none());
+        assert!(elf.file_segment(0x1000, 4).is_some());
+        assert!(!elf.has_relocations());
+    }
+
+    #[test]
+    fn marker_and_patch_errors_are_typed() {
+        let data = synthetic_elf();
+        let elf = Elf64::parse(&data).expect("parse");
+        assert_eq!(elf.find_pattern_unique(&[]), Err(FormatError::Malformed));
+        assert_eq!(elf.find_pattern_unique(&[0]), Err(FormatError::Ambiguous));
+        assert_eq!(
+            elf.find_pattern_unique(b"missing-pattern"),
+            Err(FormatError::NotFound)
+        );
+        let mut image = data.clone();
+        assert!(patch_relative_jump(&mut image, 0x1000, 0x1_0000_0000, false).is_err());
+        assert!(patch_relative_jump(&mut image, 0x2000, 0x1000, false).is_err());
+        assert!(overwrite_vaddr(&mut image, 0x2000, &[0]).is_err());
+    }
+
+    #[test]
+    fn inject_errors_are_typed() {
+        let data = synthetic_elf();
+        let vm = [0x90_u8; 0x20];
+        assert_eq!(
+            inject(&data, &Injection::new(&vm, 0x10_001, 0, 0)).err(),
+            Some(FormatError::BadAlignment)
+        );
+        assert_eq!(
+            inject(&data, &Injection::new(&vm, 0x1000, 0, 0)).err(),
+            Some(FormatError::Overlap)
+        );
+        assert_eq!(
+            inject(&data, &Injection::new(&vm, 0x10_000, 0x20, 0x10)).err(),
+            Some(FormatError::PayloadOutsideVm)
+        );
+        assert_eq!(
+            inject(&data, &Injection::new(&[], 0x10_000, 0, 0)).err(),
+            Some(FormatError::Malformed)
+        );
+        let first = inject(&data, &Injection::new(&vm, 0x10_000, 0, 0)).expect("first");
+        assert_eq!(
+            inject(&first.image, &Injection::new(&vm, 0x20_000, 0, 0)).err(),
+            Some(FormatError::AlreadyProtected)
+        );
+    }
+    #[test]
+    fn injection_creates_a_section_name_table_when_missing() {
+        let mut data = synthetic_elf();
+        data[62..64].copy_from_slice(&0_u16.to_le_bytes());
+        let vm = [0x90_u8; 0x20];
+        let result = inject(&data, &Injection::new(&vm, 0x10_000, 0, 0)).expect("inject");
+        let elf = Elf64::parse(&result.image).expect("reparse");
+        assert!(elf.find_section(".sirus").is_some());
+        assert!(elf.find_section(".sirus.payload").is_some());
     }
 }
