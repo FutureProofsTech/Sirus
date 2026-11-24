@@ -161,7 +161,8 @@ fn layout_preamble(seed: &Seed, domain: u64, prefix: &str, condition: &str) -> S
 }
 
 fn mutate_engine_layout(source: &str, seed: &Seed) -> Result<String> {
-    let mut result = permute_handler_layout(source, seed)?;
+    let normalized = source.replace("\r\n", "\n");
+    let mut result = permute_handler_layout(&normalized, seed)?;
     let functions = [
         ("pub fn execute_with_tables(", ") -> Run {", "input.fuel"),
         (
