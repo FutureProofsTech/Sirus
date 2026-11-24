@@ -35,10 +35,10 @@ commercial/open-source positioning is in
 | Safe Rust / no external crates | safe tier enforced; `sirus-hardened` is opt-in unsafe |
 | Kani, Miri, libFuzzer, differential/tamper/bypass, Ghidra, radare2 | run locally |
 | angr, KLEE, Creusot, dudect-bencher | run locally; bounded/model results stated |
-| Coverage floor (85%) | **met: 85.35% tarpaulin / 86.40% llvm-cov lines** |
-| Constant-time VM execution | `--constant-time` oblivious branch/loop mode below dudect threshold; normal profile leaks |
+| Coverage floor (85%) | **met: 85.44% tarpaulin / 86.47% llvm-cov lines** |
+| Constant-time VM execution | `--constant-time` oblivious branch/loop/memory mode below dudect threshold; normal profile leaks |
 | Live memory state | virtual registers/private stack masked at rest; snapshot constant scan passes |
-| Constant-time scope | private memory rejected; fixed pass budget; branches and loops supported |
+| Constant-time scope | fixed pass budget; branches, loops, and oblivious private-memory scan supported |
 | Per-call overhead (benchmark leaf function) | default ~78.1 µs / hardened ~78.8 µs / constant-time ~209 µs / hardened CT ~205 µs / balanced ~56.6 µs / minimal ~13.5 µs; VMProtect 3.11 demo ~8.5 µs |
 | Cold startup | ~0.6 ms (no packer); VMProtect demo ~2.6 s |
 | Hardened tier | opt-in `--hardened`: anti-debug, RDTSC/LFENCE, Windows DR report |
@@ -102,7 +102,7 @@ Options:
 - `--mba-depth <n>` 0..=8 (default 3)
 - `--mba-budget <n>` expression node budget (default 512)
 - `--decoys <n>` opaque guard/decoy pairs per function (default 2)
-- `--constant-time` oblivious branch/loop execution: fixed pass budget, predicated register writes, private memory rejected
+- `--constant-time` oblivious branch/loop/memory execution: fixed pass budget, predicated register writes, full-stack memory scan
 - `--constant-time-passes <n>` fixed loop frontier budget (1..=4096, default 256)
 - `--vm-base <hex>` VM virtual address override
 - `--emit-source <path>` write generated VM source for audit

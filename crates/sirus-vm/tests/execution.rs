@@ -168,11 +168,28 @@ fn executes_loop_oblivious_with_fixed_steps() {
 }
 
 #[test]
-fn oblivious_runtime_rejects_private_memory() {
-    let code = [0x48, 0x8b, 0x07, 0xc3];
-    let program = compile_code(&code, 0x88, options());
-    let result = run_oblivious(&program, [0, 0, 0, 0, 0, 0], 4);
-    assert_eq!(result.status, Status::BadPayload);
+#[cfg_attr(
+    miri,
+    ignore = "oblivious full-stack scan is intentionally slow under Miri"
+)]
+fn oblivious_runtime_supports_private_memory() {
+    // mov [rdi], rsi; mov rax, [rdi]; ret
+    let code = [0x48, 0x89, 0x37, 0x48, 0x8b, 0x07, 0xc3];
+    let mut options = options();
+    options.constant_time = true;
+    options.mba_depth = 0;
+    options.mba_budget = 0;
+    let program = compile_code(&code, 0x88, options);
+    let passes = usize::from(program.constant_time_passes());
+    let first = run_oblivious(&program, [0x100, 0x1122_3344_5566_7788, 0, 0, 0, 0], passes);
+    let second = run_oblivious(&program, [0x200, 0x99aa_bbcc_ddee_ff00, 0, 0, 0, 0], passes);
+    assert_eq!(first.status, Status::Returned);
+    assert_eq!(second.status, Status::Returned);
+    assert_eq!(first.value, 0x1122_3344_5566_7788);
+    assert_eq!(second.value, 0x99aa_bbcc_ddee_ff00);
+    assert_eq!(first.steps, second.steps);
+    let invalid = run_oblivious(&program, [u64::MAX, 1, 0, 0, 0, 0], passes);
+    assert_eq!(invalid.status, Status::BadPayload);
 }
 
 #[test]

@@ -304,7 +304,7 @@ pub const fn help_text() -> &'static str {
      \x20 --mba-depth <n>          MBA rewrite depth (0..=8, default 3)\n\
      \x20 --mba-budget <n>         MBA node budget (default 512)\n\
      \x20 --decoys <n>             opaque decoy pairs per function (0..=8, default 2)\n\
-     \x20 --constant-time         oblivious branch/loop execution; reject private memory\n\
+     \x20 --constant-time         oblivious branch/loop/memory execution\n\
      \x20 --constant-time-passes <n> fixed oblivious passes (1..=4096, default 256)\n\
      \x20 --hardened              unsafe anti-debug/TSC/LFENCE checks in entries\n\
      \x20 --hardened-timing-cycles <n> max TSC cycles per call (default 200000000)\n\

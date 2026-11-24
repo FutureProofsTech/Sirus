@@ -160,6 +160,31 @@ fn vm_constant_branch(runner: &mut CtRunner, _rng: &mut BenchRng) {
     }
 }
 
+fn vm_constant_memory(runner: &mut CtRunner, _rng: &mut BenchRng) {
+    // mov [rdi], sil; mov al, [rdi]; ret
+    let code = [0x40, 0x88, 0x37, 0x8a, 0x07, 0xc3];
+    let function = lift_function(&code, 0x1000).expect("lift");
+    let mut options = CompileOptions::new();
+    options.constant_time = true;
+    options.mba_depth = 0;
+    options.mba_budget = 0;
+    let program = compile(&[function], [0x6d_u8; 32], options).expect("compile");
+    let mut random = XorShift(0x0f0e_0d0c_0b0a_0908);
+    for _ in 0..20_000 {
+        let left = random.next() & 1 == 0;
+        runner.run_one(if left { Class::Left } else { Class::Right }, || {
+            std::hint::black_box(run_oblivious(
+                &program,
+                if left {
+                    [0x100, 0x11, 0, 0, 0, 0]
+                } else {
+                    [0x200, 0x22, 0, 0, 0, 0]
+                },
+            ));
+        });
+    }
+}
+
 fn vm_constant_loop(runner: &mut CtRunner, _rng: &mut BenchRng) {
     let code = [
         0x31, 0xc0, 0x48, 0x85, 0xf6, 0x74, 0x08, 0x48, 0x01, 0xf8, 0x48, 0xff, 0xce, 0x75, 0xf8,
@@ -194,5 +219,6 @@ ctbench_main!(
     vm,
     vm_constant,
     vm_constant_branch,
-    vm_constant_loop
+    vm_constant_loop,
+    vm_constant_memory
 );

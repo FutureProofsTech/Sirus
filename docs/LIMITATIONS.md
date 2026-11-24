@@ -110,13 +110,13 @@ hypervisor detection remain unimplemented.
   asymmetry, not a proof of MBA irreducibility.
 - The body stream is a keyed ARX obfuscation stream, not a cryptographic cipher.
   SipHash-2-4 remains the manifest/integrity/key primitive.
-- `--constant-time` provides oblivious branch/loop execution with a fixed pass
+- `--constant-time` provides oblivious branch/loop/memory execution with a fixed pass
   budget (`--constant-time-passes`, default 256). Every block is executed on
   every pass, the active frontier is carried in masks, and register writes are
   predicated. Branches and loops converge within the configured bound; longer
-  loops return `LoopBound`. Private `Load`/`Store` is rejected because an
-  oblivious memory model is not implemented. The normal branchy profile remains
-  data-dependent and leaks timing.
+  loops return `LoopBound`. Private `Load`/`Store` uses a full-stack byte scan
+  with masked selection, making the access pattern fixed but slow. The normal
+  branchy profile remains data-dependent and leaks timing.
 - Per-call overhead is about 78.6 us for the default profile, 56.6 us for the
   balanced profile, and 13.5 us for the minimal profile on the benchmark host.
   The same function under VMProtect 3.11 demo virtualization is about 8.5 us.
@@ -141,7 +141,7 @@ hypervisor detection remain unimplemented.
 ## 6. Verification gaps
 
 - The agreed prototype floor is 85% line coverage. The current measured coverage
-  is 85.35% tarpaulin / 86.40% llvm-cov and the proof script enforces the 85%
+  is 85.44% tarpaulin / 86.47% llvm-cov and the proof script enforces the 85%
   regression floor. 100% is not claimed.
 - Kani proofs cover bounded primitives and memory bounds; the full decoder is too
   large for CBMC and is covered by tests/fuzzing instead.

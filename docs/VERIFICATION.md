@@ -178,7 +178,7 @@ cargo tarpaulin --workspace --all-targets --engine Llvm \
   --exclude-files 'target/*' --exclude-files 'bench/*' --timeout 120
 ```
 
-Result: **85.35% line coverage (5913 / 6928 lines)** with
+Result: **85.44% line coverage (5946 / 6959 lines)** with
 `--exclude-files 'target/*' --exclude-files 'bench/*'`. This is above the agreed
 85% floor.
 
@@ -203,9 +203,9 @@ cargo llvm-cov --workspace --all-targets --summary-only
 ```
 
 ```text
-TOTAL regions 82.11% (3939 missed of 22017)
-TOTAL functions 74.60% (222 missed of 874)
-TOTAL lines 86.40% (1609 missed of 11831)
+TOTAL regions 82.14% (3955 missed of 22150)
+TOTAL functions 74.72% (222 missed of 878)
+TOTAL lines 86.47% (1607 missed of 11877)
 ```
 
 The two tools instrument differently; both are above the 85% floor and show the
@@ -448,8 +448,9 @@ taskset -c 0 ./scripts/constant-time-check.sh
 The mode uses a fixed-pass oblivious runner. Every manifest block is decoded
 and executed on every pass; active path state is carried in frontier masks and
 all register writes are predicated with a bitwise select. Branches enqueue both
-successors with complementary masks. Private `Load`/`Store` is rejected because
-no oblivious memory model is provided. Programs with no cycles use their exact
+successors with complementary masks. Private `Load`/`Store` runs a fixed
+full-stack byte scan with masked selection, so its address pattern is input
+independent. Programs with no cycles use their exact
 maximum block count as the pass bound; any program containing a loop uses the
 configured `--constant-time-passes` budget and reports `LoopBound` if the
 frontier does not converge.
@@ -458,13 +459,14 @@ Official dudect-bencher on the same host:
 
 ```text
 bench vm                 ... : max t = -225.23809  (normal branchy profile)
-bench vm_constant        ... : max t = +2.71293    (straight-line)
-bench vm_constant_branch ... : max t = +1.89091    (branch)
-bench vm_constant_loop   ... : max t = +2.08804    (loop)
+bench vm_constant        ... : max t = +2.82059    (straight-line)
+bench vm_constant_branch ... : max t = -2.74189    (branch)
+bench vm_constant_loop   ... : max t = -1.57791    (loop)
+bench vm_constant_memory ... : max t = -0.97765    (private memory)
 ```
 
 All three `--constant-time` cases stayed below the conventional |t| = 5
-threshold; the worst was |t| = 2.713. The normal profile still leaks because it executes data-dependent
+threshold; the worst was |t| = 2.821. The normal profile still leaks because it executes data-dependent
 control flow.
 
 ## 8h. Tools not executed or not applicable
@@ -557,7 +559,7 @@ cargo asm -p sirus-core --lib 1
 
 | Item | Status |
 |---|---|
-| Coverage floor (85%) | **met**: 85.35% tarpaulin / 86.40% llvm-cov lines |
+| Coverage floor (85%) | **met**: 85.44% tarpaulin / 86.47% llvm-cov lines |
 | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect | executed; evidence recorded |
 | live process memory dump scan | pass; masked VM state, constant not observed |
 | Windows PE runtime execution | Wine-tested leaf subset (branches/loops), normal and constant-time; native `pe32-native` CI passed |

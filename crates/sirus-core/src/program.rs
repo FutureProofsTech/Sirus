@@ -30,7 +30,7 @@ pub struct CompileOptions {
     pub mba_budget: u16,
     /// Number of opaque guard/decoy pairs per function.
     pub decoys: u8,
-    /// Use oblivious execution and reject private memory accesses.
+    /// Use fixed-pass oblivious execution.
     pub constant_time: bool,
     /// Fixed oblivious pass budget for constant-time execution.
     pub constant_time_passes: u16,
@@ -495,32 +495,6 @@ fn function_has_cycle(function: &LiftedFunction) -> bool {
     false
 }
 
-fn validate_constant_time(functions: &[LiftedFunction]) -> Result<()> {
-    let mut function_index = 0_usize;
-    while function_index < functions.len() {
-        let Some(function) = functions.get(function_index) else {
-            return Err(CoreError::InvalidFunctionSize { size: 0 });
-        };
-        let mut block_index = 0_usize;
-        while block_index < function.blocks.len() {
-            let Some(block) = function.blocks.get(block_index) else {
-                return Err(CoreError::InvalidBlock { block: u16::MAX });
-            };
-            let Some(ops) = function.block_ops(block) else {
-                return Err(CoreError::InvalidBlock { block: u16::MAX });
-            };
-            for op in ops {
-                if matches!(op, IrOp::Load { .. } | IrOp::Store { .. }) {
-                    return Err(CoreError::ConstantTimeUnsupported);
-                }
-            }
-            block_index = block_index.saturating_add(1);
-        }
-        function_index = function_index.saturating_add(1);
-    }
-    Ok(())
-}
-
 /// Compiles one or more lifted functions into a shared encrypted VM payload.
 ///
 /// All functions share one ISA plan, one cipher stream, one integrity binding,
@@ -537,9 +511,6 @@ pub fn compile(
     options: CompileOptions,
 ) -> Result<CompiledProgram> {
     options.validate()?;
-    if options.constant_time {
-        validate_constant_time(functions)?;
-    }
     let decoy_setting = if options.constant_time {
         0
     } else {
@@ -979,7 +950,7 @@ mod tests {
     }
 
     #[test]
-    fn constant_time_accepts_branches_and_rejects_memory() {
+    fn constant_time_accepts_branches_and_memory() {
         let straight = [0x48, 0x89, 0xf8, 0x48, 0x01, 0xf0, 0xc3];
         let function = lift_function(&straight, 0x1000).expect("lift straight");
         let mut options = CompileOptions::new();
@@ -1005,10 +976,8 @@ mod tests {
         let function = lift_function(&memory, 0x3000).expect("lift memory");
         let mut options = CompileOptions::new();
         options.constant_time = true;
-        assert!(matches!(
-            compile(&[function], [0x55_u8; 32], options),
-            Err(crate::error::CoreError::ConstantTimeUnsupported)
-        ));
+        let program = compile(&[function], [0x55_u8; 32], options).expect("constant memory");
+        assert!(program.constant_time_passes() > 0);
     }
 
     #[test]

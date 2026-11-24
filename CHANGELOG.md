@@ -39,10 +39,10 @@ All notable changes to Sirus.
   - executes every block on every fixed pass with predicated register writes;
   - supports a configurable fixed pass budget (`--constant-time-passes`,
     default 256) and reports `LoopBound` when the frontier does not converge;
-  - keeps private `Load`/`Store` rejected;
+  - supports private `Load`/`Store` through a fixed full-stack oblivious scan;
   - adds branchy and loop dudect benchmarks alongside the straight-line case;
-  - final dudect results: straight-line +2.71293, branch +1.89091, loop
-    +2.08804 (all below |t| = 5).
+  - final dudect results: straight-line +2.82059, branch -2.74189, loop
+    -1.57791, memory -0.97765 (all below |t| = 5).
 - Per-build semantic-handler arm permutation and engine/entry layout preambles in the generated runtime.
 - Win64 constant-time runtime check under Wine (branch and loop fixture).
 - Staged native Windows CI job and `scripts/windows-native-check.sh`.
@@ -110,7 +110,7 @@ All notable changes to Sirus.
   masked at rest.
 - Full `.sirus` segment equality is 10.95% between two seeds; payload equality is
   0.40%; entropy is 7.996 Shannon / 7.751 min-entropy.
-- Coverage on the final tree: 85.35% tarpaulin lines (5913/6928); llvm-cov 86.40% lines.
+- Coverage on the final tree: 85.44% tarpaulin lines (5946/6959); llvm-cov 86.47% lines.
 
 ### Known limitations
 

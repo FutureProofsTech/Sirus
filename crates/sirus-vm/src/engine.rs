@@ -549,9 +549,6 @@ fn execute_semantic_inner(
             Some(Flow::Continue)
         }
         SEM_LOAD8 | SEM_LOAD16 | SEM_LOAD32 | SEM_LOAD64 => {
-            if active.is_some() {
-                return None;
-            }
             let width = match decoded.semantic {
                 SEM_LOAD8 => 1,
                 SEM_LOAD16 => 2,
@@ -559,14 +556,15 @@ fn execute_semantic_inner(
                 _ => 8,
             };
             let address = reg_value(registers, masks, values, 1)?;
-            let loaded = load_memory_with_key(memory, address, width, memory_key)?;
+            let loaded = if active.is_some() {
+                load_memory_oblivious(memory, address, width, memory_key)?
+            } else {
+                load_memory_with_key(memory, address, width, memory_key)?
+            };
             set_reg_value_active(registers, masks, values, 0, loaded, active)?;
             Some(Flow::Continue)
         }
         SEM_STORE8 | SEM_STORE16 | SEM_STORE32 | SEM_STORE64 => {
-            if active.is_some() {
-                return None;
-            }
             let width = match decoded.semantic {
                 SEM_STORE8 => 1,
                 SEM_STORE16 => 2,
@@ -575,7 +573,11 @@ fn execute_semantic_inner(
             };
             let address = reg_value(registers, masks, values, 0)?;
             let value = reg_value(registers, masks, values, 1)?;
-            store_memory_with_key(memory, address, width, value, memory_key)?;
+            if active.is_some() {
+                store_memory_oblivious(memory, address, width, value, memory_key)?;
+            } else {
+                store_memory_with_key(memory, address, width, value, memory_key)?;
+            }
             Some(Flow::Continue)
         }
         SEM_JMP => {
@@ -608,6 +610,81 @@ fn execute_semantic_inner(
         SEM_TRAP => Some(Flow::Trap),
         _ => None,
     }
+}
+
+fn load_memory_oblivious(
+    memory: &[u8],
+    address: u64,
+    width: usize,
+    memory_key: Option<u64>,
+) -> Option<u64> {
+    if width == 0 || width > 8 {
+        return None;
+    }
+    let length = u64::try_from(memory.len()).ok()?;
+    let mut valid = u64::MAX;
+    let mut value = 0_u64;
+    let mut index = 0_usize;
+    while index < width {
+        let target = address.wrapping_add(u64::try_from(index).ok()?);
+        let mut selected = 0_u8;
+        let mut position = 0_usize;
+        while position < memory.len() {
+            let byte = memory.get(position).copied()?;
+            let plain = memory_key.map_or(byte, |key| byte ^ memory_mask(key, position));
+            let same = u64::from(u64::try_from(position).unwrap_or(u64::MAX) == target);
+            let mask = 0_u8.wrapping_sub(u8::try_from(same).unwrap_or(0));
+            selected |= plain & mask;
+            position = position.saturating_add(1);
+        }
+        valid &= u64::from(target < length);
+        let shift = u32::try_from(index.wrapping_mul(8)).ok()?;
+        value |= u64::from(selected) << shift;
+        index = index.saturating_add(1);
+    }
+    if valid == 0 {
+        return None;
+    }
+    Some(value)
+}
+
+fn store_memory_oblivious(
+    memory: &mut [u8],
+    address: u64,
+    width: usize,
+    value: u64,
+    memory_key: Option<u64>,
+) -> Option<()> {
+    if width == 0 || width > 8 {
+        return None;
+    }
+    let length = u64::try_from(memory.len()).ok()?;
+    let mut valid = u64::MAX;
+    let mut index = 0_usize;
+    while index < width {
+        let target = address.wrapping_add(u64::try_from(index).ok()?);
+        let shift = u32::try_from(index.wrapping_mul(8)).ok()?;
+        let new_byte = u8::try_from((value >> shift) & 0xff).ok()?;
+        let mut position = 0_usize;
+        while position < memory.len() {
+            let old = memory.get(position).copied()?;
+            let plain = memory_key.map_or(old, |key| old ^ memory_mask(key, position));
+            let same = u64::from(u64::try_from(position).unwrap_or(u64::MAX) == target);
+            let mask = 0_u8.wrapping_sub(u8::try_from(same).unwrap_or(0));
+            let chosen = (new_byte & mask) | (plain & !mask);
+            let stored = memory_key.map_or(chosen, |key| chosen ^ memory_mask(key, position));
+            if let Some(slot) = memory.get_mut(position) {
+                *slot = stored;
+            }
+            position = position.saturating_add(1);
+        }
+        valid &= u64::from(target < length);
+        index = index.saturating_add(1);
+    }
+    if valid == 0 {
+        return None;
+    }
+    Some(())
 }
 
 #[inline]

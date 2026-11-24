@@ -282,9 +282,9 @@ under the active mask.
 
 Programs with no cycles use their exact maximum block count as the fixed pass
 bound. Any program containing a loop uses `--constant-time-passes` (default 256);
-a frontier that does not converge returns `LoopBound`. Private `Load`/`Store` is rejected because no
-oblivious memory model is implemented. The normal profile remains branchy and is
-not constant-time.
+a frontier that does not converge returns `LoopBound`. Private `Load`/`Store`
+uses a full-stack byte scan with masked selection, so its address pattern is
+fixed. The normal profile remains branchy and is not constant-time.
 
 ---
 

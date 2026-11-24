@@ -213,7 +213,8 @@ measured `crypto_t=-3.794` and `vm_t=-56.685` for the normal profile.
 
 **Residual:** the normal branchy VM profile is not constant-time. The explicit
 mode fixes the instruction stream and memory addresses for the configured pass
-budget, rejects private memory, and reports `LoopBound` for longer loops. No
+budget, uses a fixed oblivious stack scan for private memory, and reports
+`LoopBound` for longer loops. No
 unbounded constant-time or oblivious-memory guarantee is claimed.
 
 ---

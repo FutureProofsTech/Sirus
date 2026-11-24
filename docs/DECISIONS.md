@@ -188,7 +188,7 @@ executing both sides of every branch and a fully oblivious memory model.
 
 **Residual:** Official dudect-bencher measured the default VM branch far above the
 conventional threshold of 5 (745.81 in the initial run, 225.24 after the later
-optimizations). The explicit oblivious mode measures worst |t| = 2.71 across straight-line, branch, and loop cases.
+optimizations). The explicit oblivious mode measures worst |t| = 2.82 across straight-line, branch, loop, and memory cases.
 
 ---
 
@@ -246,7 +246,8 @@ every manifest block is decoded and executed on every pass, an active-frontier
 mask carries the taken path, register writes are predicated with a bitwise
 select, and branch terminators enqueue masked successors. The pass count is a
 compile-time constant (`--constant-time-passes`, default 256); private
-`Load`/`Store` and decoys are rejected/disabled, and `SEM_SELECT` is branchless.
+`Load`/`Store` uses a full-stack masked scan, decoys are disabled, and
+`SEM_SELECT` is branchless.
 
 **Reason:** Branchy and looping control flow can be made data-independent by
 executing all blocks for a fixed number of passes and masking state updates.
@@ -254,8 +255,8 @@ This supports branches and loops up to the configured frontier bound without
 claiming a general unbounded constant-time VM.
 
 **Limitation:** A function that does not converge within the fixed pass budget
-returns `LoopBound`; private memory is rejected because it would require an
-oblivious memory model. The default virtualization profile remains
+returns `LoopBound`; private memory is accessed through the fixed oblivious
+stack scan. The default virtualization profile remains
 performance-oriented and data-dependent.
 
 ---

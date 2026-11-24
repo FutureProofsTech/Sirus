@@ -198,8 +198,8 @@ Implemented exactly in the root `Cargo.toml`:
 | `cargo-audit` | installed | executed; 0 vulnerabilities |
 | `cargo-deny` | installed | executed; advisories/bans/licenses/sources pass |
 | `cargo-nextest` | installed | executed; 182 tests passing |
-| `cargo-tarpaulin` | installed | executed; 85.35% lines (5913/6928), above 85% floor |
-| `cargo-llvm-cov` | installed | executed; 86.40% lines / 82.11% regions |
+| `cargo-tarpaulin` | installed | executed; 85.44% lines (5946/6959), above 85% floor |
+| `cargo-llvm-cov` | installed | executed; 86.47% lines / 82.14% regions |
 | `cargo-fuzz` | installed | 2,929,049 cumulative runs, no crash |
 | Kani 0.68.0 | installed | 5 core + 4 VM harnesses verified |
 | Miri | nightly | 82 core + 10 VM lib + 20 VM execution tests pass |
@@ -218,12 +218,12 @@ Implemented exactly in the root `Cargo.toml`:
 
 ### Residual boundaries (not release blockers)
 
-1. Coverage: the agreed floor is 85%; current measured coverage is 85.35%
-   tarpaulin / 86.40% llvm-cov. 100% is not claimed.
+1. Coverage: the agreed floor is 85%; current measured coverage is 85.44%
+   tarpaulin / 86.47% llvm-cov. 100% is not claimed.
 2. The normal branchy VM profile leaks timing (dudect max |t| = 225). The
    explicit `--constant-time` oblivious mode passes straight-line, branch, and
-   loop cases (worst |t| = 2.71) with a fixed pass budget; unbounded loops and
-   private memory are not claimed.
+   loop/memory cases (worst |t| = 2.82) with a fixed pass budget; private memory uses
+   a fixed oblivious stack scan. Unbounded loops are not claimed.
 3. The live memory snapshot diagnostic passes; an instruction-level debugger can
    still observe a transient local, as documented.
 4. Byte-level VM-segment uniqueness is not claimed; handler arms are permuted

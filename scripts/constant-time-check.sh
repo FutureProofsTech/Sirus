@@ -18,7 +18,12 @@ matches = re.findall(
 if not matches:
     raise SystemExit('constant-time t-test result missing')
 values = {name: float(value) for name, value in matches}
-required = {'vm_constant', 'vm_constant_branch', 'vm_constant_loop'}
+required = {
+    'vm_constant',
+    'vm_constant_branch',
+    'vm_constant_loop',
+    'vm_constant_memory',
+}
 missing = required.difference(values)
 if missing:
     raise SystemExit(f'constant-time benchmark missing: {sorted(missing)}')
