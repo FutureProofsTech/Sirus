@@ -2,6 +2,34 @@
 
 All notable changes to Sirus.
 
+## [1.5.0-hardened] — 2026-11-24
+
+### Added
+
+- Optional `--hardened` generated-entry mode:
+  - Linux debugger detection through `/proc/self/status` using raw syscalls;
+  - Windows PEB `BeingDebugged` and `NtGlobalFlag` detection;
+  - serialized RDTSC timing checks with a configurable cycle budget;
+  - LFENCE before and after timing reads;
+  - fail-closed return `0` when a check fails.
+- `sirus harden-check` host diagnostic:
+  - reports debugger state;
+  - reports TSC delta;
+  - reports debug registers on Windows;
+  - reports debug registers as unsupported on Linux user mode.
+- `sirus-hardened` workspace crate (`no_std`, unsafe allowed, no external
+  dependencies) used only by the hardened tier.
+- PE/Win64 hardened runtime path tested under Wine.
+
+### Changed
+
+- Generated entry thunks now route through `execute_entry`, so `--constant-time`
+  actually selects the oblivious runner.
+- Per-build engine and entry layout preambles reduce full VM segment equality
+  from 11.33% to 2.21%.
+- The safe tier remains `forbid(unsafe_code)`; only `sirus-hardened` and
+  `--hardened` generated VMs allow unsafe code.
+
 ## [1.4.0-safe] — 2026-11-24
 
 ### Added
@@ -82,7 +110,7 @@ All notable changes to Sirus.
   masked at rest.
 - Full `.sirus` segment equality is 10.95% between two seeds; payload equality is
   0.40%; entropy is 7.996 Shannon / 7.751 min-entropy.
-- Coverage on the final tree: 86.04% tarpaulin lines (5765/6700); llvm-cov 87.44% lines.
+- Coverage on the final tree: 86.45% tarpaulin lines (5901/6826); llvm-cov 87.36% lines.
 
 ### Known limitations
 

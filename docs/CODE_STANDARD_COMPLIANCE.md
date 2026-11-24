@@ -19,6 +19,7 @@ unsafe code or false claims, so the standard is applied by tier:
 | A — injected runtime | `sirus-vm` | yes | no | no | forbidden | full |
 | B — build-time binary tooling | `sirus-binfmt` | yes | intentional `alloc` | no | forbidden | partial: `std_instead_of_core` only |
 | C — build-time CLI/orchestration | `sirus-protector` | no (filesystem/process boundary) | intentional | yes | forbidden | waived, all other levels enforced |
+| D — optional hardened tier | `sirus-hardened` | yes | no | no | **allowed, audited boundary** | full except unsafe |
 
 Tier C is a thin process/filesystem boundary. All protection logic lives in
 Tier A or B crates. Implementing Tier C as `no_std` without unsafe FFI is not
@@ -196,9 +197,9 @@ Implemented exactly in the root `Cargo.toml`:
 | `cargo doc` | stable | executed with `-D warnings`, passing |
 | `cargo-audit` | installed | executed; 0 vulnerabilities |
 | `cargo-deny` | installed | executed; advisories/bans/licenses/sources pass |
-| `cargo-nextest` | installed | executed; 179 tests passing |
-| `cargo-tarpaulin` | installed | executed; 86.04% lines (5765/6700), above 85% floor |
-| `cargo-llvm-cov` | installed | executed; 87.44% lines / 83.16% regions |
+| `cargo-nextest` | installed | executed; 182 tests passing |
+| `cargo-tarpaulin` | installed | executed; 86.45% lines (5901/6826), above 85% floor |
+| `cargo-llvm-cov` | installed | executed; 87.36% lines / 83.10% regions |
 | `cargo-fuzz` | installed | 2,929,049 cumulative runs, no crash |
 | Kani 0.68.0 | installed | 5 core + 4 VM harnesses verified |
 | Miri | nightly | 82 core + 10 VM lib + 20 VM execution tests pass |
@@ -217,8 +218,8 @@ Implemented exactly in the root `Cargo.toml`:
 
 ### Residual boundaries (not release blockers)
 
-1. Coverage: the agreed floor is 85%; current measured coverage is 86.04%
-   tarpaulin / 87.44% llvm-cov. 100% is not claimed.
+1. Coverage: the agreed floor is 85%; current measured coverage is 86.45%
+   tarpaulin / 87.36% llvm-cov. 100% is not claimed.
 2. The normal branchy VM profile leaks timing (dudect max |t| = 225). The
    explicit `--constant-time` oblivious mode passes straight-line, branch, and
    loop cases (worst |t| = 2.71) with a fixed pass budget; unbounded loops and
@@ -257,10 +258,12 @@ and forbidden-unsafe scan.
 
 Allowed:
 
-> “Shipped compiler and runtime crates enforce the full Level 1–5 lint matrix
-> with zero unsafe and zero external dependencies. The build-time CLI is a
-> documented Tier C exception for safe filesystem/process access. Test-only panic
-> idioms are explicitly scoped. Tool gates not yet executed are listed as open.”
+> “Shipped safe-tier compiler and runtime crates enforce the full Level 1–5 lint
+> matrix with zero unsafe and zero external dependencies. The build-time CLI is a
+> documented Tier C exception for safe filesystem/process access. The optional
+> Tier D hardened crate is an explicit unsafe boundary and is not used by
+> default. Test-only panic idioms are explicitly scoped. Tool gates not yet
+> executed are listed as open.”
 
 Not allowed:
 

@@ -16,6 +16,7 @@ name = "sirus"
 path = "src/main.rs"
 
 [dependencies]
+sirus-hardened = { path = "../sirus-hardened", features = ["host"] }
 sirus-core.workspace = true
 sirus-vm.workspace = true
 sirus-binfmt.workspace = true

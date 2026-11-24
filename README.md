@@ -2,7 +2,7 @@
 
 **Zero-dependency polymorphic code virtualizer in Safe Rust.**
 
-**Release:** `1.4.0-safe` — see [`RELEASE.md`](RELEASE.md) and [`CHANGELOG.md`](CHANGELOG.md).
+**Release:** `1.5.0-hardened` — see [`RELEASE.md`](RELEASE.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 Sirus takes a compiled Linux x86-64 ELF, lifts a selected function into an
 internal IR, flattens its control flow, expands sensitive arithmetic through
@@ -32,15 +32,16 @@ commercial/open-source positioning is in
 | Encrypted per-build decode table + fast ARX body stream | working |
 | Linear + non-linear MBA (variable shifts, modular inverse) | working; GAMBA times out, SiMBA reduces |
 | Shared VM for multiple protected functions | working |
-| Safe Rust / no external crates | enforced |
+| Safe Rust / no external crates | safe tier enforced; `sirus-hardened` is opt-in unsafe |
 | Kani, Miri, libFuzzer, differential/tamper/bypass, Ghidra, radare2 | run locally |
 | angr, KLEE, Creusot, dudect-bencher | run locally; bounded/model results stated |
-| Coverage floor (85%) | **met: 86.04% tarpaulin / 87.44% llvm-cov lines** |
+| Coverage floor (85%) | **met: 86.45% tarpaulin / 87.36% llvm-cov lines** |
 | Constant-time VM execution | `--constant-time` oblivious branch/loop mode below dudect threshold; normal profile leaks |
 | Live memory state | virtual registers/private stack masked at rest; snapshot constant scan passes |
 | Constant-time scope | private memory rejected; fixed pass budget; branches and loops supported |
 | Per-call overhead (benchmark leaf function) | default ~78.6 µs / balanced ~56.6 µs / minimal ~13.5 µs; VMProtect 3.11 demo ~8.5 µs |
 | Cold startup | ~0.6 ms (no packer); VMProtect demo ~2.6 s |
+| Hardened tier | opt-in `--hardened`: anti-debug, RDTSC/LFENCE, Windows DR report |
 
 ---
 
@@ -171,6 +172,31 @@ Current measured results and residuals are in
 [`SECURITY.md`](SECURITY.md).
 
 ---
+
+## Hardened runtime (opt-in, unsafe)
+
+The default safe tier still uses `forbid(unsafe_code)`. `--hardened` generates
+entries that call the optional `sirus-hardened` runtime:
+
+- Linux: raw-syscall `/proc/self/status` tracer detection
+- Windows: PEB `BeingDebugged` / `NtGlobalFlag` detection
+- x86-64: LFENCE-serialized RDTSC timing budget
+- failure returns `0` instead of the protected value
+
+Diagnose the current host:
+
+```sh
+./target/release/sirus harden-check
+```
+
+Prove normal output plus tracer rejection, timing failure, and LFENCE/TSC:
+
+```sh
+./scripts/hardened-check.sh
+```
+
+Windows debug-register inspection is available through `harden-check` on a
+native Windows host; Linux user mode reports it as unsupported.
 
 ## Windows runtime
 

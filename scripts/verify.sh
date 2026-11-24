@@ -39,8 +39,9 @@ echo "== dependency graph =="
 cargo tree --workspace --edges normal
 
 echo "== forbidden unsafe constructs =="
-if grep -RInE --include='*.rs' '\bunsafe[[:space:]]*\{|#\[unsafe|unsafe fn|unsafe impl|unsafe extern' crates/ ; then
-    echo "unsafe construct found" >&2
+if grep -RInE --include='*.rs' '\bunsafe[[:space:]]*\{|#\[unsafe|unsafe fn|unsafe impl|unsafe extern' crates/ \
+    | grep -v '^crates/sirus-hardened/' ; then
+    echo "unsafe construct found outside the hardened tier" >&2
     exit 1
 fi
 

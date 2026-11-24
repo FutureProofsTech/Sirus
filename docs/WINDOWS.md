@@ -28,8 +28,8 @@
   - host `RCX/RDX/R8/R9` -> virtual `RCX/RDX/R8/R9`
   - the VM's internal System V argument array is reordered at the generated
     entry thunk.
-- Wine execution of the protected PE32+ binary in both normal and
-  `--constant-time` modes.
+- Wine execution of the protected PE32+ binary in normal, constant-time, and
+  hardened modes.
 
 Verified locally:
 
@@ -38,13 +38,14 @@ Verified locally:
 ```
 
 ```text
-PASS Windows/Wine PE32+ runtime (normal + constant-time)
+PASS Windows/Wine PE32+ runtime (normal + constant-time + hardened)
 protected 2 function(s); ... VM segment 52736 bytes; ... (normal)
 protected 2 function(s); ... VM segment 49152 bytes; ... (constant-time)
 ```
 
 The same victim's branch and loop outputs match the native PE under Wine in
-normal and constant-time modes.
+normal, constant-time, and hardened modes. The Windows cross-build of
+`harden-check` reports four debug-register values through `GetThreadContext`.
 
 ---
 

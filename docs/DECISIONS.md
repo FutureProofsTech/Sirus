@@ -310,3 +310,21 @@ integrity, encryption, fuel bounds, and structural mutation.
 **Boundary:** A separate hardened tier may add these controls only with an
 explicit unsafe policy and independent audit; it must not be mixed into the
 safe-tier artifact.
+
+---
+
+## ADR-021 — Optional unsafe hardened tier
+
+**Decision:** Add `sirus-hardened` and `--hardened` generated entries. The safe
+tier remains default and `forbid(unsafe_code)`. Hardened entries use raw Linux
+syscalls for `/proc/self/status` tracer detection, Windows PEB inspection,
+LFENCE-serialized RDTSC timing budgets, and fail closed with value `0`.
+
+**Reason:** Debugger/timing checks require unsafe instructions or OS/context
+access. Keeping them in a separate opt-in tier preserves the safe-tier policy
+while providing the requested controls.
+
+**Boundary:** Linux user mode cannot read debug registers without a ptrace
+relationship; `harden-check` reports `unsupported`. Windows debug registers are
+reported through `GetThreadContext`. No self-code checksum, DBI/hypervisor
+detection, or formal Spectre guarantee is added.

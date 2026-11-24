@@ -5,7 +5,7 @@
 **Nightly toolchain:** 2026-08-03 / 2026-08-21 family for Miri and fuzzing
 **Kani:** 0.68.0
 **Project state:** all features described in `README.md` implemented and tested
-**Last evidenced run:** final 1.4.0-safe tree, tag `v1.4.0-safe`
+**Last evidenced run:** final 1.5.0-hardened tree, tag `v1.5.0-hardened`
 
 This file records commands actually executed. Anything not executed is listed as
 an external evidence gap or a documented boundary, never inferred.
@@ -36,12 +36,12 @@ Result: **exit 0**. The script runs:
 
 ## 2. Test inventory
 
-`cargo test --workspace` now runs **179 tests**, all passing; the MBA corpus and
+`cargo test --workspace` now runs **182 tests**, all passing; the MBA corpus and
 statistical timing tests are `#[ignore]` measurement hooks and are not part of
 the normal count.
 
 ```text
-179 passed, 0 failed
+182 passed, 0 failed
 ```
 
 Breakdown:
@@ -51,7 +51,8 @@ Breakdown:
 | `sirus-binfmt` unit tests | 21 |
 | `sirus-binfmt` real-loader test | 1 |
 | `sirus-core` unit tests | 82 |
-| `sirus-protector` unit tests | 31 |
+| `sirus-protector` unit tests | 33 |
+| `sirus-hardened` runtime checks | 1 |
 | `sirus-protector` end-to-end | 1 |
 | `sirus-protector` pipeline errors | 1 |
 | `sirus-protector` marker end-to-end | 1 |
@@ -160,7 +161,7 @@ cargo tarpaulin --workspace --all-targets --engine Llvm \
   --exclude-files 'target/*' --exclude-files 'bench/*' --timeout 120
 ```
 
-Result: **86.04% line coverage (5765 / 6700 lines)** with
+Result: **86.45% line coverage (5901 / 6826 lines)** with
 `--exclude-files 'target/*' --exclude-files 'bench/*'`. This is above the agreed
 85% floor.
 
@@ -168,28 +169,33 @@ Per file at that run:
 
 ```text
 sirus-binfmt/src/elf.rs         674/781
-sirus-binfmt/src/lib.rs          65/66
+sirus-binfmt/src/lib.rs          63/66
 sirus-binfmt/src/pe.rs          412/435
-sirus-core/src/decode.rs        742/779
+sirus-core/src/decode.rs        744/779
 sirus-core/src/encode.rs        367/387
-sirus-core/src/error.rs           3/53
-sirus-core/src/ir.rs            168/189
-sirus-core/src/lifter.rs        537/671
+sirus-core/src/error.rs          51/53
+sirus-core/src/ir.rs            170/189
+sirus-core/src/lifter.rs        539/671
 sirus-core/src/mba.rs           255/281
-sirus-core/src/program.rs       510/541
+sirus-core/src/program.rs       519/550
 sirus-core/src/shared/chacha.rs 111/111
-sirus-core/src/shared/cipher.rs  66/67
-sirus-core/src/shared/derive.rs 314/314
-sirus-core/src/shared/format.rs  20/24
+sirus-core/src/shared/cipher.rs  67/67
+sirus-core/src/shared/derive.rs 312/314
+sirus-core/src/shared/format.rs  19/24
 sirus-core/src/shared/sip.rs     68/68
-sirus-protector/src/cli.rs      167/168
+sirus-hardened/src/runtime.rs    67/78
+sirus-protector/src/cli.rs      174/175
 sirus-protector/src/entropy.rs   84/114
-sirus-protector/src/error.rs     23/27
-sirus-protector/src/main.rs      25/25
-sirus-protector/src/pipeline.rs 195/380
-sirus-protector/src/vmgen.rs    427/586
+sirus-protector/src/error.rs     19/27
+sirus-protector/src/main.rs      25/26
+sirus-protector/src/pipeline.rs 195/399
+sirus-protector/src/vmgen.rs    434/598
 sirus-vm/src/engine.rs          532/633
 ```
+
+The `sirus-hardened` host-only Windows debug-register module is not exercised
+on Linux; the runtime tracer/TSC/LFENCE code is covered.
+
 
 Tarpaulin's per-file attribution for `sirus-core/src/error.rs` is affected by
 inlining of the `Display` test; llvm-cov reports 95.56% lines for the same file.
@@ -205,9 +211,9 @@ cargo llvm-cov --workspace --all-targets --summary-only
 ```
 
 ```text
-TOTAL regions 83.16% (3606 missed of 21413)
-TOTAL functions 76.71% (194 missed of 833)
-TOTAL lines 87.44% (1441 missed of 11477)
+TOTAL regions 83.10% (3666 missed of 21696)
+TOTAL functions 76.62% (199 missed of 851)
+TOTAL lines 87.36% (1476 missed of 11679)
 ```
 
 The two tools instrument differently; both are above the 85% floor and show the
@@ -511,6 +517,34 @@ has not yet executed.
 
 ---
 
+## 8j. Hardened runtime checks
+
+```sh
+./scripts/hardened-check.sh
+```
+
+```text
+debugger_present=false
+tsc_delta=40
+timing_ok=true
+debug_registers=unsupported
+debugger_present=true   (under strace)
+PASS hardened runtime checks (anti-debug + RDTSC + LFENCE)
+11936045730314344032
+3029019864519521483
+```
+
+The same fixture protected with `--hardened` matches native output normally and
+returns `0` under `strace`/`gdb`. With `--hardened-timing-cycles 1`, the call is
+rejected. The Windows cross-build of `sirus harden-check` runs under Wine and
+reports four debug-register values through `GetThreadContext`; Linux user mode
+reports `debug_registers=unsupported`.
+
+`./scripts/windows-wine-check.sh` also protects the Win64 fixture in hardened
+and hardened+constant-time modes; both match native output under Wine.
+
+---
+
 ## 9. Assembly inspection
 
 `cargo-show-asm 0.2.65` is installed. Assembly was inspected with it and with
@@ -531,7 +565,7 @@ cargo asm -p sirus-core --lib 1
 
 | Item | Status |
 |---|---|
-| Coverage floor (85%) | **met**: 86.04% tarpaulin / 87.44% llvm-cov lines |
+| Coverage floor (85%) | **met**: 86.45% tarpaulin / 87.36% llvm-cov lines |
 | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect | executed; evidence recorded |
 | live process memory dump scan | pass; masked VM state, constant not observed |
 | Windows PE runtime execution | Wine-tested leaf subset (branches/loops), normal and constant-time; native `pe32-native` CI staged |

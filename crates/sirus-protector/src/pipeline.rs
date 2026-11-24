@@ -536,6 +536,41 @@ pub fn print_report(report: &ProtectReport, output: &mut impl Write) -> Result<(
     .map_err(|error| ProtectError::io("write report", &error))
 }
 
+/// Runs the local hardened-runtime checks.
+///
+/// # Errors
+///
+/// Propagates output errors.
+#[inline]
+pub fn harden_check(output: &mut impl Write) -> Result<()> {
+    let debugger = sirus_hardened::debugger_present();
+    let start = sirus_hardened::rdtsc();
+    sirus_hardened::lfence();
+    let end = sirus_hardened::rdtsc();
+    writeln!(
+        output,
+        "debugger_present={debugger}\ntsc_delta={}\ntiming_ok={}",
+        end.wrapping_sub(start),
+        sirus_hardened::timing_ok(start, u64::MAX)
+    )
+    .map_err(|error| ProtectError::io("write hardened check", &error))?;
+    match sirus_hardened::host::debug_registers() {
+        Some(registers) => {
+            writeln!(
+                output,
+                "debug_registers=0x{:016x},0x{:016x},0x{:016x},0x{:016x}",
+                registers[0], registers[1], registers[2], registers[3]
+            )
+            .map_err(|error| ProtectError::io("write debug registers", &error))?;
+        }
+        None => {
+            writeln!(output, "debug_registers=unsupported")
+                .map_err(|error| ProtectError::io("write debug registers", &error))?;
+        }
+    }
+    Ok(())
+}
+
 /// Prints binary structure for inspection.
 ///
 /// # Errors

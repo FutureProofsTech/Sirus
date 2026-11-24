@@ -34,6 +34,10 @@ pub struct CompileOptions {
     pub constant_time: bool,
     /// Fixed oblivious pass budget for constant-time execution.
     pub constant_time_passes: u16,
+    /// Enable unsafe anti-debug, RDTSC, and LFENCE checks in generated entries.
+    pub hardened: bool,
+    /// Maximum elapsed TSC cycles accepted by the hardened entry.
+    pub hardened_timing_cycles: u64,
     /// Instruction budget for one runtime invocation.
     pub fuel: u64,
 }
@@ -49,6 +53,8 @@ impl CompileOptions {
             decoys: 2,
             constant_time: false,
             constant_time_passes: 256,
+            hardened: false,
+            hardened_timing_cycles: 200_000_000,
             fuel: DEFAULT_FUEL,
         }
     }
@@ -59,6 +65,7 @@ impl CompileOptions {
             || self.decoys > 8
             || self.constant_time_passes == 0
             || self.constant_time_passes > 4096
+            || self.hardened_timing_cycles == 0
             || self.fuel == 0
         {
             return Err(CoreError::InvalidPlan);
@@ -104,6 +111,8 @@ pub struct CompiledProgram {
     fuel: u64,
     constant_time: bool,
     constant_time_passes: u16,
+    hardened: bool,
+    hardened_timing_cycles: u64,
     stats: ProgramStats,
 }
 
@@ -169,6 +178,20 @@ impl CompiledProgram {
     #[must_use]
     pub const fn constant_time_passes(&self) -> u16 {
         self.constant_time_passes
+    }
+
+    /// Returns whether generated entries use the unsafe hardened checks.
+    #[inline]
+    #[must_use]
+    pub const fn hardened(&self) -> bool {
+        self.hardened
+    }
+
+    /// Returns the hardened entry TSC budget.
+    #[inline]
+    #[must_use]
+    pub const fn hardened_timing_cycles(&self) -> u64 {
+        self.hardened_timing_cycles
     }
 
     /// Returns compilation statistics.
@@ -274,6 +297,8 @@ fn finalize(
     fuel: u64,
     constant_time: bool,
     constant_time_passes: u16,
+    hardened: bool,
+    hardened_timing_cycles: u64,
     tables: &Tables,
     bodies: &ByteBuf<MAX_PAYLOAD>,
     entries: &BoundedVec<ManifestEntry, MAX_BLOCKS>,
@@ -411,6 +436,8 @@ fn finalize(
         fuel,
         constant_time,
         constant_time_passes,
+        hardened,
+        hardened_timing_cycles,
         stats: final_stats,
     })
 }
@@ -909,6 +936,8 @@ pub fn compile(
         options.fuel,
         options.constant_time,
         constant_time_passes,
+        options.hardened,
+        options.hardened_timing_cycles,
         &tables,
         &bodies,
         &entries,
@@ -1096,6 +1125,9 @@ mod tests {
 
     #[test]
     fn options_defaults_and_validation() {
+        let defaults = CompileOptions::new();
+        assert!(!defaults.hardened);
+        assert_eq!(defaults.hardened_timing_cycles, 200_000_000);
         let options = CompileOptions::default();
         assert_eq!(options, CompileOptions::new());
         assert_eq!(options.mba_depth, 3);

@@ -79,6 +79,7 @@ fn run_with_writer(action: cli::Action, output: &mut impl std::io::Write) -> Res
             Ok(())
         }
         cli::Action::Inspect(path) => pipeline::inspect(&path, output),
+        cli::Action::HardenCheck => pipeline::harden_check(output),
         cli::Action::Protect(arguments) => {
             let report = pipeline::protect(&arguments)?;
             pipeline::print_report(&report, output)

@@ -57,14 +57,16 @@ protected results as data so a wrong value causes a downstream failure.
 | Requested control | Why safe Rust cannot implement it | Alternative |
 |---|---|---|
 | Self machine-code checksum | requires raw memory reads | encrypted payload integrity + derived-key binding |
-| RDTSC timing detection | unsafe intrinsic | fuel bound only |
-| Debug register inspection | unsafe OS/context API | not implemented |
+| RDTSC timing detection | unsafe intrinsic | safe tier: fuel bound; hardened tier: RDTSC budget |
+| Debug register inspection | unsafe OS/context API | hardened tier: Windows `GetThreadContext`; Linux user mode unsupported |
 | DBI/hypervisor detection | unsafe timing/OS introspection | structural encryption and polymorphism |
-| LFENCE / Spectre fences | inline asm or unsafe intrinsic | not implemented |
-| Windows anti-debug APIs | unsafe FFI | not implemented |
+| LFENCE / Spectre fences | inline asm or unsafe intrinsic | hardened tier: LFENCE; no formal Spectre proof |
+| Windows anti-debug APIs | unsafe FFI | hardened tier: PEB checks; no kernel32 API imports |
 
-No hidden unsafe path exists. The project chooses safe Rust over fake completion
-of these controls.
+No hidden unsafe path exists in the default safe tier. The optional
+`sirus-hardened` crate and `--hardened` generated entries contain explicit unsafe
+code and are not mixed into the default runtime. Self-code checksum and
+hypervisor detection remain unimplemented.
 
 ---
 
@@ -138,7 +140,7 @@ of these controls.
 ## 6. Verification gaps
 
 - The agreed prototype floor is 85% line coverage. The current measured coverage
-  is 86.04% tarpaulin / 87.44% llvm-cov and the proof script enforces the 85%
+  is 86.45% tarpaulin / 87.36% llvm-cov and the proof script enforces the 85%
   regression floor. 100% is not claimed.
 - Kani proofs cover bounded primitives and memory bounds; the full decoder is too
   large for CBMC and is covered by tests/fuzzing instead.

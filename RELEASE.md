@@ -1,10 +1,10 @@
-# Sirus 1.4.0-safe — Release Notes
+# Sirus 1.5.0-hardened — Release Notes
 
-**Release type:** safe-tier production prototype
-**Tag:** `v1.4.0-safe`
-**Platform:** Linux x86-64 end-to-end; Win64 PE32+ runtime verified under Wine in normal and constant-time modes; native Windows CI staged
+**Release type:** safe-tier prototype plus optional hardened tier
+**Tag:** `v1.5.0-hardened`
+**Platform:** Linux x86-64 end-to-end; Win64 PE32+ runtime verified under Wine in normal, constant-time, and hardened modes; native Windows CI staged
 **Dependency policy:** zero external crates in shipped code
-**Unsafe policy:** `forbid(unsafe_code)` in every shipped crate and generated VM
+**Unsafe policy:** `forbid(unsafe_code)` in the safe tier; the opt-in `sirus-hardened` crate and `--hardened` generated entries allow unsafe code
 
 ---
 
@@ -23,6 +23,10 @@
   in normal and `--constant-time` modes.
 - Branchy and looping functions can run in fixed-pass oblivious constant-time
   mode; private memory is rejected and longer loops report `LoopBound`.
+- Optional `--hardened` entries add Linux `/proc` debugger detection, Windows
+  PEB debugger detection, serialized RDTSC timing checks, and LFENCE.
+- `sirus harden-check` reports debugger state, TSC delta, and Windows debug
+  registers (`unsupported` on Linux user mode).
 - Full verification, proof, fuzz, red-team, and documentation assets ship in the
   repository.
 
@@ -52,6 +56,9 @@
 - Randomized ISA: four aliases per semantic, per-alias operand order, two
   register maps, per-alias endianness.
 - Per-build semantic-handler arm permutation and engine/entry layout preambles in the generated runtime.
+- Optional hardened entry checks: raw-syscall Linux tracer detection, PEB
+  debugger detection on Windows, RDTSC/LFENCE timing budget, and Windows
+  debug-register reporting through `harden-check`.
 - Rolling encrypted manifest/bodies with payload integrity binding.
 - Freestanding Rust source generation and `rustc` link.
 - Blob validator rejecting relocations, libc symbols, writable segments, or
@@ -63,7 +70,7 @@
 
 ### Verification
 
-- 179 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
+- 182 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
   statistical-timing measurement hooks.
 - Real victim compilation and execution differential matrix.
 - Differential two-seed builds.
@@ -87,7 +94,7 @@
 ./scripts/verify.sh
 ```
 
-Passes formatting, Clippy (`-D warnings`, all targets), 179 tests, rustdoc,
+Passes formatting, Clippy (`-D warnings`, all targets), 182 tests, rustdoc,
 audit, deny, Kani, red-team, and memory-dump diagnostic.
 
 ```sh
@@ -103,8 +110,8 @@ Recorded evidence:
 - Kani: 5 core + 4 VM harnesses.
 - Miri: 10 VM lib + 20 VM execution + 82 core tests.
 - libFuzzer: 2,929,049 cumulative executions, no crash.
-- Tarpaulin: 86.04% lines (5765/6700).
-- llvm-cov: 87.44% lines, 83.16% regions.
+- Tarpaulin: 86.45% lines (5901/6826).
+- llvm-cov: 87.36% lines, 83.10% regions.
 - Payload differential: 0.40% equal bytes.
 - Handler arms are permuted per build; full VM segment differential remains
   2.21% equal bytes (a metric, not a uniqueness proof).
@@ -162,7 +169,7 @@ tools are outside the local gate and are not release blockers.
 ### Coverage
 
 The agreed prototype target is **above 85%**. This release measures
-**86.04% tarpaulin lines / 87.44% llvm-cov lines**. 100% is not claimed, but the
+**86.45% tarpaulin lines / 87.36% llvm-cov lines**. 100% is not claimed, but the
 85% floor is met and enforced by the proof script.
 
 ---
@@ -207,7 +214,7 @@ docs/                          architecture, format, threat, proof, traceability
 
 | Item | Status |
 |---|---|
-| Safe Rust / zero unsafe | pass |
+| Safe tier / zero unsafe | pass; hardened tier is opt-in unsafe |
 | Zero external shipped dependencies | pass |
 | Linux ELF end-to-end | pass |
 | Multi-function shared VM | pass |
@@ -217,14 +224,16 @@ docs/                          architecture, format, threat, proof, traceability
 | Miri | pass |
 | libFuzzer | pass |
 | fmt/clippy/doc/audit/deny | pass |
-| Coverage floor 85% | **pass — 86.04% tarpaulin / 87.44% llvm-cov lines** |
+| Coverage floor 85% | **pass — 86.45% tarpaulin / 87.36% llvm-cov lines** |
 | External evidence tooling | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect executed; commercial/licence-only tools are outside the local gate |
 | Windows runtime | **Wine-tested leaf subset (branches/loops), normal + constant-time**; native Windows CI staged |
 | Anti-debug/self-code/timing/LFENCE | **permanently out of scope for the safe tier (ADR-020)** |
 | Live memory constant secrecy | masked at rest; snapshot scan passes; instruction-local transient may remain |
 | VM constant-time execution | normal profile leaks (dudect max \|t\| = 225); `--constant-time` straight-line/branch/loop cases pass (worst \|t\| = 2.71) |
+| Hardened tier | **opt-in `--hardened`; unsafe allowed; anti-debug, RDTSC/LFENCE, Windows debug-register report** |
 | Handler-layout mutation | **per-build handler/engine/entry layout preambles; 2.21% segment equality** |
 
-This is the final safe-tier prototype. The remaining external item is native
-Windows-host CI execution; the Linux-hosted Wine gate passes. Unsafe anti-debug
-controls are explicitly out of scope rather than hidden exceptions.
+The safe tier remains the default and still forbids unsafe code. The hardened
+tier is opt-in and carries an explicit unsafe policy. Native Windows-host CI is
+staged but not executed locally; the Wine gate covers normal, constant-time, and
+hardened Win64 output.

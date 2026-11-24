@@ -23,6 +23,9 @@ rm -rf "$work"
 mkdir -p "$work"
 
 cargo build --release -p sirus-protector >/dev/null
+./target/release/sirus.exe harden-check | tee "$work/harden-check.out"
+grep -q 'debugger_present=false' "$work/harden-check.out"
+grep -q 'debug_registers=0x' "$work/harden-check.out"
 rustc --target x86_64-pc-windows-gnu --edition=2021 \
     -C opt-level=2 -C panic=abort \
     -C linker=x86_64-w64-mingw32-gcc \
@@ -47,11 +50,21 @@ rustc --target x86_64-pc-windows-gnu --edition=2021 \
     --constant-time-passes 256 \
     >"$work/protect-ct.out"
 
+./target/release/sirus.exe protect \
+    --input "$work/victim.exe" \
+    --output "$work/hardened.exe" \
+    --function sirus_win_check \
+    --function sirus_win_mix \
+    --seed 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff \
+    --hardened \
+    >"$work/protect-hardened.out"
+
 "$work/victim.exe" >"$work/native.out" 2>"$work/native.err"
 "$work/protected.exe" >"$work/protected.out" 2>"$work/protected.err"
 "$work/constant.exe" >"$work/constant.out" 2>"$work/constant.err"
+"$work/hardened.exe" >"$work/hardened.out" 2>"$work/hardened.err"
 
-for variant in protected constant; do
+for variant in protected constant hardened; do
     if ! cmp -s "$work/native.out" "$work/$variant.out"; then
         echo "Windows runtime mismatch ($variant)" >&2
         echo "native:" >&2
@@ -68,6 +81,6 @@ done
 ./target/release/sirus.exe inspect "$work/protected.exe" | tee "$work/inspect.out" >/dev/null
 grep -q 'protected=true' "$work/inspect.out"
 grep -q '\.sirus' "$work/inspect.out"
-echo "PASS native Windows PE32+ runtime (normal + constant-time)"
+echo "PASS native Windows PE32+ runtime (normal + constant-time + hardened)"
 cat "$work/protect.out"
 cat "$work/protect-ct.out"

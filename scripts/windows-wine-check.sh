@@ -45,13 +45,33 @@ rustc --target x86_64-pc-windows-gnu --edition=2021 \
     --constant-time \
     --constant-time-passes 256 \
     >"$work/protect-ct.out"
-chmod +x "$work/victim.protected.exe" "$work/victim.ct.exe"
+./target/release/sirus protect \
+    --input "$work/victim.exe" \
+    --output "$work/victim.hardened.exe" \
+    --function sirus_win_check \
+    --function sirus_win_mix \
+    --seed 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff \
+    --hardened \
+    >"$work/protect-hardened.out"
+./target/release/sirus protect \
+    --input "$work/victim.exe" \
+    --output "$work/victim.hardened.ct.exe" \
+    --function sirus_win_check \
+    --function sirus_win_mix \
+    --seed 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff \
+    --hardened \
+    --constant-time \
+    --constant-time-passes 256 \
+    >"$work/protect-hardened-ct.out"
+chmod +x "$work/victim.protected.exe" "$work/victim.ct.exe" "$work/victim.hardened.exe" "$work/victim.hardened.ct.exe"
 
 WINEDEBUG=-all wine "$work/victim.exe" >"$work/native.out" 2>"$work/native.err"
 WINEDEBUG=-all wine "$work/victim.protected.exe" >"$work/protected.out" 2>"$work/protected.err"
 WINEDEBUG=-all wine "$work/victim.ct.exe" >"$work/constant.out" 2>"$work/constant.err"
+WINEDEBUG=-all wine "$work/victim.hardened.exe" >"$work/hardened.out" 2>"$work/hardened.err"
+WINEDEBUG=-all wine "$work/victim.hardened.ct.exe" >"$work/hardened-ct.out" 2>"$work/hardened-ct.err"
 
-for variant in protected constant; do
+for variant in protected constant hardened hardened-ct; do
     if ! cmp -s "$work/native.out" "$work/$variant.out"; then
         echo "Windows/Wine runtime mismatch ($variant)" >&2
         echo "native:" >&2
@@ -68,6 +88,8 @@ done
 ./target/release/sirus inspect "$work/victim.protected.exe" | tee "$work/inspect.out" >/dev/null
 grep -q 'protected=true' "$work/inspect.out"
 grep -q '\.sirus' "$work/inspect.out"
-echo "PASS Windows/Wine PE32+ runtime (normal + constant-time)"
+echo "PASS Windows/Wine PE32+ runtime (normal + constant-time + hardened)"
 cat "$work/protect.out"
 cat "$work/protect-ct.out"
+cat "$work/protect-hardened.out"
+cat "$work/protect-hardened-ct.out"

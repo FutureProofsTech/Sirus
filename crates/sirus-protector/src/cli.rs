@@ -52,6 +52,8 @@ pub enum Action {
     Inspect(PathBuf),
     /// Print version.
     Version,
+    /// Run local hardened-runtime checks.
+    HardenCheck,
     /// Print help.
     Help,
 }
@@ -78,10 +80,11 @@ fn parse_from<I: IntoIterator<Item = OsString>>(values: I) -> Result<Action> {
     match command {
         "protect" => parse_protect(&arguments),
         "inspect" => parse_inspect(&arguments),
+        "harden-check" => Ok(Action::HardenCheck),
         "version" | "--version" | "-V" => Ok(Action::Version),
         "help" | "--help" | "-h" => Ok(Action::Help),
         other => Err(ProtectError::usage(format!(
-            "unknown command `{other}`; expected protect, inspect, version, or help"
+            "unknown command `{other}`; expected protect, inspect, harden-check, version, or help"
         ))),
     }
 }
@@ -146,6 +149,10 @@ fn apply_profile(options: &mut CompileOptions, profile: &str) -> Result<()> {
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "protect flag parsing is one linear CLI transaction"
+)]
 fn parse_protect(arguments: &[OsString]) -> Result<Action> {
     let mut input: Option<PathBuf> = None;
     let mut output: Option<PathBuf> = None;
@@ -204,6 +211,10 @@ fn parse_protect(arguments: &[OsString]) -> Result<Action> {
             "--constant-time" => options.constant_time = true,
             "--constant-time-passes" => {
                 options.constant_time_passes = number_value(arguments, &mut index, flag)?;
+            }
+            "--hardened" => options.hardened = true,
+            "--hardened-timing-cycles" => {
+                options.hardened_timing_cycles = number_value(arguments, &mut index, flag)?;
             }
             "--vm-base" => vm_base = Some(hex_value(arguments, &mut index, flag)?),
             "--emit-source" => {
@@ -280,6 +291,7 @@ pub const fn help_text() -> &'static str {
      Usage:\n\
      \x20 sirus protect --input <ELF> --output <ELF> <selector> [options]\n\
      \x20 sirus inspect <ELF>\n\
+     \x20 sirus harden-check\n\
      \x20 sirus version\n\n\
      Selectors:\n\
      \x20 --function <exact-symbol>\n\
@@ -294,6 +306,8 @@ pub const fn help_text() -> &'static str {
      \x20 --decoys <n>             opaque decoy pairs per function (0..=8, default 2)\n\
      \x20 --constant-time         oblivious branch/loop execution; reject private memory\n\
      \x20 --constant-time-passes <n> fixed oblivious passes (1..=4096, default 256)\n\
+     \x20 --hardened              unsafe anti-debug/TSC/LFENCE checks in entries\n\
+     \x20 --hardened-timing-cycles <n> max TSC cycles per call (default 200000000)\n\
      \x20 --vm-base <hex>          override VM virtual address\n\
      \x20 --emit-source <path>     write generated VM source for audit\n\
      \x20 --keep-temp              keep compiler temporary files\n\
@@ -573,6 +587,32 @@ mod tests {
         };
         assert!(parsed.options.constant_time);
         assert_eq!(parsed.options.constant_time_passes, 64);
+    }
+
+    #[test]
+    fn parses_hardened_flags_and_command() {
+        let action = parse_from(arguments(&[
+            "protect",
+            "--input",
+            "in",
+            "--output",
+            "out",
+            "--function",
+            "demo",
+            "--hardened",
+            "--hardened-timing-cycles",
+            "123456",
+        ]))
+        .expect("hardened flags");
+        let Action::Protect(parsed) = action else {
+            panic!("expected protect");
+        };
+        assert!(parsed.options.hardened);
+        assert_eq!(parsed.options.hardened_timing_cycles, 123_456);
+        assert!(matches!(
+            parse_from(arguments(&["harden-check"])),
+            Ok(Action::HardenCheck)
+        ));
     }
 
     #[test]
