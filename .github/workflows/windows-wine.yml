@@ -55,12 +55,14 @@ jobs:
       - name: Add mingw tools to PATH
         shell: pwsh
         run: echo "C:\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+      - name: Build protector before MSVC environment
+        shell: bash
+        run: cargo build --release -p sirus-protector
       - uses: ilammy/msvc-dev-cmd@v1
-      - name: Build protector and CFG victim
+      - name: Build and run CFG victim
         shell: bash
         run: |
           set -euo pipefail
-          cargo build --release -p sirus-protector
           mkdir -p target/cfg
           cmd //c "cl /nologo /O2 /guard:cf crates\\sirus-protector\\tests\\fixtures\\windows_victim.c /Fe:target\\cfg\\victim.exe"
           ./target/release/sirus.exe protect \
