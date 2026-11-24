@@ -7,7 +7,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-for tool in rustc x86_64-w64-mingw32-gcc lld-link; do
+for tool in rustc x86_64-w64-mingw32-gcc x86_64-w64-mingw32-nm lld-link; do
     if ! command -v "$tool" >/dev/null 2>&1; then
         echo "missing Windows tool: $tool" >&2
         exit 1
