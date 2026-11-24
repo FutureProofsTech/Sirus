@@ -729,6 +729,107 @@ pub fn build_vm(program: &CompiledProgram, vm_base: u64, keep_temp: bool) -> Res
     result
 }
 
+fn read_le_u16(data: &[u8], offset: usize) -> Result<u16> {
+    let end = offset
+        .checked_add(2)
+        .ok_or_else(|| ProtectError::internal("COFF object offset"))?;
+    let bytes = data
+        .get(offset..end)
+        .ok_or_else(|| ProtectError::internal("COFF object bounds"))?;
+    let array =
+        <[u8; 2]>::try_from(bytes).map_err(|_| ProtectError::internal("COFF object width"))?;
+    Ok(u16::from_le_bytes(array))
+}
+
+fn read_le_u32(data: &[u8], offset: usize) -> Result<u32> {
+    let end = offset
+        .checked_add(4)
+        .ok_or_else(|| ProtectError::internal("COFF object offset"))?;
+    let bytes = data
+        .get(offset..end)
+        .ok_or_else(|| ProtectError::internal("COFF object bounds"))?;
+    let array =
+        <[u8; 4]>::try_from(bytes).map_err(|_| ProtectError::internal("COFF object width"))?;
+    Ok(u32::from_le_bytes(array))
+}
+
+fn coff_object_name(
+    object: &[u8],
+    entry: usize,
+    string_table: usize,
+    string_size: usize,
+) -> Result<String> {
+    let first = read_le_u32(object, entry)?;
+    if first == 0 {
+        let offset = usize::try_from(read_le_u32(object, entry.saturating_add(4))?)
+            .map_err(|_| ProtectError::internal("COFF string offset"))?;
+        if offset < 4 || offset >= string_size {
+            return Err(ProtectError::internal("COFF string range"));
+        }
+        let start = string_table
+            .checked_add(offset)
+            .ok_or_else(|| ProtectError::internal("COFF string start"))?;
+        let end = string_table
+            .checked_add(string_size)
+            .ok_or_else(|| ProtectError::internal("COFF string end"))?;
+        let raw = object
+            .get(start..end)
+            .ok_or_else(|| ProtectError::internal("COFF string bytes"))?;
+        let length = raw.iter().position(|byte| *byte == 0).unwrap_or(raw.len());
+        return String::from_utf8(raw.get(..length).unwrap_or(&[]).to_vec())
+            .map_err(|_| ProtectError::internal("COFF string encoding"));
+    }
+    let raw = object
+        .get(entry..entry.saturating_add(8))
+        .ok_or_else(|| ProtectError::internal("COFF short name"))?;
+    let length = raw.iter().position(|byte| *byte == 0).unwrap_or(raw.len());
+    Ok(String::from_utf8_lossy(raw.get(..length).unwrap_or(&[])).into_owned())
+}
+
+fn windows_entry_symbol(object: &[u8], id: &str, index: usize) -> Result<String> {
+    let symbol_table = usize::try_from(read_le_u32(object, 8)?)
+        .map_err(|_| ProtectError::internal("COFF symbol offset"))?;
+    let symbol_count = usize::try_from(read_le_u32(object, 12)?)
+        .map_err(|_| ProtectError::internal("COFF symbol count"))?;
+    let strings = symbol_table
+        .checked_add(
+            symbol_count
+                .checked_mul(18)
+                .ok_or_else(|| ProtectError::internal("COFF symbol size"))?,
+        )
+        .ok_or_else(|| ProtectError::internal("COFF string table offset"))?;
+    let string_size = usize::try_from(read_le_u32(object, strings)?)
+        .map_err(|_| ProtectError::internal("COFF string table size"))?;
+    let needle = format!("sirus_entry_{id}_{index}");
+    let mut cursor = 0_usize;
+    while cursor < symbol_count {
+        let entry = symbol_table
+            .checked_add(
+                cursor
+                    .checked_mul(18)
+                    .ok_or_else(|| ProtectError::internal("COFF symbol offset"))?,
+            )
+            .ok_or_else(|| ProtectError::internal("COFF symbol entry"))?;
+        let name = coff_object_name(object, entry, strings, string_size)?;
+        let section = read_le_u16(object, entry.saturating_add(12))?;
+        let kind = read_le_u16(object, entry.saturating_add(14))?;
+        let aux = usize::from(
+            object
+                .get(entry.saturating_add(17))
+                .copied()
+                .ok_or_else(|| ProtectError::internal("COFF auxiliary count"))?,
+        );
+        if section > 0 && kind & 0x20 != 0 && name.contains(&needle) {
+            return Ok(name);
+        }
+        cursor = cursor
+            .checked_add(1)
+            .and_then(|next| next.checked_add(aux))
+            .ok_or_else(|| ProtectError::internal("COFF symbol cursor"))?;
+    }
+    Err(ProtectError::internal("Windows entry symbol missing"))
+}
+
 /// Builds a Win64 VM image for injection into a PE32+ host.
 ///
 /// The object is linked as a no-import DLL, then its `.text` and `.rdata`
@@ -808,27 +909,11 @@ pub fn build_windows_vm(program: &CompiledProgram, keep_temp: bool) -> Result<Wi
             "windows rustc failed:\n{stderr}"
         )));
     }
-    let nm = Command::new("x86_64-w64-mingw32-nm")
-        .arg(&object_path)
-        .output()
-        .map_err(|error| ProtectError::io("execute Windows nm", &error))?;
-    if !nm.status.success() {
-        let stderr = String::from_utf8_lossy(&nm.stderr);
-        if !keep_temp {
-            drop(fs::remove_dir_all(&directory));
-        }
-        return Err(ProtectError::tool(format!("windows nm failed:\n{stderr}")));
-    }
-    let nm_text = String::from_utf8_lossy(&nm.stdout);
+    let object = fs::read(&object_path)
+        .map_err(|error| ProtectError::io("read Windows VM object", &error))?;
     let mut entry_symbols = Vec::with_capacity(program.entry_states().len());
     for index in 0..program.entry_states().len() {
-        let needle = format!("sirus_entry_{id}_{index}");
-        let symbol = nm_text
-            .lines()
-            .find(|line| line.contains(&needle) && line.contains(" T "))
-            .and_then(|line| line.split_whitespace().last())
-            .ok_or_else(|| ProtectError::internal("Windows entry symbol missing"))?;
-        entry_symbols.push(symbol.to_owned());
+        entry_symbols.push(windows_entry_symbol(&object, &id, index)?);
     }
     let mut shim_source = String::from(".text\n");
     for (index, symbol) in entry_symbols.iter().enumerate() {
@@ -964,30 +1049,6 @@ pub fn build_windows_vm(program: &CompiledProgram, keep_temp: bool) -> Result<Wi
         blob,
         entry_offsets,
     })
-}
-
-fn read_le_u16(data: &[u8], offset: usize) -> Result<u16> {
-    let end = offset
-        .checked_add(2)
-        .ok_or_else(|| ProtectError::internal("Windows VM relocation offset"))?;
-    let bytes = data
-        .get(offset..end)
-        .ok_or_else(|| ProtectError::internal("Windows VM relocation bounds"))?;
-    let array = <[u8; 2]>::try_from(bytes)
-        .map_err(|_| ProtectError::internal("Windows VM relocation width"))?;
-    Ok(u16::from_le_bytes(array))
-}
-
-fn read_le_u32(data: &[u8], offset: usize) -> Result<u32> {
-    let end = offset
-        .checked_add(4)
-        .ok_or_else(|| ProtectError::internal("Windows VM relocation offset"))?;
-    let bytes = data
-        .get(offset..end)
-        .ok_or_else(|| ProtectError::internal("Windows VM relocation bounds"))?;
-    let array = <[u8; 4]>::try_from(bytes)
-        .map_err(|_| ProtectError::internal("Windows VM relocation width"))?;
-    Ok(u32::from_le_bytes(array))
 }
 
 /// Rejects base relocations that would land in the extracted `.text`/`.rdata`
