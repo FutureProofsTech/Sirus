@@ -70,7 +70,7 @@ the real protected binary.
 cargo build --release --workspace
 ```
 
-Result: exit 0; `target/release/sirus` is a stripped 597 KiB PIE with the
+Result: exit 0; `target/release/sirus` is a stripped 617 KiB PIE with the
 documented release profile. A real victim protected with the release binary
 matched native output for the branch/loop sample.
 
