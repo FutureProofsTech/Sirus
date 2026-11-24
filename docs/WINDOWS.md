@@ -28,7 +28,8 @@
   - host `RCX/RDX/R8/R9` -> virtual `RCX/RDX/R8/R9`
   - the VM's internal System V argument array is reordered at the generated
     entry thunk.
-- Wine execution of the protected PE32+ binary.
+- Wine execution of the protected PE32+ binary in both normal and
+  `--constant-time` modes.
 
 Verified locally:
 
@@ -37,11 +38,13 @@ Verified locally:
 ```
 
 ```text
-PASS Windows/Wine PE32+ runtime
-protected 2 function(s); ... VM 0x49e000; VM segment 52736 bytes; ...
+PASS Windows/Wine PE32+ runtime (normal + constant-time)
+protected 2 function(s); ... VM segment 52736 bytes; ... (normal)
+protected 2 function(s); ... VM segment 49152 bytes; ... (constant-time)
 ```
 
-The same victim's branch and loop outputs match the native PE under Wine.
+The same victim's branch and loop outputs match the native PE under Wine in
+normal and constant-time modes.
 
 ---
 
@@ -65,7 +68,7 @@ prototype boundary.
 
 ---
 
-## 3. Wine and CI
+## 3. Execution gates
 
 Wine 11.20 is the local execution environment. The gate requires:
 
@@ -74,8 +77,18 @@ rustup target add x86_64-pc-windows-gnu
 # mingw-w64 toolchain, lld-link, wine
 ```
 
-The GitHub workflow installs Wine, mingw-w64, and lld on Ubuntu and runs the same
-script. It is staged, not claimed as an executed Windows-host gate.
+Native Windows host:
+
+```sh
+./scripts/windows-native-check.sh
+```
+
+This script is staged for the Windows CI job and has not been executed here.
+
+The GitHub workflow has two staged jobs: Ubuntu + Wine + mingw-w64, and a
+`windows-latest` native job using msys2 mingw-w64/lld and
+`scripts/windows-native-check.sh`. Neither GitHub job has been executed here;
+the local executed gate is the Wine path.
 
 ---
 

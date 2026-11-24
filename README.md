@@ -2,7 +2,7 @@
 
 **Zero-dependency polymorphic code virtualizer in Safe Rust.**
 
-**Release:** `1.3.0-safe` — see [`RELEASE.md`](RELEASE.md) and [`CHANGELOG.md`](CHANGELOG.md).
+**Release:** `1.4.0-safe` — see [`RELEASE.md`](RELEASE.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 Sirus takes a compiled Linux x86-64 ELF, lifts a selected function into an
 internal IR, flattens its control flow, expands sensitive arithmetic through
@@ -26,7 +26,7 @@ commercial/open-source positioning is in
 |---|---|
 | Linux x86-64 ELF end-to-end | **working and tested** |
 | PE32+ format parse / section injection | **working; Win64 runtime Wine-tested** |
-| PE/Win64 runtime execution | **working under Wine 11.20**; native Windows CI staged, not yet run |
+| PE/Win64 runtime execution | **working under Wine 11.20**, normal and `--constant-time`; native Windows CI staged |
 | Random per-build ISA, aliases, operand orders, register maps | working |
 | CFG flattening, encrypted manifest/bodies, decoys, constant blinding | working |
 | Encrypted per-build decode table + fast ARX body stream | working |
@@ -35,12 +35,12 @@ commercial/open-source positioning is in
 | Safe Rust / no external crates | enforced |
 | Kani, Miri, libFuzzer, differential/tamper/bypass, Ghidra, radare2 | run locally |
 | angr, KLEE, Creusot, dudect-bencher | run locally; bounded/model results stated |
-| Coverage floor (85%) | **met: 86.77% tarpaulin / 87.14% llvm-cov lines** |
-| Constant-time VM execution | **not claimed; dudect measures a branch leak** |
+| Coverage floor (85%) | **met: 86.04% tarpaulin / 87.44% llvm-cov lines** |
+| Constant-time VM execution | `--constant-time` oblivious branch/loop mode below dudect threshold; normal profile leaks |
 | Live memory state | virtual registers/private stack masked at rest; snapshot constant scan passes |
-| Constant-time subset | `--constant-time` accepts branchless/no-memory functions; dudect constant-time profile below threshold |
-| Per-call overhead (benchmark leaf function) | default ~77 µs / balanced ~58 µs / minimal ~16 µs; VMProtect 3.11 demo ~8.5 µs |
-| Cold startup | ~0.7 ms (no packer); VMProtect demo ~2.6 s |
+| Constant-time scope | private memory rejected; fixed pass budget; branches and loops supported |
+| Per-call overhead (benchmark leaf function) | default ~78.6 µs / balanced ~56.6 µs / minimal ~13.5 µs; VMProtect 3.11 demo ~8.5 µs |
+| Cold startup | ~0.6 ms (no packer); VMProtect demo ~2.6 s |
 
 ---
 
@@ -101,7 +101,8 @@ Options:
 - `--mba-depth <n>` 0..=8 (default 3)
 - `--mba-budget <n>` expression node budget (default 512)
 - `--decoys <n>` opaque guard/decoy pairs per function (default 2)
-- `--constant-time` constant-time subset: rejects data-dependent branches and memory accesses
+- `--constant-time` oblivious branch/loop execution: fixed pass budget, predicated register writes, private memory rejected
+- `--constant-time-passes <n>` fixed loop frontier budget (1..=4096, default 256)
 - `--vm-base <hex>` VM virtual address override
 - `--emit-source <path>` write generated VM source for audit
 - `--keep-temp` retain compiler temporary files
@@ -173,16 +174,18 @@ Current measured results and residuals are in
 
 ## Windows runtime
 
-PE32+ Win64 runtime injection is now implemented and verified under Wine with
-the same encrypted VM and the same leaf-function subset. See
+PE32+ Win64 runtime injection is implemented and verified under Wine with the
+same encrypted VM and the same leaf-function subset, in normal and
+`--constant-time` modes. See
 [`docs/WINDOWS.md`](docs/WINDOWS.md) and run:
 
 ```sh
 ./scripts/windows-wine-check.sh
 ```
 
-Native Windows CI is staged in `.github/workflows/windows-wine.yml`; it has not
-yet been executed on a Windows host.
+A native Windows CI job and `scripts/windows-native-check.sh` are staged in
+`.github/workflows/windows-wine.yml`; the native job has not yet been executed.
+The executed gate is the Wine path.
 
 ## Repository layout
 

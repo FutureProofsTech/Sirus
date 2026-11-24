@@ -9,13 +9,23 @@ cd ../..
 python3 - <<'PY'
 import re
 from pathlib import Path
+
 text = Path('target/constant-time-check.out').read_text()
-match = re.search(r'vm_constant\s+\.\.\.\s*:.*max t\s*=\s*([+-]?[0-9.]+)', text)
-if not match:
+matches = re.findall(
+    r'bench (vm_constant\w*)\s+\.\.\.\s*:[^\n]*?max t\s*=\s*([+-]?[0-9.]+)',
+    text,
+)
+if not matches:
     raise SystemExit('constant-time t-test result missing')
-value = float(match.group(1))
-print(f'constant_time_max_t={value}')
-if abs(value) >= 5.0:
-    raise SystemExit('constant-time subset exceeded |t| = 5')
-print('PASS constant-time subset below |t| = 5')
+values = {name: float(value) for name, value in matches}
+required = {'vm_constant', 'vm_constant_branch', 'vm_constant_loop'}
+missing = required.difference(values)
+if missing:
+    raise SystemExit(f'constant-time benchmark missing: {sorted(missing)}')
+for name in sorted(values):
+    print(f'{name}_max_t={values[name]}')
+worst = max(abs(value) for value in values.values())
+if worst >= 5.0:
+    raise SystemExit(f'constant-time subset exceeded |t| = 5 (worst {worst})')
+print(f'PASS constant-time subset below |t| = 5 (worst {worst:.5f})')
 PY

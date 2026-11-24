@@ -1,8 +1,8 @@
-# Sirus 1.3.0-safe — Release Notes
+# Sirus 1.4.0-safe — Release Notes
 
 **Release type:** safe-tier production prototype
-**Tag:** `v1.3.0-safe`
-**Platform:** Linux x86-64 end-to-end; Win64 PE32+ runtime verified under Wine; native Windows CI staged
+**Tag:** `v1.4.0-safe`
+**Platform:** Linux x86-64 end-to-end; Win64 PE32+ runtime verified under Wine in normal and constant-time modes; native Windows CI staged
 **Dependency policy:** zero external crates in shipped code
 **Unsafe policy:** `forbid(unsafe_code)` in every shipped crate and generated VM
 
@@ -19,7 +19,10 @@
 - The generated VM imports no libc symbols and occupies a non-writable RX
   segment.
 - Isolated marker mode and symbol-name/substring mode both work.
-- PE32+ images can be protected and executed under Wine with the Win64 VM runtime.
+- PE32+ images can be protected and executed under Wine with the Win64 VM runtime
+  in normal and `--constant-time` modes.
+- Branchy and looping functions can run in fixed-pass oblivious constant-time
+  mode; private memory is rejected and longer loops report `LoopBound`.
 - Full verification, proof, fuzz, red-team, and documentation assets ship in the
   repository.
 
@@ -44,8 +47,11 @@
 - Masked virtual registers and private stack memory at rest.
 - `max`, `balanced`, and `minimal` profiles.
 - Opaque guard/decoy synthesis.
+- Oblivious constant-time runner with fixed pass budget, active-frontier masks,
+  predicated register writes, and branch/loop support.
 - Randomized ISA: four aliases per semantic, per-alias operand order, two
   register maps, per-alias endianness.
+- Per-build semantic-handler arm permutation and engine/entry layout preambles in the generated runtime.
 - Rolling encrypted manifest/bodies with payload integrity binding.
 - Freestanding Rust source generation and `rustc` link.
 - Blob validator rejecting relocations, libc symbols, writable segments, or
@@ -57,7 +63,7 @@
 
 ### Verification
 
-- 167 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
+- 179 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
   statistical-timing measurement hooks.
 - Real victim compilation and execution differential matrix.
 - Differential two-seed builds.
@@ -81,7 +87,7 @@
 ./scripts/verify.sh
 ```
 
-Passes formatting, Clippy (`-D warnings`, all targets), 167 tests, rustdoc,
+Passes formatting, Clippy (`-D warnings`, all targets), 179 tests, rustdoc,
 audit, deny, Kani, red-team, and memory-dump diagnostic.
 
 ```sh
@@ -89,22 +95,23 @@ audit, deny, Kani, red-team, and memory-dump diagnostic.
 ```
 
 Runs Kani, Miri, and libFuzzer. Full Miri execution is slow; set
-`SIRUS_FULL_MIRI=1` for the 15-test execution suite. Coverage is enabled with
+`SIRUS_FULL_MIRI=1` for the 20-test execution suite. Coverage is enabled with
 `SIRUS_COVERAGE=1`.
 
 Recorded evidence:
 
-- Kani: 5 core + 3 VM harnesses.
-- Miri: 9 VM lib + 15 VM execution + 81 core tests.
-- libFuzzer: 1,872,687 cumulative executions, no crash.
-- Tarpaulin: 86.77% lines (5437/6266).
-- llvm-cov: 87.14% lines, 82.78% regions.
+- Kani: 5 core + 4 VM harnesses.
+- Miri: 10 VM lib + 20 VM execution + 82 core tests.
+- libFuzzer: 2,929,049 cumulative executions, no crash.
+- Tarpaulin: 86.04% lines (5765/6700).
+- llvm-cov: 87.44% lines, 83.16% regions.
 - Payload differential: 0.40% equal bytes.
-- Full VM segment differential: 11.01% equal bytes.
+- Handler arms are permuted per build; full VM segment differential remains
+  2.21% equal bytes (a metric, not a uniqueness proof).
 - Payload entropy: 7.996 Shannon / 7.751 min-entropy bits/byte.
-- Per-call benchmark: native 1.45-1.89 ns; Sirus default ~77 us; balanced
-  ~58 us; minimal ~16 us; VMProtect 3.11 demo virtualization ~8.5 us.
-- Cold startup: Sirus ~0.7 ms; VMProtect demo ~2.6 s (packed).
+- Per-call benchmark: native ~1.2-1.9 ns; Sirus default ~78.6 us; balanced
+  ~56.6 us; minimal ~13.5 us; VMProtect 3.11 demo virtualization ~8.5 us.
+- Cold startup: Sirus ~0.6 ms; VMProtect demo ~2.6 s (packed).
 - No obvious strings in `.sirus`.
 - Original bodies absent from protected file and live memory.
 - Tamper/forced-return alter results; valgrind clean.
@@ -121,16 +128,17 @@ indirect jumps, and stack arguments are rejected.
 
 ### PE / Windows
 
-Wine-tested Win64 runtime for the strict leaf subset (branches and loops included). Native Windows
-loader/CFG/exception metadata, signing, imports/TLS, and Windows anti-debug are
-not implemented. The Linux ELF path remains the primary production path.
+Wine-tested Win64 runtime for the strict leaf subset (branches and loops
+included), normal and constant-time. Native Windows loader/CFG/exception
+metadata, signing, imports/TLS, and Windows anti-debug are not implemented. The
+Linux ELF path remains the primary production path.
 
 ### Anti-debug, self-checksum, timing, LFENCE
 
-Not implemented and not claimable under `forbid(unsafe_code)`. They require raw
-memory reads, RDTSC, debug-register/context access, OS APIs, or inline assembly.
-Payload integrity, encryption, fuel bounds, and structural obfuscation are the
-safe-tier substitutes.
+Permanently out of scope for the safe tier (ADR-020). They require raw memory
+reads, RDTSC, debug-register/context access, OS APIs, or inline assembly. Payload
+integrity, encryption, fuel bounds, oblivious execution, and structural
+obfuscation are the safe-tier substitutes.
 
 ### Live memory
 
@@ -147,14 +155,14 @@ machinery. GAMBA, SiMBA, and MBA-Blast ran against the exact rewrite corpus;
 GAMBA timed out on modular-inverse forms, while SiMBA still reduced them. angr
 and KLEE both hit bounded symbolic timeouts with no memory errors. Creusot proved
 three boundary contracts. Official dudect-bencher measured the cipher below the
-leak threshold, the normal VM branch far above it, and the explicit
-`--constant-time` subset below it. Commercial/licence-gated tools are outside the
-local gate and are not release blockers.
+leak threshold, the normal VM branch far above it, and the straight-line,
+branchy, and looping `--constant-time` cases below it. Commercial/licence-gated
+tools are outside the local gate and are not release blockers.
 
 ### Coverage
 
 The agreed prototype target is **above 85%**. This release measures
-**86.77% tarpaulin lines / 87.14% llvm-cov lines**. 100% is not claimed, but the
+**86.04% tarpaulin lines / 87.44% llvm-cov lines**. 100% is not claimed, but the
 85% floor is met and enforced by the proof script.
 
 ---
@@ -209,13 +217,14 @@ docs/                          architecture, format, threat, proof, traceability
 | Miri | pass |
 | libFuzzer | pass |
 | fmt/clippy/doc/audit/deny | pass |
-| Coverage floor 85% | **pass — 86.77% tarpaulin / 87.14% llvm-cov lines** |
+| Coverage floor 85% | **pass — 86.04% tarpaulin / 87.44% llvm-cov lines** |
 | External evidence tooling | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect executed; commercial/licence-only tools are outside the local gate |
-| Windows runtime | **Wine-tested leaf subset (branches/loops)**; native Windows CI staged |
-| Anti-debug/self-code/timing/LFENCE | **not possible under safe-Rust constraint** |
+| Windows runtime | **Wine-tested leaf subset (branches/loops), normal + constant-time**; native Windows CI staged |
+| Anti-debug/self-code/timing/LFENCE | **permanently out of scope for the safe tier (ADR-020)** |
 | Live memory constant secrecy | masked at rest; snapshot scan passes; instruction-local transient may remain |
-| VM constant-time execution | normal profile leaks (dudect max \|t\| = 225); `--constant-time` subset passes (max \|t\| = 0.88) |
-| Full handler-layout mutation | **partial (11.01% segment equality)** |
+| VM constant-time execution | normal profile leaks (dudect max \|t\| = 225); `--constant-time` straight-line/branch/loop cases pass (worst \|t\| = 2.71) |
+| Handler-layout mutation | **per-build handler/engine/entry layout preambles; 2.21% segment equality** |
 
-This is the final safe-tier product. The items marked fail/open are release
-exceptions, not hidden passes.
+This is the final safe-tier prototype. The remaining external item is native
+Windows-host CI execution; the Linux-hosted Wine gate passes. Unsafe anti-debug
+controls are explicitly out of scope rather than hidden exceptions.

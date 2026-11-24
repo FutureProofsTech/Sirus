@@ -149,6 +149,26 @@ fn protect(input: &Path, output: &Path, seed: &str) -> Output {
         .expect("run protector")
 }
 
+fn protect_constant_time(input: &Path, output: &Path, seed: &str) -> Output {
+    Command::new(protected_binary())
+        .arg("protect")
+        .arg("--input")
+        .arg(input)
+        .arg("--output")
+        .arg(output)
+        .arg("--function-contains")
+        .arg("sirus_demo_check")
+        .arg("--function-contains")
+        .arg("sirus_demo_loop")
+        .arg("--seed")
+        .arg(seed)
+        .arg("--constant-time")
+        .arg("--constant-time-passes")
+        .arg("64")
+        .output()
+        .expect("run constant-time protector")
+}
+
 fn section_bytes(image: &[u8], name: &str) -> Vec<u8> {
     let elf = Elf64::parse(image).expect("parse protected");
     let section = elf
@@ -240,6 +260,22 @@ fn end_to_end_protection_and_adversarial_mutations() {
         assert_eq!(
             native_output.stdout, protected_output.stdout,
             "random arguments {arguments:?}"
+        );
+    }
+
+    let constant = sandbox.join("victim.constant");
+    let constant_result = protect_constant_time(&victim, &constant, seed_a);
+    assert!(
+        constant_result.status.success(),
+        "constant-time protect failed: {}",
+        String::from_utf8_lossy(&constant_result.stderr)
+    );
+    for arguments in [["7", "3"], ["3", "7"], ["0", "0"], ["123456789", "5"]] {
+        let native_output = run_bounded(&victim, &arguments, Duration::from_secs(5));
+        let constant_output = run_bounded(&constant, &arguments, Duration::from_secs(10));
+        assert_eq!(
+            native_output.stdout, constant_output.stdout,
+            "constant-time arguments {arguments:?}"
         );
     }
 

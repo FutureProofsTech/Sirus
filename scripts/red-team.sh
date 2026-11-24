@@ -198,7 +198,7 @@ segment_a = elf_a.section_bytes('.sirus')
 segment_b = elf_b.section_bytes('.sirus')
 segment_common = min(len(segment_a), len(segment_b))
 segment_ratio = sum(1 for a, b in zip(segment_a[:segment_common], segment_b[:segment_common]) if a == b) / segment_common
-assert segment_ratio < 0.35, f'full VM segment too similar: {segment_ratio:.4f}'
+assert segment_ratio < 0.05, f'full VM segment too similar: {segment_ratio:.4f}'
 print(f'PASS differential VM segment: equal-byte ratio={segment_ratio:.4f} sizes={len(segment_a)}/{len(segment_b)}')
 
 # Forced-return bypass and payload tamper artifacts.

@@ -34,6 +34,9 @@ pub enum Status {
     FuelExhausted,
     /// The virtual program executed `TRAP`.
     Trap,
+    /// The fixed oblivious pass budget was exhausted before the frontier
+    /// converged.
+    LoopBound,
 }
 
 /// Result of one protected invocation.
@@ -104,6 +107,15 @@ enum Flow {
     Return(u64),
     /// Halt through an explicit trap.
     Trap,
+    /// Conditional transfer used only by oblivious execution.
+    Branch {
+        /// Raw branch condition.
+        condition: u64,
+        /// Target when the condition is non-zero.
+        when_true: u64,
+        /// Target when the condition is zero.
+        when_false: u64,
+    },
 }
 
 /// Decoded instruction operands in canonical role order.
@@ -237,6 +249,26 @@ fn set_reg_value(
 }
 
 #[inline]
+fn set_reg_value_active(
+    registers: &mut [u64; VM_REGISTERS],
+    masks: Option<&[u64; VM_REGISTERS]>,
+    values: &[u64; MAX_OPERANDS],
+    operand: usize,
+    value: u64,
+    active: Option<u64>,
+) -> Option<()> {
+    let selected = match active {
+        Some(enable) => {
+            let current = reg_value(registers, masks, values, operand)?;
+            let enable = 0_u64.wrapping_sub(enable & 1);
+            (value & enable) | (current & !enable)
+        }
+        None => value,
+    };
+    set_reg_value(registers, masks, values, operand, selected)
+}
+
+#[inline]
 fn immediate(values: &[u64; MAX_OPERANDS], operand: usize) -> Option<u64> {
     values.get(operand).copied()
 }
@@ -339,7 +371,7 @@ fn execute_semantic(
     registers: &mut [u64; VM_REGISTERS],
     memory: &mut [u8],
 ) -> Option<Flow> {
-    execute_semantic_inner(decoded, registers, None, memory, None)
+    execute_semantic_inner(decoded, registers, None, memory, None, None)
 }
 
 #[allow(clippy::too_many_lines)]
@@ -349,36 +381,37 @@ fn execute_semantic_inner(
     masks: Option<&[u64; VM_REGISTERS]>,
     memory: &mut [u8],
     memory_key: Option<u64>,
+    active: Option<u64>,
 ) -> Option<Flow> {
     let values = &decoded.values;
     let write_binary =
         |registers: &mut [u64; VM_REGISTERS], operation: fn(u64, u64) -> u64| -> Option<()> {
             let left = reg_value(registers, masks, values, 0)?;
             let right = reg_value(registers, masks, values, 1)?;
-            set_reg_value(registers, masks, values, 0, operation(left, right))
+            set_reg_value_active(registers, masks, values, 0, operation(left, right), active)
         };
     let write_binary_imm =
         |registers: &mut [u64; VM_REGISTERS], operation: fn(u64, u64) -> u64| -> Option<()> {
             let left = reg_value(registers, masks, values, 0)?;
             let right = immediate(values, 1)?;
-            set_reg_value(registers, masks, values, 0, operation(left, right))
+            set_reg_value_active(registers, masks, values, 0, operation(left, right), active)
         };
     let write_unary =
         |registers: &mut [u64; VM_REGISTERS], operation: fn(u64) -> u64| -> Option<()> {
             let value = reg_value(registers, masks, values, 0)?;
-            set_reg_value(registers, masks, values, 0, operation(value))
+            set_reg_value_active(registers, masks, values, 0, operation(value), active)
         };
 
     match decoded.semantic {
         SEM_NOP => Some(Flow::Continue),
         SEM_MOV_RR => {
             let source = reg_value(registers, masks, values, 1)?;
-            set_reg_value(registers, masks, values, 0, source)?;
+            set_reg_value_active(registers, masks, values, 0, source, active)?;
             Some(Flow::Continue)
         }
         SEM_MOV_RI => {
             let source = immediate(values, 1)?;
-            set_reg_value(registers, masks, values, 0, source)?;
+            set_reg_value_active(registers, masks, values, 0, source, active)?;
             Some(Flow::Continue)
         }
         SEM_ADD_RR => {
@@ -503,7 +536,7 @@ fn execute_semantic_inner(
                 SEM_CMPLEU_RR => left <= right,
                 _ => as_i64(left) <= as_i64(right),
             };
-            set_reg_value(registers, masks, values, 0, u64::from(result))?;
+            set_reg_value_active(registers, masks, values, 0, u64::from(result), active)?;
             Some(Flow::Continue)
         }
         SEM_SELECT_RRRR => {
@@ -512,10 +545,13 @@ fn execute_semantic_inner(
             let when_false = reg_value(registers, masks, values, 3)?;
             let mask = 0_u64.wrapping_sub(u64::from(condition != 0));
             let selected = (when_true & mask) | (when_false & !mask);
-            set_reg_value(registers, masks, values, 0, selected)?;
+            set_reg_value_active(registers, masks, values, 0, selected, active)?;
             Some(Flow::Continue)
         }
         SEM_LOAD8 | SEM_LOAD16 | SEM_LOAD32 | SEM_LOAD64 => {
+            if active.is_some() {
+                return None;
+            }
             let width = match decoded.semantic {
                 SEM_LOAD8 => 1,
                 SEM_LOAD16 => 2,
@@ -524,10 +560,13 @@ fn execute_semantic_inner(
             };
             let address = reg_value(registers, masks, values, 1)?;
             let loaded = load_memory_with_key(memory, address, width, memory_key)?;
-            set_reg_value(registers, masks, values, 0, loaded)?;
+            set_reg_value_active(registers, masks, values, 0, loaded, active)?;
             Some(Flow::Continue)
         }
         SEM_STORE8 | SEM_STORE16 | SEM_STORE32 | SEM_STORE64 => {
+            if active.is_some() {
+                return None;
+            }
             let width = match decoded.semantic {
                 SEM_STORE8 => 1,
                 SEM_STORE16 => 2,
@@ -548,13 +587,19 @@ fn execute_semantic_inner(
             let condition = reg_value(registers, masks, values, 0)?;
             let true_target = immediate(values, 1)?;
             let false_target = immediate(values, 2)?;
-            let target = if condition != 0 {
-                true_target
-            } else {
-                false_target
-            };
             let mix = reg_value(registers, masks, values, 3)?;
-            Some(Flow::Jump(target.wrapping_add(mix).wrapping_sub(mix)))
+            let true_target = true_target.wrapping_add(mix).wrapping_sub(mix);
+            let false_target = false_target.wrapping_add(mix).wrapping_sub(mix);
+            if active.is_some() {
+                Some(Flow::Branch {
+                    condition,
+                    when_true: true_target,
+                    when_false: false_target,
+                })
+            } else {
+                let mask = 0_u64.wrapping_sub(u64::from(condition != 0));
+                Some(Flow::Jump((true_target & mask) | (false_target & !mask)))
+            }
         }
         SEM_RET => {
             let value = reg_value(registers, masks, values, 0)?;
@@ -612,6 +657,20 @@ fn read_manifest_u32_at(payload: &[u8], key: u64, start: usize, big_endian: bool
 pub fn execute(input: VmInput<'_>, entry_index: usize, args: [u64; 6]) -> Run {
     let tables = Tables::derive(input.seed).decode_tables();
     execute_with_tables(input, entry_index, args, &tables)
+}
+
+/// Executes a protected function with a data-independent instruction stream,
+/// deriving the decode tables from the plan seed.
+#[inline]
+#[must_use]
+pub fn execute_oblivious(
+    input: VmInput<'_>,
+    entry_index: usize,
+    args: [u64; 6],
+    passes: usize,
+) -> Run {
+    let tables = Tables::derive(input.seed).decode_tables();
+    execute_oblivious_with_tables(input, entry_index, args, &tables, passes)
 }
 
 /// Executes a protected function using a precomputed decode table.
@@ -773,6 +832,7 @@ pub fn execute_with_tables(
                 Some(&masks),
                 &mut memory,
                 Some(memory_key),
+                None,
             ) else {
                 return halt(Status::BadPayload, steps);
             };
@@ -786,6 +846,15 @@ pub fn execute_with_tables(
                     state = target;
                     continue 'dispatch;
                 }
+                Flow::Branch {
+                    condition,
+                    when_true,
+                    when_false,
+                } => {
+                    let mask = 0_u64.wrapping_sub(u64::from(condition != 0));
+                    state = (when_true & mask) | (when_false & !mask);
+                    continue 'dispatch;
+                }
                 Flow::Return(value) => {
                     return Run {
                         value,
@@ -797,6 +866,327 @@ pub fn execute_with_tables(
             }
         }
     }
+}
+
+/// Dispatches to normal or oblivious execution using build-time constants.
+#[inline]
+#[must_use]
+pub fn execute_entry(
+    input: VmInput<'_>,
+    entry_index: usize,
+    args: [u64; 6],
+    tables: &DecodeTables,
+    constant_time: bool,
+    passes: usize,
+) -> Run {
+    if constant_time {
+        execute_oblivious_with_tables(input, entry_index, args, tables, passes)
+    } else {
+        execute_with_tables(input, entry_index, args, tables)
+    }
+}
+
+/// Default fixed pass budget for oblivious execution.
+pub const DEFAULT_OBLIVIOUS_PASSES: usize = 256;
+
+/// Executes a protected function with a data-independent instruction stream.
+///
+/// Every manifest block is decoded and executed on every pass. A frontier mask
+/// carries the active path, and all register writes are predicated with a
+/// bitwise select. The pass count is fixed by the caller, so branch and loop
+/// decisions do not change the executed instruction count or memory addresses.
+#[inline]
+#[allow(
+    clippy::too_many_lines,
+    reason = "oblivious runner keeps one linear frontier transaction"
+)]
+#[must_use]
+pub fn execute_oblivious_with_tables(
+    input: VmInput<'_>,
+    entry_index: usize,
+    args: [u64; 6],
+    tables: &DecodeTables,
+    passes: usize,
+) -> Run {
+    let mut steps = 0_u64;
+    let mut fuel = input.fuel;
+    let actual_hash = payload_hash(input.seed, input.payload);
+    let key = effective_key(input.base_a, input.base_b, actual_hash, input.expected_hash);
+    let Some(entry) = input.entry_states.get(entry_index) else {
+        return halt(Status::BadPayload, steps);
+    };
+    let [entry_a, entry_b] = *entry;
+    let entry_state = entry_a ^ entry_b;
+    let fill_key = key ^ 0x9e37_79b9_7f4a_7c15;
+    let masks: [u64; VM_REGISTERS] = core::array::from_fn(|index| {
+        fill_key
+            .rotate_left(u32::try_from(index.wrapping_mul(7) & 63).unwrap_or(0))
+            .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+            .rotate_left(u32::try_from(index & 63).unwrap_or(0))
+    });
+    let mut registers: [u64; VM_REGISTERS] = core::array::from_fn(|index| {
+        fill_key.rotate_left(u32::try_from(index & 63).unwrap_or(0))
+            ^ masks.get(index).copied().unwrap_or(0)
+    });
+    let memory_key = key.rotate_left(23) ^ 0xa5a5_5a5a_9696_6969;
+    let [
+        argument0,
+        argument1,
+        argument2,
+        argument3,
+        argument4,
+        argument5,
+    ] = args;
+    let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_RDI, argument0);
+    let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_RSI, argument1);
+    let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_RDX, argument2);
+    let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_RCX, argument3);
+    let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_R8, argument4);
+    let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_R9, argument5);
+    let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_RSP, VM_STACK_TOP);
+    let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_RAX, 0);
+    let fill_byte = u8::try_from(fill_key & 0xff).unwrap_or(0);
+    let mut memory: [u8; VM_MEMORY_SIZE] = core::array::from_fn(|index| {
+        (u8::try_from(index & 0xff).unwrap_or(0) ^ fill_byte) ^ memory_mask(memory_key, index)
+    });
+
+    let Some(count_value) = read_manifest_u64_at(input.payload, key, 0, tables.manifest_big_endian)
+    else {
+        return halt(Status::BadPayload, steps);
+    };
+    let Ok(count) = usize::try_from(count_value) else {
+        return halt(Status::BadPayload, steps);
+    };
+    if count == 0 || count > MAX_PAYLOAD_BLOCKS {
+        return halt(Status::BadPayload, steps);
+    }
+    let Some(manifest_len) = manifest_size(count) else {
+        return halt(Status::BadPayload, steps);
+    };
+    if manifest_len > input.payload.len() {
+        return halt(Status::BadPayload, steps);
+    }
+    let scan_cost = u64::try_from(count).unwrap_or(u64::MAX);
+    if fuel < scan_cost {
+        return halt(Status::FuelExhausted, steps);
+    }
+    fuel = fuel.saturating_sub(scan_cost);
+    steps = steps.saturating_add(scan_cost);
+
+    let mut tags = [0_u64; MAX_PAYLOAD_BLOCKS];
+    let mut offsets = [0_usize; MAX_PAYLOAD_BLOCKS];
+    let mut lengths = [0_usize; MAX_PAYLOAD_BLOCKS];
+    let mut index = 0_usize;
+    while index < count {
+        let Some(entry_relative) = index.checked_mul(MANIFEST_ENTRY_BYTES) else {
+            return halt(Status::BadPayload, steps);
+        };
+        let Some(entry_start) = MANIFEST_COUNT_BYTES.checked_add(entry_relative) else {
+            return halt(Status::BadPayload, steps);
+        };
+        let Some(offset_start) = entry_start.checked_add(8) else {
+            return halt(Status::BadPayload, steps);
+        };
+        let Some(length_start) = offset_start.checked_add(4) else {
+            return halt(Status::BadPayload, steps);
+        };
+        let Some(tag) =
+            read_manifest_u64_at(input.payload, key, entry_start, tables.manifest_big_endian)
+        else {
+            return halt(Status::BadPayload, steps);
+        };
+        let Some(offset) =
+            read_manifest_u32_at(input.payload, key, offset_start, tables.manifest_big_endian)
+        else {
+            return halt(Status::BadPayload, steps);
+        };
+        let Some(length) =
+            read_manifest_u32_at(input.payload, key, length_start, tables.manifest_big_endian)
+        else {
+            return halt(Status::BadPayload, steps);
+        };
+        let Ok(offset) = usize::try_from(offset) else {
+            return halt(Status::BadPayload, steps);
+        };
+        let Ok(length) = usize::try_from(length) else {
+            return halt(Status::BadPayload, steps);
+        };
+        if offset < manifest_len || length == 0 {
+            return halt(Status::BadPayload, steps);
+        }
+        let Some(end) = offset.checked_add(length) else {
+            return halt(Status::BadPayload, steps);
+        };
+        if end > input.payload.len() {
+            return halt(Status::BadPayload, steps);
+        }
+        if let Some(slot) = tags.get_mut(index) {
+            *slot = tag;
+        }
+        if let Some(slot) = offsets.get_mut(index) {
+            *slot = offset;
+        }
+        if let Some(slot) = lengths.get_mut(index) {
+            *slot = length;
+        }
+        index = index.saturating_add(1);
+    }
+
+    let mut entry_block = None;
+    let mut scan = 0_usize;
+    while scan < count {
+        if tags.get(scan).copied() == Some(entry_state) {
+            entry_block = Some(scan);
+        }
+        scan = scan.saturating_add(1);
+    }
+    let Some(entry_block) = entry_block else {
+        return halt(Status::BadPayload, steps);
+    };
+    let mut current = [0_u64; MAX_PAYLOAD_BLOCKS];
+    if let Some(slot) = current.get_mut(entry_block) {
+        *slot = u64::MAX;
+    }
+    let mut result = 0_u64;
+    let mut returned = 0_u64;
+    let mut trapped = 0_u64;
+    let mut pass = 0_usize;
+    while pass < passes {
+        let mut next = [0_u64; MAX_PAYLOAD_BLOCKS];
+        let mut block_index = 0_usize;
+        while block_index < count {
+            let apply = current.get(block_index).copied().unwrap_or(0);
+            let Some(tag) = tags.get(block_index).copied() else {
+                return halt(Status::BadPayload, steps);
+            };
+            let Some(offset) = offsets.get(block_index).copied() else {
+                return halt(Status::BadPayload, steps);
+            };
+            let Some(length) = lengths.get(block_index).copied() else {
+                return halt(Status::BadPayload, steps);
+            };
+            if fuel == 0 {
+                return halt(Status::FuelExhausted, steps);
+            }
+            fuel = fuel.saturating_sub(1);
+            steps = steps.saturating_add(1);
+            let Some(end) = offset.checked_add(length) else {
+                return halt(Status::BadPayload, steps);
+            };
+            let mut reader = BodyReader::new(
+                input.payload,
+                tables,
+                BodyCipher::new(key, tag, offset),
+                offset,
+                end,
+            );
+            loop {
+                if fuel == 0 {
+                    return halt(Status::FuelExhausted, steps);
+                }
+                fuel = fuel.saturating_sub(1);
+                steps = steps.saturating_add(1);
+                let Some(decoded) = reader.read_instruction() else {
+                    return halt(Status::BadPayload, steps);
+                };
+                let Some(flow) = execute_semantic_inner(
+                    &decoded,
+                    &mut registers,
+                    Some(&masks),
+                    &mut memory,
+                    Some(memory_key),
+                    Some(apply),
+                ) else {
+                    return halt(Status::BadPayload, steps);
+                };
+                match flow {
+                    Flow::Continue => {
+                        if reader.position >= reader.end {
+                            return halt(Status::BadPayload, steps);
+                        }
+                    }
+                    Flow::Jump(target) => {
+                        let Some(()) = enqueue_target(target, apply, &tags, count, &mut next)
+                        else {
+                            return halt(Status::BadPayload, steps);
+                        };
+                        break;
+                    }
+                    Flow::Branch {
+                        condition,
+                        when_true,
+                        when_false,
+                    } => {
+                        let mask = 0_u64.wrapping_sub(u64::from(condition != 0));
+                        let Some(()) =
+                            enqueue_target(when_true, apply & mask, &tags, count, &mut next)
+                        else {
+                            return halt(Status::BadPayload, steps);
+                        };
+                        let Some(()) =
+                            enqueue_target(when_false, apply & !mask, &tags, count, &mut next)
+                        else {
+                            return halt(Status::BadPayload, steps);
+                        };
+                        break;
+                    }
+                    Flow::Return(value) => {
+                        result |= apply & value;
+                        returned |= apply;
+                        break;
+                    }
+                    Flow::Trap => {
+                        trapped |= apply;
+                        break;
+                    }
+                }
+            }
+            block_index = block_index.saturating_add(1);
+        }
+        current = next;
+        pass = pass.saturating_add(1);
+    }
+
+    let mut active = 0_u64;
+    let mut position = 0_usize;
+    while position < count {
+        active |= current.get(position).copied().unwrap_or(0);
+        position = position.saturating_add(1);
+    }
+    if returned != 0 {
+        Run {
+            value: result,
+            status: Status::Returned,
+            steps,
+        }
+    } else if trapped != 0 {
+        halt(Status::Trap, steps)
+    } else if active != 0 {
+        halt(Status::LoopBound, steps)
+    } else {
+        halt(Status::BadPayload, steps)
+    }
+}
+
+fn enqueue_target(
+    target: u64,
+    mask: u64,
+    tags: &[u64; MAX_PAYLOAD_BLOCKS],
+    count: usize,
+    next: &mut [u64; MAX_PAYLOAD_BLOCKS],
+) -> Option<()> {
+    let mut index = 0_usize;
+    let mut found = None;
+    while index < count {
+        if tags.get(index).copied() == Some(target) {
+            found = Some(index);
+        }
+        index = index.saturating_add(1);
+    }
+    let index = found?;
+    let slot = next.get_mut(index)?;
+    *slot |= mask;
+    Some(())
 }
 
 #[inline]
@@ -820,7 +1210,8 @@ fn set_reg_value_raw(
 mod tests {
     use super::{
         Decoded, Flow, as_i64, as_u64, execute_semantic, load_memory, load_memory_with_key,
-        reg_value, set_reg_value, shift_amount, store_memory, store_memory_with_key,
+        reg_value, set_reg_value, set_reg_value_active, shift_amount, store_memory,
+        store_memory_with_key,
     };
     use crate::shared::format::{
         MAX_OPERANDS, REG_RAX, REG_RBX, REG_RCX, REG_RDX, REG_RSP, SEM_ADD_RI, SEM_ADD_RR,
@@ -850,6 +1241,17 @@ mod tests {
 
     fn get(registers: &[u64; VM_REGISTERS], slot: u8) -> u64 {
         registers.get(usize::from(slot)).copied().unwrap_or(0)
+    }
+
+    #[test]
+    fn active_register_writes_are_predicated() {
+        let mut regs = registers();
+        let values = [u64::from(REG_RAX), 0, 0, 0];
+        set(&mut regs, REG_RAX, 7);
+        set_reg_value_active(&mut regs, None, &values, 0, 9, Some(0)).expect("inactive");
+        assert_eq!(get(&regs, REG_RAX), 7);
+        set_reg_value_active(&mut regs, None, &values, 0, 9, Some(1)).expect("active");
+        assert_eq!(get(&regs, REG_RAX), 9);
     }
 
     #[test]
@@ -1200,6 +1602,20 @@ mod proofs {
         let values = [7_u64, 0, 0, 0];
         let _ = set_reg_value(&mut registers, Some(&masks), &values, 0, value);
         assert_eq!(reg_value(&registers, Some(&masks), &values, 0), Some(value));
+    }
+
+    #[kani::proof]
+    fn masked_memory_round_trip() {
+        let key = 0x1234_5678_9abc_def0_u64;
+        let value: u64 = kani::any();
+        let address = 8_u64;
+        let width = 8_usize;
+        let mut memory = [0_u8; 64];
+        assert!(store_memory_with_key(&mut memory, address, width, value, Some(key)).is_some());
+        assert_eq!(
+            load_memory_with_key(&memory, address, width, Some(key)),
+            Some(value)
+        );
     }
 
     #[kani::proof]

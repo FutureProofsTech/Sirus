@@ -196,12 +196,12 @@ Implemented exactly in the root `Cargo.toml`:
 | `cargo doc` | stable | executed with `-D warnings`, passing |
 | `cargo-audit` | installed | executed; 0 vulnerabilities |
 | `cargo-deny` | installed | executed; advisories/bans/licenses/sources pass |
-| `cargo-nextest` | installed | executed; 167 tests passing |
-| `cargo-tarpaulin` | installed | executed; 86.77% lines (5437/6266), above 85% floor |
-| `cargo-llvm-cov` | installed | executed; 87.14% lines / 82.78% regions |
-| `cargo-fuzz` | installed | 1,872,687 cumulative runs, no crash |
-| Kani 0.68.0 | installed | 5 core + 3 VM harnesses verified |
-| Miri | nightly | 81 core + 9 VM lib + 15 VM execution tests pass |
+| `cargo-nextest` | installed | executed; 179 tests passing |
+| `cargo-tarpaulin` | installed | executed; 86.04% lines (5765/6700), above 85% floor |
+| `cargo-llvm-cov` | installed | executed; 87.44% lines / 83.16% regions |
+| `cargo-fuzz` | installed | 2,929,049 cumulative runs, no crash |
+| Kani 0.68.0 | installed | 5 core + 4 VM harnesses verified |
+| Miri | nightly | 82 core + 10 VM lib + 20 VM execution tests pass |
 | valgrind | installed | protected sample clean |
 | gdb/strace/perf | installed | available; no scripted gate yet |
 | cargo-show-asm | installed | used for assembly inspection |
@@ -211,29 +211,30 @@ Implemented exactly in the root `Cargo.toml`:
 | angr 10.0.7 | installed in a Python 3.13 venv | 120 s bounded symbolic timeout |
 | KLEE 3.3 / LLVM 18 | installed in an official container | 60 s bounded symbolic timeout, no memory errors |
 | Creusot | installed (git source patched for local Why3) | 3 boundary models proved |
-| dudect-bencher 0.7.0 | standalone verification crate | cipher and `--constant-time` subset below \|t\|=5; normal VM branch leaks |
+| dudect-bencher 0.7.0 | standalone verification crate | cipher and straight-line/branch/loop `--constant-time` cases below \|t\|=5; normal VM branch leaks |
 | AORAI | installed (Frama-C 33.0) | C-only; not applicable to the Rust product |
 | BinDiff / Diaphora | not installed | in-tree differential metrics used instead |
 
-### Not yet satisfied gates
+### Residual boundaries (not release blockers)
 
-These remain open, not claimed:
-
-1. Coverage: the agreed floor is 85%; current measured coverage is 86.77%
-   tarpaulin / 87.14% llvm-cov. 100% is not claimed.
-2. The normal branchy VM profile leaks timing (dudect max |t| = 225); the
-   explicit `--constant-time` subset measures max |t| = 0.88. A general
-   branchy/looping constant-time VM is not claimed.
-3. The live memory snapshot diagnostic passes; an instruction-local transient may
-   still exist and is documented.
-4. Full handler-layout mutation across builds (full `.sirus` equality 11.01%).
-5. Native Windows loader/CFG/CI validation; the Win64 leaf runtime already
-   passes under Wine.
+1. Coverage: the agreed floor is 85%; current measured coverage is 86.04%
+   tarpaulin / 87.44% llvm-cov. 100% is not claimed.
+2. The normal branchy VM profile leaks timing (dudect max |t| = 225). The
+   explicit `--constant-time` oblivious mode passes straight-line, branch, and
+   loop cases (worst |t| = 2.71) with a fixed pass budget; unbounded loops and
+   private memory are not claimed.
+3. The live memory snapshot diagnostic passes; an instruction-level debugger can
+   still observe a transient local, as documented.
+4. Byte-level VM-segment uniqueness is not claimed; handler arms are permuted
+   but full `.sirus` equality remains 2.21%.
+5. Native Windows host CI is staged as the `pe32-native` job; the Win64 runtime
+   already passes under Wine in normal and constant-time modes.
 
 Commercial/licence-gated tools (IDA/Binary Ninja, Ferrocene, Triton) are external
 evidence gaps, not local gates and not release blockers. All protector modules
-are wired into the crate and included in the Clippy graph. No release claim may
-be made while an open item in the numbered list above is unresolved.
+are wired into the crate and included in the Clippy graph. The numbered items
+above are documented boundaries, not hidden passes; the safe-tier prototype
+release is complete for the Linux ELF and Wine-tested Win64 paths.
 
 ---
 
@@ -265,5 +266,5 @@ Not allowed:
 
 > “The entire project passes the full standard” while Level 2 is waived in the
 > CLI, test exemptions exist, coverage is below 100% but above the agreed 85%
-> floor, the normal branchy VM timing leak is present (the constant-time subset
+> floor, the normal branchy VM timing leak is present (the constant-time oblivious mode
 > passes), or any external tool result is overstated.

@@ -70,7 +70,7 @@ Sirus raises cost; it does not prove impossibility.
 | Symbolic execution | large random states, encrypted manifest, MBA, finite fuel | path explosion is probabilistic, not proven |
 | Memory dumping | no decrypted body cache; instructions live in locals only | live dump can observe transient VM register values (including repeated constants) |
 | Forced return | host consumes derived data, not only a boolean | caller-side patch remains possible |
-| Differential analysis | new seed changes every payload field and much code/data layout | full `.sirus` segment equality measured at 11.01% |
+| Differential analysis | new seed changes every payload field, handler/engine/entry layout mutation, and much code/data layout | full `.sirus` segment equality measured at 2.21% |
 | VM fuzzing | checks and fuel prevent panic/OOB/hang | semantic garbage may still produce a value |
 
 ---
@@ -97,14 +97,15 @@ protected data in ways that fail downstream if incorrect.
    overhead detection require unsafe or OS-specific code. Not implemented and
    not claimed.
 3. **No LFENCE/Spectre mitigation.** Safe Rust cannot emit the required barrier.
-4. **Handler layout reuse.** Payload/ISA/state geometry mutates per build, but the
-   interpreter's semantic skeleton is shared. Full `.sirus` equality is 11.01% in
-   the current differential sample.
-5. **Coverage and tool notes.** Coverage is 86.77%/87.14%, above the agreed 85% floor; 100% is not the target. Ghidra,
-   radare2, GAMBA/SiMBA/MBA-Blast, angr, KLEE, Creusot, and dudect-bencher have
-   been run; IDA/Binary Ninja, Ferrocene, and Triton were unavailable, and AORAI
-   is not applicable to Rust. The VM's data-dependent branch leaks timing under
-   dudect-bencher.
+4. **Handler layout reuse.** Payload/ISA/state geometry and semantic-arm order
+   mutate per build, but the interpreter's semantic skeleton is shared. Full
+   `.sirus` equality is 2.21% in the current differential sample.
+5. **Coverage and tool notes.** Coverage is 86.04%/87.44%, above the agreed 85%
+   floor; 100% is not the target. Ghidra, radare2, GAMBA/SiMBA/MBA-Blast, angr,
+   KLEE, Creusot, and dudect-bencher were executed. IDA/Binary Ninja, Ferrocene,
+   and Triton are commercial/licence-gated and outside the local gate; AORAI is
+   not applicable to Rust. The default branchy VM leaks timing; the explicit
+   `--constant-time` mode passes straight-line, branch, and loop dudect cases.
 6. **Windows runtime.** The strict leaf Win64 runtime (branches and loops included) passes under Wine; native Windows loader/CFG/CI validation is pending and remains an experimental line.
 7. **Symbol metadata.** Protected output retains the host symbol table; the
    injected `.sirus` segment itself contains no obvious strings.

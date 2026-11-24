@@ -14,7 +14,7 @@
 
 use sirus_core::lifter::lift_function;
 use sirus_core::program::{CompileOptions, CompiledProgram, compile};
-use sirus_vm::engine::{Status, VmInput, execute};
+use sirus_vm::engine::{Run, Status, VmInput, execute, execute_entry, execute_oblivious};
 
 const fn options() -> CompileOptions {
     let mut options = CompileOptions::new();
@@ -48,6 +48,23 @@ fn run(program: &CompiledProgram, args: [u64; 6]) -> (u64, Status) {
         args,
     );
     (result.value, result.status)
+}
+
+fn run_oblivious(program: &CompiledProgram, args: [u64; 6], passes: usize) -> Run {
+    execute_oblivious(
+        VmInput::new(
+            program.payload(),
+            program.seed(),
+            program.expected_hash(),
+            program.base_a(),
+            program.base_b(),
+            program.entry_states(),
+            program.fuel(),
+        ),
+        0,
+        args,
+        passes,
+    )
 }
 
 #[test]
@@ -102,6 +119,123 @@ fn executes_decoys_inserted_after_unconditional_jump() {
     let (value, status) = run(&program, [11, 31, 0, 0, 0, 0]);
     assert_eq!(status, Status::Returned);
     assert_eq!(value, 42);
+}
+
+#[test]
+fn executes_branchy_oblivious_with_fixed_steps() {
+    let code = [
+        0x48, 0x39, 0xf7, 0x76, 0x07, 0x48, 0x89, 0xf8, 0x48, 0x01, 0xf0, 0xc3, 0x48, 0x89, 0xf8,
+        0x48, 0x29, 0xf0, 0xc3,
+    ];
+    let mut options = options();
+    options.constant_time = true;
+    options.mba_depth = 0;
+    options.mba_budget = 0;
+    let program = compile_code(&code, 0x66, options);
+    let passes = usize::from(program.constant_time_passes());
+    let left = run_oblivious(&program, [9, 4, 0, 0, 0, 0], passes);
+    let right = run_oblivious(&program, [4, 9, 0, 0, 0, 0], passes);
+    assert_eq!(left.status, Status::Returned);
+    assert_eq!(right.status, Status::Returned);
+    assert_eq!(left.value, 13);
+    assert_eq!(right.value, u64::MAX - 4);
+    assert_eq!(left.steps, right.steps);
+    assert_eq!(run(&program, [9, 4, 0, 0, 0, 0]), (13, Status::Returned));
+}
+
+#[test]
+fn executes_loop_oblivious_with_fixed_steps() {
+    let code = [
+        0x31, 0xc0, 0x48, 0x85, 0xf6, 0x74, 0x08, 0x48, 0x01, 0xf8, 0x48, 0xff, 0xce, 0x75, 0xf8,
+        0xc3,
+    ];
+    let mut options = options();
+    options.constant_time = true;
+    options.constant_time_passes = 32;
+    options.mba_depth = 0;
+    options.mba_budget = 0;
+    let program = compile_code(&code, 0x77, options);
+    let passes = usize::from(program.constant_time_passes());
+    let many = run_oblivious(&program, [7, 5, 0, 0, 0, 0], passes);
+    let none = run_oblivious(&program, [7, 0, 0, 0, 0, 0], passes);
+    assert_eq!(many.status, Status::Returned);
+    assert_eq!(none.status, Status::Returned);
+    assert_eq!(many.value, 35);
+    assert_eq!(none.value, 0);
+    assert_eq!(many.steps, none.steps);
+    let bound = run_oblivious(&program, [7, 500, 0, 0, 0, 0], 4);
+    assert_eq!(bound.status, Status::LoopBound);
+}
+
+#[test]
+fn oblivious_runtime_rejects_private_memory() {
+    let code = [0x48, 0x8b, 0x07, 0xc3];
+    let program = compile_code(&code, 0x88, options());
+    let result = run_oblivious(&program, [0, 0, 0, 0, 0, 0], 4);
+    assert_eq!(result.status, Status::BadPayload);
+}
+
+#[test]
+fn oblivious_entry_and_pass_errors_fail_closed() {
+    let code = [0x48, 0x89, 0xf8, 0x48, 0x01, 0xf0, 0xc3];
+    let mut options = options();
+    options.constant_time = true;
+    let program = compile_code(&code, 0x99, options);
+    let input = VmInput::new(
+        program.payload(),
+        program.seed(),
+        program.expected_hash(),
+        program.base_a(),
+        program.base_b(),
+        program.entry_states(),
+        program.fuel(),
+    );
+    let tables = sirus_vm::shared::derive::Tables::derive(program.seed()).decode_tables();
+    let wrong_entry = sirus_vm::engine::execute_oblivious_with_tables(input, 7, [0; 6], &tables, 4);
+    assert_eq!(wrong_entry.status, Status::BadPayload);
+    let zero_passes =
+        sirus_vm::engine::execute_oblivious_with_tables(input, 0, [7, 5, 0, 0, 0, 0], &tables, 0);
+    assert_eq!(zero_passes.status, Status::LoopBound);
+    let normal = execute_entry(input, 0, [7, 5, 0, 0, 0, 0], &tables, false, 4);
+    let constant = execute_entry(input, 0, [7, 5, 0, 0, 0, 0], &tables, true, 4);
+    assert_eq!(normal.status, Status::Returned);
+    assert_eq!(constant.status, Status::Returned);
+    assert_eq!(normal.value, 12);
+    assert_eq!(constant.value, 12);
+}
+
+#[test]
+fn oblivious_tampered_payload_fails_closed() {
+    let code = [0x48, 0x89, 0xf8, 0x48, 0x01, 0xf0, 0xc3];
+    let mut options = options();
+    options.constant_time = true;
+    let program = compile_code(&code, 0xaa, options);
+    let mut tampered = [0_u8; 2048];
+    let mut length = 0_usize;
+    for byte in program.payload() {
+        if let Some(slot) = tampered.get_mut(length) {
+            *slot = *byte;
+        }
+        length += 1;
+    }
+    if let Some(slot) = tampered.get_mut(length.saturating_sub(1)) {
+        *slot ^= 0x5a;
+    }
+    let result = execute_oblivious(
+        VmInput::new(
+            tampered.get(..length).unwrap_or(&[]),
+            program.seed(),
+            program.expected_hash(),
+            program.base_a(),
+            program.base_b(),
+            program.entry_states(),
+            program.fuel(),
+        ),
+        0,
+        [7, 5, 0, 0, 0, 0],
+        4,
+    );
+    assert_eq!(result.status, Status::BadPayload);
 }
 
 #[test]

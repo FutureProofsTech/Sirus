@@ -129,6 +129,190 @@ fn read_u64(bytes: &[u8], offset: usize) -> u64 {
         .map_or(0, u64::from_le_bytes)
 }
 
+fn layout_preamble(seed: &Seed, domain: u64, prefix: &str, condition: &str) -> String {
+    let material = junk(seed, domain, 8);
+    let mut state =
+        u64::from_le_bytes(<[u8; 8]>::try_from(material.as_slice()).unwrap_or([0_u8; 8]));
+    let count = 1_usize.saturating_add(usize::try_from(state & 7).unwrap_or(0));
+    let mut text = String::new();
+    let mut index = 0_usize;
+    while index < count {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        let first = state;
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        let second = state;
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        let third = state;
+        let rotate = u32::try_from(second & 63).unwrap_or(0);
+        let block = format!(
+            "    let mut {prefix}{index}: u64 = 0x{first:016x};\n    if {condition} == 0x{second:016x} {{\n        {prefix}{index} = {prefix}{index}.wrapping_mul(0x{third:016x}).rotate_left({rotate});\n        core::hint::black_box({prefix}{index});\n    }}\n"
+        );
+        text.push_str(&block);
+        index = index.saturating_add(1);
+    }
+    text
+}
+
+fn mutate_engine_layout(source: &str, seed: &Seed) -> Result<String> {
+    let mut result = permute_handler_layout(source, seed)?;
+    let functions = [
+        ("pub fn execute_with_tables(", ") -> Run {", "input.fuel"),
+        (
+            "pub fn execute_oblivious_with_tables(",
+            ") -> Run {",
+            "input.fuel",
+        ),
+        (
+            "fn execute_semantic_inner(",
+            ") -> Option<Flow> {",
+            "u64::from(decoded.semantic)",
+        ),
+    ];
+    let mut index = 0_usize;
+    for (marker, signature, condition) in functions {
+        let Some(start) = result.find(marker) else {
+            return Err(ProtectError::internal("engine layout function missing"));
+        };
+        let Some(relative) = result.get(start..).and_then(|tail| tail.find(signature)) else {
+            return Err(ProtectError::internal("engine layout signature missing"));
+        };
+        let insert = start
+            .checked_add(relative)
+            .and_then(|position| position.checked_add(signature.len()))
+            .ok_or_else(|| ProtectError::internal("engine layout insertion"))?;
+        let preamble = layout_preamble(
+            seed,
+            0x6c61_796f_7574_0001_u64.saturating_add(u64::try_from(index).unwrap_or(0)),
+            &format!("_sirus_layout_{index}_"),
+            condition,
+        );
+        result.insert_str(insert, &format!("\n{preamble}"));
+        index = index.saturating_add(1);
+    }
+    Ok(result)
+}
+
+fn is_handler_arm_line(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    let indent = line.len().saturating_sub(trimmed.len());
+    indent == 8 && (trimmed.starts_with("SEM_") || trimmed.starts_with("_ =>"))
+}
+
+/// Reorders top-level semantic match arms with a per-build permutation.
+///
+/// The runtime semantics are unchanged because the patterns are disjoint
+/// constants. Moving handler bodies changes the generated code layout between
+/// builds, which is the handler-layout mutation measured by the differential
+/// gate.
+fn permute_handler_layout(source: &str, seed: &Seed) -> Result<String> {
+    let marker = "    match decoded.semantic {\n";
+    let Some(start) = source.find(marker) else {
+        return Err(ProtectError::internal("engine handler match missing"));
+    };
+    let body_start = start
+        .checked_add(marker.len())
+        .ok_or_else(|| ProtectError::internal("engine handler offset"))?;
+    let bytes = source.as_bytes();
+    let mut depth = 0_usize;
+    let mut index = body_start;
+    let mut close = None;
+    while index < bytes.len() {
+        match bytes.get(index).copied() {
+            Some(b'{') => depth = depth.saturating_add(1),
+            Some(b'}') if depth == 0 => {
+                close = Some(index);
+                break;
+            }
+            Some(b'}') => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        index = index.saturating_add(1);
+    }
+    let close = close.ok_or_else(|| ProtectError::internal("engine handler match end"))?;
+    let line_start = source
+        .get(..close)
+        .and_then(|prefix| prefix.rfind('\n'))
+        .map_or(close, |position| position.saturating_add(1));
+    let body = source
+        .get(body_start..line_start)
+        .ok_or_else(|| ProtectError::internal("engine handler body"))?;
+
+    let mut arms = Vec::new();
+    let mut current = String::new();
+    let mut started = false;
+    for line in body.split_inclusive('\n') {
+        if is_handler_arm_line(line) {
+            if started && !current.is_empty() {
+                arms.push(core::mem::take(&mut current));
+            }
+            started = true;
+        }
+        if started {
+            current.push_str(line);
+        }
+    }
+    if !current.is_empty() {
+        arms.push(current);
+    }
+    let mut wildcard = None;
+    let mut handlers = Vec::with_capacity(arms.len());
+    for arm in arms {
+        if arm.trim_start().starts_with("_ =>") {
+            wildcard = Some(arm);
+        } else {
+            handlers.push(arm);
+        }
+    }
+    let Some(wildcard) = wildcard else {
+        return Err(ProtectError::internal("engine wildcard handler missing"));
+    };
+    if handlers.len() < 2 {
+        return Err(ProtectError::internal("engine handler inventory"));
+    }
+    let material = junk(seed, 0x6861_6e64_6c65_7200, 8);
+    let mut state = u64::from_le_bytes(
+        <[u8; 8]>::try_from(material.as_slice())
+            .map_err(|_| ProtectError::internal("engine handler shuffle seed"))?,
+    );
+    let mut position = handlers.len().saturating_sub(1);
+    while position > 0 {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        let modulo = u64::try_from(position.saturating_add(1))
+            .map_err(|_| ProtectError::internal("engine handler shuffle width"))?;
+        let swap = usize::try_from(state % modulo)
+            .map_err(|_| ProtectError::internal("engine handler shuffle index"))?;
+        handlers.swap(position, swap);
+        position = position.saturating_sub(1);
+    }
+
+    let mut replacement = String::from("\n");
+    for arm in &handlers {
+        replacement.push_str(arm);
+    }
+    replacement.push_str(&wildcard);
+    let mut result = String::with_capacity(source.len());
+    result.push_str(
+        source
+            .get(..body_start)
+            .ok_or_else(|| ProtectError::internal("engine handler prefix"))?,
+    );
+    result.push_str(&replacement);
+    result.push_str(
+        source
+            .get(line_start..)
+            .ok_or_else(|| ProtectError::internal("engine handler suffix"))?,
+    );
+    Ok(result)
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "source generator is one linear code-emission transaction"
@@ -166,7 +350,8 @@ fn generate_source(program: &CompiledProgram, id: &str, vm_base: u64) -> Result<
     emit!(source, "pub mod cipher {{\n{CIPHER_SOURCE}\n}}\n");
     emit!(source, "}}\n\n");
     append_padding_module(&mut source, id, program.seed())?;
-    emit!(source, "mod engine {{\n{ENGINE_SOURCE}\n}}\n\n");
+    let engine_source = mutate_engine_layout(ENGINE_SOURCE, program.seed())?;
+    emit!(source, "mod engine {{\n{engine_source}\n}}\n\n");
 
     append_u8_array(&mut source, &payload_name, program.payload())?;
     append_u8_array(&mut source, &seed_name, program.seed())?;
@@ -190,6 +375,13 @@ fn generate_source(program: &CompiledProgram, id: &str, vm_base: u64) -> Result<
         program.base_b(),
         program.fuel()
     );
+    emit!(
+        source,
+        "const SIRUS_CONSTANT_TIME_{id}: bool = {};\n\
+         const SIRUS_OBLIVIOUS_PASSES_{id}: usize = {};\n\n",
+        program.constant_time(),
+        program.constant_time_passes()
+    );
 
     emit!(
         source,
@@ -203,17 +395,24 @@ fn generate_source(program: &CompiledProgram, id: &str, vm_base: u64) -> Result<
     for (index, _) in program.entry_states().iter().enumerate() {
         let entry_name = format!("sirus_entry_{id}_{index}");
         let keep_name = format!("sirus_keep_{id}_{index}");
+        let entry_layout = layout_preamble(
+            program.seed(),
+            0x656e_7472_7970_0001_u64.saturating_add(u64::try_from(index).unwrap_or(0)),
+            &format!("_sirus_entry_layout_{index}_"),
+            "a0",
+        );
         emit!(
             source,
             "#[inline(never)]\n\
              pub extern \"C\" fn {entry_name}(a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> u64 {{\n\
+             {entry_layout}\
              \x20   let Some(tables) = shared::derive::DecodeTables::from_encrypted(\n\
              \x20       &{table_name},\n\
              \x20       {table_key_name},\n\
              \x20   ) else {{\n\
              \x20       return 0;\n\
              \x20   }};\n\
-             \x20   engine::execute_with_tables(\n\
+             \x20   engine::execute_entry(\n\
              \x20       engine::VmInput::new(\n\
              \x20           &{payload_name},\n\
              \x20           &{seed_name},\n\
@@ -226,6 +425,8 @@ fn generate_source(program: &CompiledProgram, id: &str, vm_base: u64) -> Result<
              \x20       {index},\n\
              \x20       sirus_args(a0, a1, a2, a3, a4, a5),\n\
              \x20       &tables,\n\
+             \x20       SIRUS_CONSTANT_TIME_{id},\n\
+             \x20       SIRUS_OBLIVIOUS_PASSES_{id},\n\
              \x20   )\n\
              \x20   .value\n\
              }}\n\n\
@@ -826,8 +1027,8 @@ pub fn ensure_readable(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_readable, read_le_u16, read_le_u32, source_for_audit, validate_blob,
-        validate_relocation_ranges,
+        ENGINE_SOURCE, ensure_readable, permute_handler_layout, read_le_u16, read_le_u32,
+        source_for_audit, validate_blob, validate_relocation_ranges,
     };
     use sirus_core::lifter::lift_function;
     use sirus_core::program::{CompileOptions, CompiledProgram, compile};
@@ -851,6 +1052,86 @@ mod tests {
         assert!(first.contains("SIRUS_DECODE_TABLE_"));
         assert!(first.contains("DecodeTables::from_encrypted"));
         assert!(first.contains("execute_with_tables"));
+    }
+
+    #[test]
+    fn constant_time_source_uses_oblivious_entry() {
+        let code = [
+            0x48, 0x39, 0xf7, 0x76, 0x07, 0x48, 0x89, 0xf8, 0x48, 0x01, 0xf0, 0xc3, 0x48, 0x89,
+            0xf8, 0x48, 0x29, 0xf0, 0xc3,
+        ];
+        let function = lift_function(&code, 0x1000).expect("lift");
+        let mut options = CompileOptions::new();
+        options.constant_time = true;
+        options.constant_time_passes = 64;
+        let program = compile(&[function], [0x56_u8; 32], options).expect("compile");
+        let source = source_for_audit(&program, 0x10_000).expect("source");
+        assert!(source.contains("SIRUS_CONSTANT_TIME_"));
+        assert!(source.contains("= true;"));
+        assert!(source.contains("SIRUS_OBLIVIOUS_PASSES_"));
+        assert!(source.contains("= 64;"));
+        assert!(source.contains("execute_entry"));
+    }
+
+    #[test]
+    fn handler_layout_permutation_is_deterministic_and_complete() {
+        let source = "    match decoded.semantic {\n        SEM_A => 1,\n        SEM_B => 2,\n        SEM_C => 3,\n        _ => 0,\n    }\n";
+        let seed = [0x31_u8; 32];
+        let first = permute_handler_layout(source, &seed).expect("first");
+        let second = permute_handler_layout(source, &seed).expect("second");
+        assert_eq!(first, second);
+        for name in ["SEM_A", "SEM_B", "SEM_C"] {
+            assert_eq!(first.matches(name).count(), 1);
+        }
+        let wildcard = first.find("_ => 0").expect("wildcard");
+        for name in ["SEM_A", "SEM_B", "SEM_C"] {
+            assert!(first.find(name).expect("arm") < wildcard);
+        }
+        assert!(first.trim_end().ends_with('}'));
+        let engine_first =
+            permute_handler_layout(ENGINE_SOURCE, &[0x31_u8; 32]).expect("engine first");
+        let engine_second =
+            permute_handler_layout(ENGINE_SOURCE, &[0x31_u8; 32]).expect("engine second");
+        assert_eq!(engine_first, engine_second);
+        let alternate =
+            permute_handler_layout(ENGINE_SOURCE, &[0x32_u8; 32]).expect("engine alternate");
+        assert_ne!(engine_first, alternate);
+    }
+
+    #[test]
+    fn handler_permutation_rejects_malformed_sources() {
+        let seed = [0x33_u8; 32];
+        assert!(permute_handler_layout("no match here", &seed).is_err());
+        let no_wildcard =
+            "    match decoded.semantic {\n        SEM_A => 1,\n        SEM_B => 2,\n    }\n";
+        assert!(permute_handler_layout(no_wildcard, &seed).is_err());
+        let one_handler =
+            "    match decoded.semantic {\n        SEM_A => 1,\n        _ => 0,\n    }\n";
+        assert!(permute_handler_layout(one_handler, &seed).is_err());
+    }
+
+    #[test]
+    fn generated_layout_preambles_and_entry_dispatch_are_seeded() {
+        let function = lift_function(&[0x48, 0x89, 0xf8, 0xc3], 0x1000).expect("lift");
+        let first = compile(
+            core::slice::from_ref(&function),
+            [0x71_u8; 32],
+            CompileOptions::new(),
+        )
+        .expect("first");
+        let second = compile(
+            core::slice::from_ref(&function),
+            [0x72_u8; 32],
+            CompileOptions::new(),
+        )
+        .expect("second");
+        let source_a = source_for_audit(&first, 0x10_000).expect("source a");
+        let source_b = source_for_audit(&second, 0x10_000).expect("source b");
+        assert!(source_a.contains("_sirus_layout_0_"));
+        assert!(source_a.contains("_sirus_entry_layout_0_"));
+        assert!(source_a.contains("engine::execute_entry("));
+        assert!(source_a.contains("SIRUS_CONSTANT_TIME_"));
+        assert_ne!(source_a, source_b);
     }
 
     #[test]

@@ -270,6 +270,22 @@ including branches and loops, is verified under Wine. Native Windows loader/CFG
 validation, exception metadata, signing, imports/TLS, and Windows anti-debug are
 not yet implemented or claimed.
 
+### 11.1 Constant-time oblivious execution
+
+`--constant-time` selects a second execution path in the embedded engine. It
+parses the manifest once, then executes every manifest block on every pass. A
+frontier mask array carries the active path; register writes are selected with
+`(new & active) | (old & !active)`. A `JCC` produces both successor targets and
+enqueues each with the condition mask or its complement, so the instruction
+stream does not depend on the branch decision. Returns and traps are accumulated
+under the active mask.
+
+Programs with no cycles use their exact maximum block count as the fixed pass
+bound. Any program containing a loop uses `--constant-time-passes` (default 256);
+a frontier that does not converge returns `LoopBound`. Private `Load`/`Store` is rejected because no
+oblivious memory model is implemented. The normal profile remains branchy and is
+not constant-time.
+
 ---
 
 ## 12. Threading and reentrancy

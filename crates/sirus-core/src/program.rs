@@ -30,8 +30,10 @@ pub struct CompileOptions {
     pub mba_budget: u16,
     /// Number of opaque guard/decoy pairs per function.
     pub decoys: u8,
-    /// Reject data-dependent branches and memory accesses and disable decoys.
+    /// Use oblivious execution and reject private memory accesses.
     pub constant_time: bool,
+    /// Fixed oblivious pass budget for constant-time execution.
+    pub constant_time_passes: u16,
     /// Instruction budget for one runtime invocation.
     pub fuel: u64,
 }
@@ -46,12 +48,19 @@ impl CompileOptions {
             mba_budget: 512,
             decoys: 2,
             constant_time: false,
+            constant_time_passes: 256,
             fuel: DEFAULT_FUEL,
         }
     }
 
     const fn validate(self) -> Result<()> {
-        if self.mba_depth > 8 || self.mba_budget > 4096 || self.decoys > 8 || self.fuel == 0 {
+        if self.mba_depth > 8
+            || self.mba_budget > 4096
+            || self.decoys > 8
+            || self.constant_time_passes == 0
+            || self.constant_time_passes > 4096
+            || self.fuel == 0
+        {
             return Err(CoreError::InvalidPlan);
         }
         Ok(())
@@ -93,6 +102,8 @@ pub struct CompiledProgram {
     base_a: u64,
     base_b: u64,
     fuel: u64,
+    constant_time: bool,
+    constant_time_passes: u16,
     stats: ProgramStats,
 }
 
@@ -144,6 +155,20 @@ impl CompiledProgram {
     #[must_use]
     pub const fn fuel(&self) -> u64 {
         self.fuel
+    }
+
+    /// Returns whether the program uses oblivious constant-time execution.
+    #[inline]
+    #[must_use]
+    pub const fn constant_time(&self) -> bool {
+        self.constant_time
+    }
+
+    /// Returns the fixed oblivious pass budget.
+    #[inline]
+    #[must_use]
+    pub const fn constant_time_passes(&self) -> u16 {
+        self.constant_time_passes
     }
 
     /// Returns compilation statistics.
@@ -240,9 +265,15 @@ fn push_guarded_u32(
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "finalizer receives one validated plan component per input"
+)]
 fn finalize(
     seed: &Seed,
     fuel: u64,
+    constant_time: bool,
+    constant_time_passes: u16,
     tables: &Tables,
     bodies: &ByteBuf<MAX_PAYLOAD>,
     entries: &BoundedVec<ManifestEntry, MAX_BLOCKS>,
@@ -378,8 +409,63 @@ fn finalize(
         base_a,
         base_b,
         fuel,
+        constant_time,
+        constant_time_passes,
         stats: final_stats,
     })
+}
+
+fn visit_cycle(function: &LiftedFunction, block: u16, state: &mut [u8; MAX_BLOCKS]) -> bool {
+    let index = usize::from(block);
+    let current = state.get(index).copied().unwrap_or(2);
+    if current == 1 {
+        return true;
+    }
+    if current == 2 {
+        return false;
+    }
+    if let Some(slot) = state.get_mut(index) {
+        *slot = 1;
+    }
+    let terminator = function.blocks.get(index).map(|item| item.terminator);
+    let (first, second) = match terminator {
+        Some(Terminator::Jump { target }) => (Some(target), None),
+        Some(Terminator::Branch {
+            when_true,
+            when_false,
+            ..
+        }) => (Some(when_true), Some(when_false)),
+        _ => (None, None),
+    };
+    if let Some(target) = first {
+        if visit_cycle(function, target, state) {
+            return true;
+        }
+    }
+    if let Some(target) = second {
+        if visit_cycle(function, target, state) {
+            return true;
+        }
+    }
+    if let Some(slot) = state.get_mut(index) {
+        *slot = 2;
+    }
+    false
+}
+
+fn function_has_cycle(function: &LiftedFunction) -> bool {
+    let mut state = [0_u8; MAX_BLOCKS];
+    let mut index = 0_usize;
+    while index < function.blocks.len() {
+        let Ok(block) = u16::try_from(index) else {
+            return true;
+        };
+        if visit_cycle(function, block, &mut state) {
+            return true;
+        }
+        index = index.saturating_add(1);
+    }
+    false
 }
 
 fn validate_constant_time(functions: &[LiftedFunction]) -> Result<()> {
@@ -393,9 +479,6 @@ fn validate_constant_time(functions: &[LiftedFunction]) -> Result<()> {
             let Some(block) = function.blocks.get(block_index) else {
                 return Err(CoreError::InvalidBlock { block: u16::MAX });
             };
-            if matches!(block.terminator, Terminator::Branch { .. }) {
-                return Err(CoreError::ConstantTimeUnsupported);
-            }
             let Some(ops) = function.block_ops(block) else {
                 return Err(CoreError::InvalidBlock { block: u16::MAX });
             };
@@ -446,6 +529,8 @@ pub fn compile(
     let mut states = [[0_u64; MAX_BLOCKS]; MAX_FUNCTIONS];
     let mut counts = [0_usize; MAX_FUNCTIONS];
     let mut total_original = 0_usize;
+    let mut max_function_blocks = 1_usize;
+    let mut any_loop = false;
 
     let mut function_index = 0_usize;
     while function_index < functions.len() {
@@ -463,6 +548,10 @@ pub fn compile(
             .ok_or(CoreError::ArithmeticOverflow)?;
         if total_original > MAX_BLOCKS {
             return Err(CoreError::CapacityExceeded);
+        }
+        max_function_blocks = max_function_blocks.max(block_count);
+        if function_has_cycle(function) {
+            any_loop = true;
         }
         let mut block_index = 0_usize;
         while block_index < block_count {
@@ -808,9 +897,18 @@ pub fn compile(
         body_bytes,
     };
 
+    let constant_time_passes = if options.constant_time && !any_loop {
+        u16::try_from(max_function_blocks)
+            .unwrap_or(options.constant_time_passes)
+            .max(1)
+    } else {
+        options.constant_time_passes
+    };
     finalize(
         &seed,
         options.fuel,
+        options.constant_time,
+        constant_time_passes,
         &tables,
         &bodies,
         &entries,
@@ -852,14 +950,16 @@ mod tests {
     }
 
     #[test]
-    fn constant_time_accepts_branchless_and_rejects_branch_or_memory() {
+    fn constant_time_accepts_branches_and_rejects_memory() {
         let straight = [0x48, 0x89, 0xf8, 0x48, 0x01, 0xf0, 0xc3];
         let function = lift_function(&straight, 0x1000).expect("lift straight");
         let mut options = CompileOptions::new();
         options.constant_time = true;
         options.decoys = 2;
         let program = compile(&[function], [0x33_u8; 32], options).expect("constant time");
+        assert!(program.constant_time());
         assert_eq!(program.stats().decoy_blocks, 0);
+        assert_eq!(program.constant_time_passes(), 1);
 
         let branch = [
             0x48, 0x39, 0xf7, 0x76, 0x07, 0x48, 0x89, 0xf8, 0x48, 0x01, 0xf0, 0xc3, 0x48, 0x89,
@@ -868,10 +968,9 @@ mod tests {
         let function = lift_function(&branch, 0x2000).expect("lift branch");
         let mut options = CompileOptions::new();
         options.constant_time = true;
-        assert!(matches!(
-            compile(&[function], [0x44_u8; 32], options),
-            Err(crate::error::CoreError::ConstantTimeUnsupported)
-        ));
+        let program = compile(&[function], [0x44_u8; 32], options).expect("constant branch");
+        assert_eq!(program.stats().decoy_blocks, 0);
+        assert!(program.constant_time_passes() > 1);
 
         let memory = [0x48, 0x8b, 0x07, 0xc3];
         let function = lift_function(&memory, 0x3000).expect("lift memory");
@@ -881,6 +980,28 @@ mod tests {
             compile(&[function], [0x55_u8; 32], options),
             Err(crate::error::CoreError::ConstantTimeUnsupported)
         ));
+    }
+
+    #[test]
+    fn constant_time_loop_uses_configured_pass_bound() {
+        let loop_code = [
+            0x31, 0xc0, 0x48, 0x85, 0xf6, 0x74, 0x08, 0x48, 0x01, 0xf8, 0x48, 0xff, 0xce, 0x75,
+            0xf8, 0xc3,
+        ];
+        let function = lift_function(&loop_code, 0x1000).expect("lift loop");
+        let mut options = CompileOptions::new();
+        options.constant_time = true;
+        options.constant_time_passes = 32;
+        let program = compile(&[function], [0x45_u8; 32], options).expect("constant loop");
+        assert_eq!(program.constant_time_passes(), 32);
+
+        let straight = [0x48, 0x89, 0xf8, 0xc3];
+        let function = lift_function(&straight, 0x2000).expect("lift straight");
+        let mut options = CompileOptions::new();
+        options.constant_time = true;
+        options.constant_time_passes = 32;
+        let program = compile(&[function], [0x46_u8; 32], options).expect("constant straight");
+        assert_eq!(program.constant_time_passes(), 1);
     }
 
     #[test]
@@ -900,7 +1021,20 @@ mod tests {
         let function = lift_function(&code, 0).expect("lift");
         let mut bad = CompileOptions::new();
         bad.mba_depth = 9;
-        assert!(compile(&[function], [0_u8; 32], bad).is_err());
+        assert!(compile(core::slice::from_ref(&function), [0_u8; 32], bad).is_err());
+        let mut bad_passes = CompileOptions::new();
+        bad_passes.constant_time_passes = 0;
+        assert!(compile(core::slice::from_ref(&function), [0_u8; 32], bad_passes).is_err());
+        let mut too_many_passes = CompileOptions::new();
+        too_many_passes.constant_time_passes = 4097;
+        assert!(
+            compile(
+                core::slice::from_ref(&function),
+                [0_u8; 32],
+                too_many_passes
+            )
+            .is_err()
+        );
         let empty: [crate::ir::LiftedFunction; 0] = [];
         assert!(compile(&empty, [0_u8; 32], CompileOptions::new()).is_err());
         let _ = BoundedVec::<u8, 1>::new();

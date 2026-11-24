@@ -20,8 +20,8 @@
 | M5 ELF injection and VM synthesis | complete, real PIE execution verified |
 | M6 multiple functions and data binding | complete, shared-VM e2e test |
 | M7 PE/Win64 backend | Wine-tested runtime for leaf subset with branches/loops; native Windows CI staged |
-| M8 adversarial suite | partial: in-tree, libFuzzer, Kani, Miri, differential, tamper, bypass, valgrind, Ghidra, radare2, GAMBA/SiMBA/MBA-Blast, angr, KLEE, Creusot, dudect-bencher, constant-time subset, Windows/Wine |
-| M9 production release | **not complete**: handler-layout mutation is partial (11.01% equal segment bytes); live memory state is masked at rest and the snapshot passes; the normal VM branch leaks timing but the constant-time subset passes; Windows/Wine runtime passes; coverage floor is met at 86.77%/87.14%. |
+| M8 adversarial suite | partial: in-tree, libFuzzer, Kani, Miri, differential, tamper, bypass, valgrind, Ghidra, radare2, GAMBA/SiMBA/MBA-Blast, angr, KLEE, Creusot, dudect-bencher, constant-time oblivious mode, Windows/Wine |
+| M9 production release | **not complete**: per-build handler/engine/entry layout mutation is permuted, but full VM-segment byte equality remains 2.21%; live memory is masked at rest and the snapshot passes; normal VM branches leak timing while `--constant-time` passes; Windows/Wine passes; coverage floor is met. |
 
 See `docs/TRACEABILITY.md` and `docs/VERIFICATION.md` for the exact matrix and
 measured evidence.
@@ -712,7 +712,8 @@ At VM entry:
 - Implements an integer/fixed-point Welch-style comparison without floating point in shipped code.
 - Measures VM execution across two input classes and reports drift.
 - This is a measurement tool, not a constant-time proof. Results are recorded and regressions are investigated.
-- No claim of constant-time behavior for secret-dependent branch geometry.
+- `--constant-time` claims a fixed-instruction oblivious execution mode for the
+  configured pass budget; the normal profile is not constant-time.
 
 #### J. Assembly inspection
 

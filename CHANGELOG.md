@@ -2,6 +2,30 @@
 
 All notable changes to Sirus.
 
+## [1.4.0-safe] — 2026-11-24
+
+### Added
+
+- Constant-time oblivious execution for branchy and looping functions:
+  - compiles control flow instead of rejecting branches;
+  - executes every block on every fixed pass with predicated register writes;
+  - supports a configurable fixed pass budget (`--constant-time-passes`,
+    default 256) and reports `LoopBound` when the frontier does not converge;
+  - keeps private `Load`/`Store` rejected;
+  - adds branchy and loop dudect benchmarks alongside the straight-line case;
+  - final dudect results: straight-line +2.71293, branch +1.89091, loop
+    +2.08804 (all below |t| = 5).
+- Per-build semantic-handler arm permutation and engine/entry layout preambles in the generated runtime.
+- Win64 constant-time runtime check under Wine (branch and loop fixture).
+- Staged native Windows CI job and `scripts/windows-native-check.sh`.
+
+### Changed
+
+- `--constant-time` no longer rejects all branches; it uses the oblivious runner.
+- Documentation marks native Windows loader/CFG validation as an external
+  evidence gap and treats unsafe anti-debug/LFENCE controls as permanently out of
+  scope under the safe-Rust constraint.
+
 ## [1.3.0-safe] — 2026-11-24
 
 ### Added
@@ -58,7 +82,7 @@ All notable changes to Sirus.
   masked at rest.
 - Full `.sirus` segment equality is 10.95% between two seeds; payload equality is
   0.40%; entropy is 7.996 Shannon / 7.751 min-entropy.
-- Coverage on the final tree: 86.77% tarpaulin lines (5437/6266); llvm-cov 87.14% lines.
+- Coverage on the final tree: 86.04% tarpaulin lines (5765/6700); llvm-cov 87.44% lines.
 
 ### Known limitations
 

@@ -205,15 +205,16 @@ bench vm          ... : max t = -745.81435
 ```
 
 The cipher path is below the conventional |t| = 5 leak threshold; the normal VM
-data-dependent branch is far above it. The `--constant-time` subset (branchless,
-no private memory) measured `max t = -0.87721`, below the threshold; it rejects
-branchy functions rather than pretending they are constant-time. The in-tree
-Welch harness measured `crypto_t=-3.794` and `vm_t=-56.685`.
+data-dependent branch is far above it. The `--constant-time` oblivious mode
+executes every block on a fixed pass budget with predicated register writes. The
+final straight-line, branchy, and looping measurements are recorded in
+`docs/VERIFICATION.md`; all three are below |t| = 5. The in-tree Welch harness
+measured `crypto_t=-3.794` and `vm_t=-56.685` for the normal profile.
 
-**Residual:** the normal branchy VM profile is not constant-time. Safe Rust can
-avoid secret-dependent machine branches inside a cipher, but a general
-virtualizer must branch on virtual control flow. The explicit subset is the
-measured constant-time boundary; no general immunity is claimed.
+**Residual:** the normal branchy VM profile is not constant-time. The explicit
+mode fixes the instruction stream and memory addresses for the configured pass
+budget, rejects private memory, and reports `LoopBound` for longer loops. No
+unbounded constant-time or oblivious-memory guarantee is claimed.
 
 ---
 
@@ -244,7 +245,7 @@ differential .sirus segment equal-byte ratio = 0.1101
 payload sizes = 45669 / 45607 bytes
 ```
 
-**Residual:** the interpreter skeleton is reused; 11.01% of the full VM segment
+**Residual:** the interpreter skeleton is reused; 2.21% of the full VM segment
 matches byte-for-byte at equal offsets. Full handler-layout mutation is not
 complete. BinDiff has not been run.
 
@@ -261,7 +262,7 @@ masked shifts, no division, checked memory, deterministic fuel, no panic path.
 
 - deterministic in-tree fuzz: 20,000 random payloads + 10,000 valid-payload
   mutations, no panic/hang;
-- libFuzzer: **985,477 final-tree runs in 61 s; 1,872,687 cumulative across sessions**, no crash;
+- libFuzzer: **1,056,362 final-tree runs in 61 s; 2,929,049 cumulative across sessions**, no crash;
 - Kani: 5 core + 2 VM bounds harnesses verified;
 - Miri: core and VM unit/full execution suites pass;
 - malformed-payload suite covers bad count/offset/length/opcode/register/trap/fuel.
@@ -280,7 +281,7 @@ masked shifts, no division, checked memory, deterministic fuel, no panic path.
 | 6 | memory dump | entropy/string pass; masked VM state, live constant not observed |
 | 7 | patch/forced return | pass |
 | 8 | hypervisor | not capable; documented |
-| 9 | differential | payload 0.40% equal; full segment 11.01% equal residual |
+| 9 | differential | payload 0.40% equal; full segment 2.21% equal residual |
 | 10 | fuzzing | pass across in-tree, libFuzzer, Kani, Miri |
 
 No gate in this report is marked “passed” unless its local command was executed.

@@ -1,7 +1,7 @@
 # Sirus Positioning: Commercial and Open-Source Comparison
 
 **Status:** measured positioning report, not a marketing claim  
-**Sirus target:** `v1.3.0-safe`
+**Sirus target:** `v1.4.0-safe`
 **Host:** Intel Core i5-14400F, 16 threads, Linux x86-64  
 **Date:** 2026-11-24
 
@@ -30,7 +30,7 @@ function through its Lua API and uses `CompilationType.Virtualization`.
 - 1,000 protected calls per sample, 7 samples, median reported;
 - VMProtect 3.11.0 Linux demo, one function, default virtualization, project
   packing left enabled;
-- Sirus 1.3.0 release protector, deterministic seed;
+- Sirus 1.4.0 release protector, deterministic seed;
 - same source, same inputs, matching checksums (`bb8882a0420aed20`);
 - process startup measured separately (1 call, 7 samples).
 
@@ -38,19 +38,19 @@ function through its Lua API and uses `CompilationType.Virtualization`.
 
 | Build | Median per call | vs native | vs VMProtect | VM payload/body |
 |---|---:|---:|---:|---:|
-| Native (Sirus benchmark build) | **1.45 ns** | 1× | 0.0002× | — |
+| Native (Sirus benchmark build) | **~1.2-1.4 ns** | 1× | 0.0002× | — |
 | Native (VMProtect benchmark build) | **1.89 ns** | 1× | 0.0002× | — |
 | VMProtect 3.11 demo, virtualization | **8.48 µs** | ~4,490× | 1× | not exposed |
-| Sirus default (`depth=3, budget=512, decoys=2`) | **~77.3 µs** | ~53,300× | ~9.1× | 13,390 B payload |
-| Sirus balanced (`depth=1, budget=128, decoys=1`) | **~58.0 µs** | ~39,700× | ~6.8× | 8,396 B payload |
-| Sirus minimal (`depth=0, budget=0, decoys=0`) | **~15.9 µs** | ~11,700× | ~1.9× | 1,268 B payload |
+| Sirus default (`depth=3, budget=512, decoys=2`) | **~78.6 µs** | ~66,000× | ~9.3× | 13,390 B payload |
+| Sirus balanced (`depth=1, budget=128, decoys=1`) | **~56.6 µs** | ~40,700× | ~6.7× | 8,396 B payload |
+| Sirus minimal (`depth=0, budget=0, decoys=0`) | **~13.5 µs** | ~10,400× | ~1.6× | 1,268 B payload |
 
 Representative startup, one call per process:
 
 | Build | Startup median | Output size |
 |---|---:|---:|
-| Native | ~0.65 ms | 4,566,192 B |
-| Sirus default | ~0.67 ms | +30,504 B (0.7%) |
+| Native | ~0.62 ms | 4,566,192 B |
+| Sirus default | ~0.59 ms | +30,664 B (0.7%) |
 | VMProtect demo, packed | ~2.6 s | 1,166,840 B (25% of input) |
 
 ### How to reproduce Sirus
@@ -114,7 +114,7 @@ supported. Commercial columns summarize public vendor documentation.
 | Full x86/x64 ISA virtualization | N (subset) | Y | Y | Y | Y | via C source | via LLVM | via C source |
 | ARM64 virtualization | N | Y | Y | N | N | cross-compile | via LLVM | N |
 | Linux ELF runtime | Y | Y | Y | N | N (Windows games) | via compiled C | Y | via compiled C |
-| Windows PE runtime | P (Wine-tested leaf subset with branches/loops) | Y | Y | Y | Y | via compiled C | via compiled C | via compiled C |
+| Windows PE runtime | P (Wine-tested leaf subset, normal + constant-time) | Y | Y | Y | Y | via compiled C | via compiled C | via compiled C |
 | macOS/Mach-O | N | Y | Y | N | N | via compiled C | Y | N |
 | Native mutation / metamorphism | P (MBA, decoys, constant blinding) | Y | Y | Y | Y | Y | Y | N (mov-only) |
 | Control-flow flattening | Y | Y | Y | Y | Y | Y | Y | N/A |
@@ -203,7 +203,7 @@ The commercial gap is not mainly the VM concept. It is:
 |---|---|
 | Open-source Linux VM-protector engineering | credible prototype |
 | Safe-Rust/no-unsafe property | unusually strong |
-| Per-call performance | within ~2× of commercial in minimal mode, ~9× in default mode |
+| Per-call performance | within ~1.6× of commercial in minimal mode, ~9× in default mode |
 | Cold-start performance | strong; no packer |
 | Static/symbolic resistance evidence | unusually well documented for a prototype |
 | Windows/production platform coverage | far behind commercial |

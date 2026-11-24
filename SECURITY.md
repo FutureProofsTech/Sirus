@@ -43,7 +43,8 @@ Out of scope / documented residuals:
   persistent VM state is masked at rest and the snapshot diagnostic passes;
 - absolute resistance claims beyond the tested Ghidra/radare2/GAMBA/SiMBA/angr/KLEE
   corpus and bounded timeouts;
-- constant-time VM execution (dudect measures a branch timing leak);
+- constant-time execution is provided by the explicit `--constant-time` oblivious
+  mode; the default branchy profile still has a measured timing leak;
 - Windows execution;
 - attacks requiring the ability to rewrite both payload and generated key
   shares.

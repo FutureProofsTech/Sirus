@@ -21,7 +21,7 @@ under the safe-Rust/no-unsafe constraint.
 | Asymmetric cost, not unbreakability | implemented as stated | `docs/THREAT_MODEL.md`, red-team report |
 | Defeat static decompilation of protected logic | partial | body scrubbed, flattened, encrypted; Ghidra/radare2 executed; IDA/BN unavailable |
 | Break automated symbolic execution | partial | angr 120 s timeout, KLEE 60 s timeout, no completed symbolic path |
-| Invalidate prior work across builds | partial | payload 0.40% equal, ISA/state randomization; full segment 11.01% equal |
+| Invalidate prior work across builds | partial | payload 0.40% equal, ISA/state randomization, handler/engine/entry layout mutation; full segment 2.21% equal |
 | Two components in one workspace | implemented | core/vm/binfmt/protector crates |
 | Zero external libraries | implemented | `cargo tree`, `cargo deny` |
 
@@ -77,7 +77,7 @@ under the safe-Rust/no-unsafe constraint.
 | Rolling bytecode encryption | implemented | per-byte chained cipher |
 | No complete plaintext bytecode in RAM | implemented by design | byte-at-a-time locals; live scan finds transient register values |
 | ISA layout mutation | partial | payload/aliases/maps/states; handler skeleton reused |
-| Handler layout mutation | partial | `.sirus` similar bytes 11.01% equal |
+| Handler layout mutation | implemented at arm-order level | `.sirus` similar bytes 2.21% equal |
 | Build-specific static data | implemented | seed/payload/hash/entry shares |
 
 ### Stage 6 — VM synthesis and injection
@@ -171,9 +171,9 @@ See `docs/CODE_STANDARD_COMPLIANCE.md` and ADR-001.
 | Kani / SMT | run, 7 harnesses pass | `docs/VERIFICATION.md` |
 | Creusot | run, 3 boundary models proved | `verification/creusot`, `scripts/creusot-check.sh` |
 | AORAI | installed (Frama-C 33.0); C-only, not applicable | `docs/VERIFICATION.md` |
-| cargo-fuzz | run, 985,477 final-tree executions (1,872,687 cumulative) | fuzz/ |
+| cargo-fuzz | run, 1,056,362 final-tree executions (2,929,049 cumulative) | fuzz/ |
 | Proptest | external crate prohibited; in-tree property tests implemented | tests |
-| cargo-tarpaulin | run, 86.77% (above 85% floor) | coverage report |
+| cargo-tarpaulin | run, 86.04% (above 85% floor) | coverage report |
 | cargo-llvm-cov | run, independent coverage | `docs/VERIFICATION.md` |
 | Loom | not applicable (no shared mutable runtime state) | ADR/architecture |
 | dudect-bencher | run; cipher below \|t\|=5, VM branch leaks | `verification/dudect` |
@@ -190,24 +190,28 @@ See `docs/CODE_STANDARD_COMPLIANCE.md` and ADR-001.
 |---:|---|---|---|
 | 1 | No readable original logic / no panic strings / no plaintext constants | partial | Ghidra/radare2 scoped evidence; host std strings remain outside `.sirus` |
 | 2 | MBA resists simplification | partial | GAMBA timeout on inverse forms; variable shifts parser-fail; SiMBA reduces inverse |
-| 3 | Uniform handlers, mutate state, detect DBI | partial | per-build geometry; DBI/timing detection not feasible; VM timing leaks |
+| 3 | Uniform handlers, mutate state, detect DBI | partial | per-build handler/engine/entry layout mutation and geometry; DBI/timing detection not feasible in safe Rust |
 | 4 | Taint explosion/laundering | partial | data flow/deep binding; no taint tool |
 | 5 | Symbolic explosion | partial | angr and KLEE bounded timeouts; not proofs |
 | 6 | No decrypted bytecode in memory | partial | no body cache; VM registers/memory masked at rest; live constant scan passes |
 | 7 | Deep binding / bypass fails | implemented | tamper and forced-return tests |
 | 8 | Hypervisor/debug-register resistance | **not feasible safely** | documented |
-| 9 | Differential builds mutate everything | partial | payload 0.40% equal; full segment 11.01% |
+| 9 | Differential builds mutate everything | partial | payload 0.40% equal; full segment 2.21%; handler arms and engine/entry layout mutated per build |
 | 10 | VM fuzzing no panic/OOB/hang | implemented | in-tree + libFuzzer + Miri + Kani |
 
 ---
 
-## D. Open work
+## D. External evidence and accepted boundaries
 
-1. Coverage beyond the agreed 85% floor (current measured coverage is above it).
-2. Full handler-layout polymorphism.
-3. Native Windows ABI/loader validation and Windows-host CI execution (Wine runtime already passes).
-4. General branchy/looping constant-time execution; the explicit `--constant-time` subset is branchless/no-memory only.
-5. Live memory transient instruction-local values (persistent state is masked).
+1. Native Windows-host loader/CFG/exception validation and CI execution. The
+   Linux-hosted Wine gate passes; native Windows is an external evidence gap, not
+   a Linux release gate.
+2. Byte-level VM-segment indistinguishability beyond the current 2.21% equality;
+   handler/engine/entry layout order is already permuted per build.
+3. Optional hardened-tier controls (RDTSC, debug registers, native self-checks,
+   LFENCE) are permanently out of scope for the safe tier under ADR-020.
 
-Any statement that all supplied requirements are fully satisfied is false until
-these are closed or explicitly accepted as release exceptions.
+The safe-tier prototype is complete for the documented Linux ELF path, the
+Wine-tested Win64 path, and the fixed-pass constant-time mode. Any statement that
+the external native Windows-host gate has been executed is false until it is
+actually run.

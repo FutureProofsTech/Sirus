@@ -92,14 +92,14 @@ of these controls.
   `scripts/windows-wine-check.sh`.
 - Native Windows loader validation, CFG/guard-table integration, exception
   metadata, signing, imports/TLS, and Windows anti-debug remain out of scope.
-- Native Windows CI is staged in `.github/workflows/windows-wine.yml`; it has not
-  been executed on a Windows host.
+- Native Windows CI is staged as the `pe32-native` job and
+  `scripts/windows-native-check.sh`; it has not been executed on a Windows host.
 
 ---
 
 ## 5. Security residuals
 
-- Full `.sirus` segment differential equality is 11.01% between two seeds; handler
+- Full `.sirus` segment differential equality is 2.21% between two seeds; handler
   code skeleton is reused. Payload equality is 0.38%.
 - The linear MBA forms are reduced by GAMBA/SiMBA. On the non-linear
   modular-inverse corpus, GAMBA times out at 20 s and the variable-shift form
@@ -107,16 +107,17 @@ of these controls.
   asymmetry, not a proof of MBA irreducibility.
 - The body stream is a keyed ARX obfuscation stream, not a cryptographic cipher.
   SipHash-2-4 remains the manifest/integrity/key primitive.
-- `--constant-time` provides a constant-time **subset**: it rejects
-  data-dependent branches and memory accesses, disables decoys, and measures
-  below the dudect threshold on a branchless victim. The normal profile remains
-  data-dependent and leaks timing. A complete branchy/looping constant-time VM
-  requires executing both sides of every branch and an oblivious memory model;
-  it is not claimed.
-- Per-call overhead is about 77 us for the default profile, 58 us for the balanced
-  profile, and 16 us for the minimal profile on the benchmark host. The same
-  function under VMProtect 3.11 demo virtualization is about 8.5 us. Sirus has
-  much lower startup cost because it does not pack the host image.
+- `--constant-time` provides oblivious branch/loop execution with a fixed pass
+  budget (`--constant-time-passes`, default 256). Every block is executed on
+  every pass, the active frontier is carried in masks, and register writes are
+  predicated. Branches and loops converge within the configured bound; longer
+  loops return `LoopBound`. Private `Load`/`Store` is rejected because an
+  oblivious memory model is not implemented. The normal branchy profile remains
+  data-dependent and leaks timing.
+- Per-call overhead is about 78.6 us for the default profile, 56.6 us for the
+  balanced profile, and 13.5 us for the minimal profile on the benchmark host.
+  The same function under VMProtect 3.11 demo virtualization is about 8.5 us.
+  Sirus has much lower startup cost because it does not pack the host image.
 - No whole decrypted bytecode is cached, and the static injected segment has no
   obvious strings.
 - Virtual registers and private stack bytes are XOR-masked at rest with
@@ -137,18 +138,19 @@ of these controls.
 ## 6. Verification gaps
 
 - The agreed prototype floor is 85% line coverage. The current measured coverage
-  is 86.77% tarpaulin / 87.14% llvm-cov and the proof script enforces the 85%
+  is 86.04% tarpaulin / 87.44% llvm-cov and the proof script enforces the 85%
   regression floor. 100% is not claimed.
 - Kani proofs cover bounded primitives and memory bounds; the full decoder is too
   large for CBMC and is covered by tests/fuzzing instead.
-- Miri covers core units plus 9 VM library and 15 VM execution tests; it is very slow.
+- Miri covers core units plus 10 VM library and 20 VM execution tests; it is very slow.
 - Ghidra/radare2, GAMBA/SiMBA/MBA-Blast, angr, KLEE, Creusot, and dudect-bencher
   were executed locally; results are in `docs/VERIFICATION.md`.
 - IDA/Binary Ninja, Ferrocene, and Triton are commercial/licence/auth-gated and
   are outside the local release gate. AORAI is a C-only Frama-C plugin and is not
   applicable to the Rust product.
-- The official dudect-bencher run is complete; the normal VM branch result is a
-  measured timing leak, while the explicit `--constant-time` subset passes.
+- The official dudect-bencher run is complete; the normal VM branch is a measured
+  timing leak, while the straight-line, branchy, and looping `--constant-time`
+  cases pass the |t| = 5 threshold.
 - cargo-show-asm was installed after the main build evidence; assembly inspection
   currently uses objdump/readelf scripts.
 

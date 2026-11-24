@@ -1,4 +1,4 @@
-name: Windows-Wine
+name: Windows PE32+
 
 on:
   workflow_dispatch:
@@ -19,3 +19,23 @@ jobs:
           sudo apt-get install -y wine64 mingw-w64 lld
       - name: Build and run the Win64/Wine gate
         run: ./scripts/windows-wine-check.sh
+
+  pe32-native:
+    # Staged native Windows-host gate. This job is not claimed as executed.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-lld
+      - name: Add mingw tools to PATH
+        shell: pwsh
+        run: echo "C:\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+      - name: Build and run native Win64 gate
+        shell: bash
+        run: ./scripts/windows-native-check.sh

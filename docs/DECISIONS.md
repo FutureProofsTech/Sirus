@@ -188,7 +188,7 @@ executing both sides of every branch and a fully oblivious memory model.
 
 **Residual:** Official dudect-bencher measured the default VM branch far above the
 conventional threshold of 5 (745.81 in the initial run, 225.24 after the later
-optimizations). The explicit branchless subset measures max |t| = 0.88.
+optimizations). The explicit oblivious mode measures worst |t| = 2.71 across straight-line, branch, and loop cases.
 
 ---
 
@@ -239,21 +239,24 @@ execution and does not defeat an instruction-level tracer.
 
 ---
 
-## ADR-017 — Constant-time subset mode
+## ADR-017 — Oblivious constant-time mode
 
-**Decision:** Add `--constant-time`: reject data-dependent conditional branches
-and private memory accesses, disable decoy branches, and compile the remaining
-straight-line/unconditional-flow program. `SEM_SELECT` uses a mask-select rather
-than a conditional branch.
+**Decision:** Implement `--constant-time` as a fixed-pass oblivious runner:
+every manifest block is decoded and executed on every pass, an active-frontier
+mask carries the taken path, register writes are predicated with a bitwise
+select, and branch terminators enqueue masked successors. The pass count is a
+compile-time constant (`--constant-time-passes`, default 256); private
+`Load`/`Store` and decoys are rejected/disabled, and `SEM_SELECT` is branchless.
 
-**Reason:** A general VM that executes arbitrary loops and branches cannot be
-constant-time without executing both sides and making all memory accesses
-oblivious. A build-time subset is honest and measurable: dudect-bencher measured
-the branchless profile below the conventional |t| = 5 threshold.
+**Reason:** Branchy and looping control flow can be made data-independent by
+executing all blocks for a fixed number of passes and masking state updates.
+This supports branches and loops up to the configured frontier bound without
+claiming a general unbounded constant-time VM.
 
-**Limitation:** Branchy or memory-touching protected functions are rejected in
-this mode. The default virtualization profile remains performance-oriented and
-data-dependent.
+**Limitation:** A function that does not converge within the fixed pass budget
+returns `LoopBound`; private memory is rejected because it would require an
+oblivious memory model. The default virtualization profile remains
+performance-oriented and data-dependent.
 
 ---
 
@@ -273,3 +276,37 @@ execution gate while native Windows CI is staged.
 **Boundary:** Native Windows loader/CFG/exception validation, signing, imports/TLS,
 and Windows anti-debug are not claimed. This line does not change the primary
 Linux ELF release gate.
+
+---
+
+## ADR-019 — Per-build semantic handler arm permutation
+
+**Decision:** Reorder the top-level semantic match arms in the generated engine
+source with a seed-derived Fisher-Yates permutation, keeping the wildcard last.
+
+**Reason:** Handler layout should differ between builds in addition to the
+randomized ISA aliases, register maps, keys, and payload layout. Source-level
+arm order is a deterministic, safe transformation that changes the generated
+code arrangement without changing semantics.
+
+**Boundary:** LLVM may canonicalize switch lowering, and the VM segment still
+contains shared scaffolding and payload machinery. The differential segment
+equality is 2.21%; this is handler-layout mutation, not a claim of fully
+distinct handler implementations.
+
+---
+
+## ADR-020 — Unsafe anti-debug controls are permanently out of scope
+
+**Decision:** Do not implement RDTSC timing checks, debug-register inspection,
+native self-code checksums over mapped executable memory, or LFENCE intrinsics in
+the safe-tier runtime.
+
+**Reason:** Every listed control requires inline assembly, raw pointers, unsafe
+FFI, or OS-specific context access, which violates the project's
+`forbid(unsafe_code)` constraint. The safe-tier substitutes remain payload
+integrity, encryption, fuel bounds, and structural mutation.
+
+**Boundary:** A separate hardened tier may add these controls only with an
+explicit unsafe policy and independent audit; it must not be mixed into the
+safe-tier artifact.
