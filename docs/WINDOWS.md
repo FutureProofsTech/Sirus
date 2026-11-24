@@ -1,7 +1,7 @@
 # Windows PE32+ / Win64 Runtime
 
-**Status:** Linux-hosted Wine-tested prototype; native Windows CI is staged in
-`.github/workflows/windows-wine.yml` and has not yet been run on a Windows host.
+**Status:** Wine-tested and native Windows CI-tested prototype. Both
+`.github/workflows/windows-wine.yml` jobs have passed.
 
 ---
 
@@ -84,9 +84,9 @@ Native Windows host:
 ./scripts/windows-native-check.sh
 ```
 
-This script is staged for the Windows CI job and has not been executed here.
+This script is executed by the native Windows CI job.
 
-The GitHub workflow has two staged jobs: Ubuntu + Wine + mingw-w64, and a
+The GitHub workflow has two jobs: Ubuntu + Wine + mingw-w64, and a
 `windows-latest` native job using msys2 mingw-w64/lld and
 `scripts/windows-native-check.sh`. Neither GitHub job has been executed here;
 the local executed gate is the Wine path.

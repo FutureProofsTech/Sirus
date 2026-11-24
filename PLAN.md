@@ -19,7 +19,7 @@
 | M4 reference VM runtime | complete, Kani/Miri/fuzzed |
 | M5 ELF injection and VM synthesis | complete, real PIE execution verified |
 | M6 multiple functions and data binding | complete, shared-VM e2e test |
-| M7 PE/Win64 backend | Wine-tested runtime for leaf subset with branches/loops; native Windows CI staged |
+| M7 PE/Win64 backend | Wine-tested runtime for leaf subset with branches/loops; native Windows CI passed |
 | M8 adversarial suite | partial: in-tree, libFuzzer, Kani, Miri, differential, tamper, bypass, valgrind, Ghidra, radare2, GAMBA/SiMBA/MBA-Blast, angr, KLEE, Creusot, dudect-bencher, constant-time oblivious mode, Windows/Wine |
 | M9 production release | **not complete**: per-build handler/engine/entry layout mutation is permuted, but full VM-segment byte equality remains 2.21%; live memory is masked at rest and the snapshot passes; normal VM branches leak timing while `--constant-time` passes; Windows/Wine passes; coverage floor is met. |
 
@@ -157,7 +157,7 @@ These items are required by the source documents but are impossible to implement
 | Detect DBI/hypervisor via cache-timing anomalies | Requires unsafe timing primitives, thread/context introspection, or kernel interfaces | Same as above; structural uniformity of state transitions and payload encryption raise analysis cost | A determined DBI analyst can trace semantics |
 | Inspect debug registers via exception context frames | Requires unsafe OS-specific FFI | Out of scope; no false claim | Hypervisor-level debugging is not resisted |
 | LFENCE/Spectre fences | Intrinsics and inline assembly are unsafe | No secret-dependent native conditional branches in the generated geometry where feasible; `compiler_fence` cannot replace `lfence` and is not claimed as a mitigation | Microarchitectural leakage is not fully mitigated |
-| Native Windows runtime end-to-end | Requires a Windows host, loader/CFG validation, and CI | PE parser/injector and Win64 ABI thunk implemented; Wine runtime passes; native Windows CI staged | Native Windows loader/CFG behavior is not yet claimed |
+| Native Windows runtime end-to-end | Requires a Windows host, loader/CFG validation, and CI | PE parser/injector and Win64 ABI thunk implemented; Wine runtime passes; native Windows CI passed | Native Windows loader/CFG behavior is not yet claimed |
 
 These deviations do not weaken the safe-Rust guarantee. The project will not insert hidden unsafe code to “check a box.”
 
@@ -888,7 +888,7 @@ These are starting budgets and release gates for the reference sample. Optimizat
 
 ### M7 — PE/Win64 backend
 - PE parser/editor/injector with COFF symbols and marker discovery.
-- Gate: synthetic round trip plus Wine runtime output equality; native Windows CI staged separately.
+- Gate: synthetic round trip plus Wine runtime output equality; native Windows CI passed separately.
 
 ### M8 — Adversarial suite
 - Red-team CLI, differential builds, memory dump scan, forced-return test, fuzz corpus, scripts.

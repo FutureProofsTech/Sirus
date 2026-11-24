@@ -94,8 +94,9 @@ hypervisor detection remain unimplemented.
   `scripts/windows-wine-check.sh`.
 - Native Windows loader validation, CFG/guard-table integration, exception
   metadata, signing, imports/TLS, and Windows anti-debug remain out of scope.
-- Native Windows CI is staged as the `pe32-native` job and
-  `scripts/windows-native-check.sh`; it has not been executed on a Windows host.
+- Native Windows CI passed as the `pe32-native` job and
+  `scripts/windows-native-check.sh`; Wine and native Windows both execute the
+  normal/constant-time/hardened fixture.
 
 ---
 
@@ -140,7 +141,7 @@ hypervisor detection remain unimplemented.
 ## 6. Verification gaps
 
 - The agreed prototype floor is 85% line coverage. The current measured coverage
-  is 86.45% tarpaulin / 87.36% llvm-cov and the proof script enforces the 85%
+  is 85.35% tarpaulin / 86.40% llvm-cov and the proof script enforces the 85%
   regression floor. 100% is not claimed.
 - Kani proofs cover bounded primitives and memory bounds; the full decoder is too
   large for CBMC and is covered by tests/fuzzing instead.

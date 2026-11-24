@@ -26,7 +26,7 @@ commercial/open-source positioning is in
 |---|---|
 | Linux x86-64 ELF end-to-end | **working and tested** |
 | PE32+ format parse / section injection | **working; Win64 runtime Wine-tested** |
-| PE/Win64 runtime execution | **working under Wine 11.20**, normal and `--constant-time`; native Windows CI staged |
+| PE/Win64 runtime execution | **working under Wine 11.20**, normal and `--constant-time`; native Windows CI passed |
 | Random per-build ISA, aliases, operand orders, register maps | working |
 | CFG flattening, encrypted manifest/bodies, decoys, constant blinding | working |
 | Encrypted per-build decode table + fast ARX body stream | working |
@@ -35,7 +35,7 @@ commercial/open-source positioning is in
 | Safe Rust / no external crates | safe tier enforced; `sirus-hardened` is opt-in unsafe |
 | Kani, Miri, libFuzzer, differential/tamper/bypass, Ghidra, radare2 | run locally |
 | angr, KLEE, Creusot, dudect-bencher | run locally; bounded/model results stated |
-| Coverage floor (85%) | **met: 86.45% tarpaulin / 87.36% llvm-cov lines** |
+| Coverage floor (85%) | **met: 85.35% tarpaulin / 86.40% llvm-cov lines** |
 | Constant-time VM execution | `--constant-time` oblivious branch/loop mode below dudect threshold; normal profile leaks |
 | Live memory state | virtual registers/private stack masked at rest; snapshot constant scan passes |
 | Constant-time scope | private memory rejected; fixed pass budget; branches and loops supported |
@@ -209,9 +209,9 @@ same encrypted VM and the same leaf-function subset, in normal and
 ./scripts/windows-wine-check.sh
 ```
 
-A native Windows CI job and `scripts/windows-native-check.sh` are staged in
-`.github/workflows/windows-wine.yml`; the native job has not yet been executed.
-The executed gate is the Wine path.
+A native Windows CI job and `scripts/windows-native-check.sh` are executed by
+`.github/workflows/windows-wine.yml`. The latest Actions run passed both the
+Wine and native Windows jobs.
 
 ## Repository layout
 

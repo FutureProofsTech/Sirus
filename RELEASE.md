@@ -2,7 +2,7 @@
 
 **Release type:** safe-tier prototype plus optional hardened tier
 **Tag:** `v1.5.0-hardened`
-**Platform:** Linux x86-64 end-to-end; Win64 PE32+ runtime verified under Wine in normal, constant-time, and hardened modes; native Windows CI staged
+**Platform:** Linux x86-64 end-to-end; Win64 PE32+ runtime verified under Wine in normal, constant-time, and hardened modes; native Windows CI passed
 **Dependency policy:** zero external crates in shipped code
 **Unsafe policy:** `forbid(unsafe_code)` in the safe tier; the opt-in `sirus-hardened` crate and `--hardened` generated entries allow unsafe code
 
@@ -110,8 +110,8 @@ Recorded evidence:
 - Kani: 5 core + 4 VM harnesses.
 - Miri: 10 VM lib + 20 VM execution + 82 core tests.
 - libFuzzer: 2,929,049 cumulative executions, no crash.
-- Tarpaulin: 86.45% lines (5901/6826).
-- llvm-cov: 87.36% lines, 83.10% regions.
+- Tarpaulin: 85.35% lines (5913/6928).
+- llvm-cov: 86.40% lines, 82.11% regions.
 - Payload differential: 0.40% equal bytes.
 - Handler arms are permuted per build; full VM segment differential remains
   2.21% equal bytes (a metric, not a uniqueness proof).
@@ -169,7 +169,7 @@ tools are outside the local gate and are not release blockers.
 ### Coverage
 
 The agreed prototype target is **above 85%**. This release measures
-**86.45% tarpaulin lines / 87.36% llvm-cov lines**. 100% is not claimed, but the
+**85.35% tarpaulin lines / 86.40% llvm-cov lines**. 100% is not claimed, but the
 85% floor is met and enforced by the proof script.
 
 ---
@@ -224,9 +224,9 @@ docs/                          architecture, format, threat, proof, traceability
 | Miri | pass |
 | libFuzzer | pass |
 | fmt/clippy/doc/audit/deny | pass |
-| Coverage floor 85% | **pass — 86.45% tarpaulin / 87.36% llvm-cov lines** |
+| Coverage floor 85% | **pass — 85.35% tarpaulin / 86.40% llvm-cov lines** |
 | External evidence tooling | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect executed; commercial/licence-only tools are outside the local gate |
-| Windows runtime | **Wine-tested leaf subset (branches/loops), normal + constant-time**; native Windows CI staged |
+| Windows runtime | **Wine + native Windows leaf subset (branches/loops), normal + constant-time + hardened** |
 | Anti-debug/self-code/timing/LFENCE | **permanently out of scope for the safe tier (ADR-020)** |
 | Live memory constant secrecy | masked at rest; snapshot scan passes; instruction-local transient may remain |
 | VM constant-time execution | normal profile leaks (dudect max \|t\| = 225); `--constant-time` straight-line/branch/loop cases pass (worst \|t\| = 2.71) |
@@ -234,6 +234,5 @@ docs/                          architecture, format, threat, proof, traceability
 | Handler-layout mutation | **per-build handler/engine/entry layout preambles; 2.21% segment equality** |
 
 The safe tier remains the default and still forbids unsafe code. The hardened
-tier is opt-in and carries an explicit unsafe policy. Native Windows-host CI is
-staged but not executed locally; the Wine gate covers normal, constant-time, and
-hardened Win64 output.
+tier is opt-in and carries an explicit unsafe policy. Native Windows-host CI and
+the Wine gate both pass for normal, constant-time, and hardened Win64 output.

@@ -161,37 +161,12 @@ cargo tarpaulin --workspace --all-targets --engine Llvm \
   --exclude-files 'target/*' --exclude-files 'bench/*' --timeout 120
 ```
 
-Result: **86.45% line coverage (5901 / 6826 lines)** with
+Result: **85.35% line coverage (5913 / 6928 lines)** with
 `--exclude-files 'target/*' --exclude-files 'bench/*'`. This is above the agreed
 85% floor.
 
-Per file at that run:
+The LCOV report is written under `target/coverage-all/`.
 
-```text
-sirus-binfmt/src/elf.rs         674/781
-sirus-binfmt/src/lib.rs          63/66
-sirus-binfmt/src/pe.rs          412/435
-sirus-core/src/decode.rs        744/779
-sirus-core/src/encode.rs        367/387
-sirus-core/src/error.rs          51/53
-sirus-core/src/ir.rs            170/189
-sirus-core/src/lifter.rs        539/671
-sirus-core/src/mba.rs           255/281
-sirus-core/src/program.rs       519/550
-sirus-core/src/shared/chacha.rs 111/111
-sirus-core/src/shared/cipher.rs  67/67
-sirus-core/src/shared/derive.rs 312/314
-sirus-core/src/shared/format.rs  19/24
-sirus-core/src/shared/sip.rs     68/68
-sirus-hardened/src/runtime.rs    67/78
-sirus-protector/src/cli.rs      174/175
-sirus-protector/src/entropy.rs   84/114
-sirus-protector/src/error.rs     19/27
-sirus-protector/src/main.rs      25/26
-sirus-protector/src/pipeline.rs 195/399
-sirus-protector/src/vmgen.rs    434/598
-sirus-vm/src/engine.rs          532/633
-```
 
 The `sirus-hardened` host-only Windows debug-register module is not exercised
 on Linux; the runtime tracer/TSC/LFENCE code is covered.
@@ -211,9 +186,9 @@ cargo llvm-cov --workspace --all-targets --summary-only
 ```
 
 ```text
-TOTAL regions 83.10% (3666 missed of 21696)
-TOTAL functions 76.62% (199 missed of 851)
-TOTAL lines 87.36% (1476 missed of 11679)
+TOTAL regions 82.11% (3939 missed of 22017)
+TOTAL functions 74.60% (222 missed of 874)
+TOTAL lines 86.40% (1609 missed of 11831)
 ```
 
 The two tools instrument differently; both are above the 85% floor and show the
@@ -511,9 +486,9 @@ The native and protected outputs match for both functions over the input matrix
 `objdump` shows an `E9` jump at each protected entry and keyed junk over the
 remaining original body bytes. The second protection run uses
 `--constant-time --constant-time-passes 256` and matches the same native output.
-Native Windows-host CI is staged as the `pe32-native` job in
-`.github/workflows/windows-wine.yml` and `scripts/windows-native-check.sh`, but
-has not yet executed.
+Native Windows-host CI is executed by the `pe32-native` job in
+`.github/workflows/windows-wine.yml` through `scripts/windows-native-check.sh`;
+the latest run passed.
 
 ---
 
@@ -565,10 +540,10 @@ cargo asm -p sirus-core --lib 1
 
 | Item | Status |
 |---|---|
-| Coverage floor (85%) | **met**: 86.45% tarpaulin / 87.36% llvm-cov lines |
+| Coverage floor (85%) | **met**: 85.35% tarpaulin / 86.40% llvm-cov lines |
 | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect | executed; evidence recorded |
 | live process memory dump scan | pass; masked VM state, constant not observed |
-| Windows PE runtime execution | Wine-tested leaf subset (branches/loops), normal and constant-time; native `pe32-native` CI staged |
+| Windows PE runtime execution | Wine-tested leaf subset (branches/loops), normal and constant-time; native `pe32-native` CI passed |
 | handler-layout mutation | layout preambles applied; `.sirus` equality 2.21% residual |
 | native self-code checksum / debug detection / LFENCE | permanently out of scope for the safe tier (ADR-020) |
 

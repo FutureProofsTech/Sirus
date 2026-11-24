@@ -173,7 +173,7 @@ See `docs/CODE_STANDARD_COMPLIANCE.md` and ADR-001.
 | AORAI | installed (Frama-C 33.0); C-only, not applicable | `docs/VERIFICATION.md` |
 | cargo-fuzz | run, 1,056,362 final-tree executions (2,929,049 cumulative) | fuzz/ |
 | Proptest | external crate prohibited; in-tree property tests implemented | tests |
-| cargo-tarpaulin | run, 86.45% (above 85% floor) | coverage report |
+| cargo-tarpaulin | run, 85.35% (above 85% floor) | coverage report |
 | cargo-llvm-cov | run, independent coverage | `docs/VERIFICATION.md` |
 | Loom | not applicable (no shared mutable runtime state) | ADR/architecture |
 | dudect-bencher | run; cipher below \|t\|=5, VM branch leaks | `verification/dudect` |
