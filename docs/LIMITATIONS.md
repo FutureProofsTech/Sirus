@@ -147,7 +147,7 @@ hypervisor detection remain unimplemented.
   regression floor. 100% is not claimed.
 - Kani proofs cover bounded primitives and memory bounds; the full decoder is too
   large for CBMC and is covered by tests/fuzzing instead.
-- Miri covers core units plus 10 VM library and 20 VM execution tests; it is very slow.
+- Miri covers core units plus 10 VM library and 20 VM execution tests (1 ignored under Miri); it is very slow.
 - Ghidra/radare2, GAMBA/SiMBA/MBA-Blast, angr, KLEE, Creusot, and dudect-bencher
   were executed locally; results are in `docs/VERIFICATION.md`.
 - IDA/Binary Ninja, Ferrocene, and Triton are commercial/licence/auth-gated and

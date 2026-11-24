@@ -115,7 +115,7 @@ cargo +nightly miri test -p sirus-vm --lib
   10 tests passed (1.19 s)
 
 cargo +nightly miri test -p sirus-vm --test execution
-  20 tests passed
+  19 passed, 1 ignored
 
 cargo +nightly miri test -p sirus-core
   82 tests passed (1 ignored)

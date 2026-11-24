@@ -202,7 +202,7 @@ Implemented exactly in the root `Cargo.toml`:
 | `cargo-llvm-cov` | installed | executed; 86.47% lines / 82.14% regions |
 | `cargo-fuzz` | installed | 2,929,049 cumulative runs, no crash |
 | Kani 0.68.0 | installed | 5 core + 4 VM harnesses verified |
-| Miri | nightly | 82 core + 10 VM lib + 20 VM execution tests pass |
+| Miri | nightly | 82 core + 10 VM lib + 20 VM execution tests pass (1 ignored under Miri) |
 | valgrind | installed | protected sample clean |
 | gdb/strace/perf | installed | available; no scripted gate yet |
 | cargo-show-asm | installed | used for assembly inspection |
