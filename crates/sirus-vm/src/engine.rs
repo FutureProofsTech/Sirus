@@ -10,7 +10,7 @@ use crate::shared::cipher::{
     decode_manifest_u32, decode_manifest_u64, effective_key, manifest_byte, manifest_size,
     payload_hash,
 };
-use crate::shared::derive::{Seed, Tables};
+use crate::shared::derive::{DecodeTables, Seed, Tables};
 use crate::shared::format::{
     MAX_OPERANDS, REG_R8, REG_R9, REG_RAX, REG_RCX, REG_RDI, REG_RDX, REG_RSI, REG_RSP, ROLE_IMM,
     ROLE_REG, SEM_ADD_RI, SEM_ADD_RR, SEM_AND_RI, SEM_AND_RR, SEM_CMPEQ_RR, SEM_CMPLES_RR,
@@ -116,7 +116,7 @@ struct Decoded {
 /// Reads and decrypts a block body one byte at a time.
 struct BodyReader<'a> {
     payload: &'a [u8],
-    tables: &'a Tables,
+    tables: &'a DecodeTables,
     cipher: BodyCipher,
     position: usize,
     end: usize,
@@ -127,7 +127,7 @@ impl<'a> BodyReader<'a> {
     #[inline]
     const fn new(
         payload: &'a [u8],
-        tables: &'a Tables,
+        tables: &'a DecodeTables,
         cipher: BodyCipher,
         start: usize,
         end: usize,
@@ -204,25 +204,35 @@ impl<'a> BodyReader<'a> {
 #[inline]
 fn reg_value(
     registers: &[u64; VM_REGISTERS],
+    masks: Option<&[u64; VM_REGISTERS]>,
     values: &[u64; MAX_OPERANDS],
     operand: usize,
 ) -> Option<u64> {
     let raw = values.get(operand).copied()?;
     let slot = usize::try_from(raw).ok()?;
-    registers.get(slot).copied()
+    let stored = registers.get(slot).copied()?;
+    match masks {
+        Some(masks) => Some(stored ^ masks.get(slot).copied()?),
+        None => Some(stored),
+    }
 }
 
 #[inline]
 fn set_reg_value(
     registers: &mut [u64; VM_REGISTERS],
+    masks: Option<&[u64; VM_REGISTERS]>,
     values: &[u64; MAX_OPERANDS],
     operand: usize,
     value: u64,
 ) -> Option<()> {
     let raw = values.get(operand).copied()?;
     let slot = usize::try_from(raw).ok()?;
+    let encoded = match masks {
+        Some(masks) => value ^ masks.get(slot).copied()?,
+        None => value,
+    };
     let target = registers.get_mut(slot)?;
-    *target = value;
+    *target = encoded;
     Some(())
 }
 
@@ -247,7 +257,17 @@ fn shift_amount(value: u64) -> u32 {
 }
 
 #[inline]
+#[cfg(any(test, kani))]
 fn load_memory(memory: &[u8], address: u64, width: usize) -> Option<u64> {
+    load_memory_with_key(memory, address, width, None)
+}
+
+fn load_memory_with_key(
+    memory: &[u8],
+    address: u64,
+    width: usize,
+    memory_key: Option<u64>,
+) -> Option<u64> {
     let start = usize::try_from(address).ok()?;
     let end = start.checked_add(width)?;
     if end > memory.len() || width > 8 {
@@ -257,15 +277,29 @@ fn load_memory(memory: &[u8], address: u64, width: usize) -> Option<u64> {
     let mut index = 0_usize;
     while index < width {
         let byte = memory.get(start.checked_add(index)?).copied()?;
+        let plain = memory_key.map_or(byte, |key| {
+            byte ^ memory_mask(key, start.checked_add(index).unwrap_or(0))
+        });
         let shift = u32::try_from(index.wrapping_mul(8)).ok()?;
-        value |= u64::from(byte) << shift;
+        value |= u64::from(plain) << shift;
         index = index.checked_add(1)?;
     }
     Some(value)
 }
 
 #[inline]
+#[cfg(any(test, kani))]
 fn store_memory(memory: &mut [u8], address: u64, width: usize, value: u64) -> Option<()> {
+    store_memory_with_key(memory, address, width, value, None)
+}
+
+fn store_memory_with_key(
+    memory: &mut [u8],
+    address: u64,
+    width: usize,
+    value: u64,
+    memory_key: Option<u64>,
+) -> Option<()> {
     let start = usize::try_from(address).ok()?;
     let end = start.checked_add(width)?;
     if end > memory.len() || width > 8 {
@@ -275,50 +309,76 @@ fn store_memory(memory: &mut [u8], address: u64, width: usize, value: u64) -> Op
     while index < width {
         let shift = u32::try_from(index.wrapping_mul(8)).ok()?;
         let byte = u8::try_from((value >> shift) & 0xff).ok()?;
-        let target = memory.get_mut(start.checked_add(index)?)?;
-        *target = byte;
+        let position = start.checked_add(index)?;
+        let stored = memory_key.map_or(byte, |key| byte ^ memory_mask(key, position));
+        let target = memory.get_mut(position)?;
+        *target = stored;
         index = index.checked_add(1)?;
     }
     Some(())
 }
 
+#[inline]
+fn memory_mask(key: u64, address: usize) -> u8 {
+    let mut value = key
+        ^ u64::try_from(address)
+            .unwrap_or(u64::MAX)
+            .wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    value ^= value >> 30;
+    value = value.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value ^= value >> 27;
+    u8::try_from(value & 0xff).unwrap_or(0)
+}
+
 /// Executes a single decoded operation. Returns `None` for any semantic or
 /// operand violation.
 #[allow(clippy::too_many_lines)]
+#[cfg(test)]
 fn execute_semantic(
     decoded: &Decoded,
     registers: &mut [u64; VM_REGISTERS],
     memory: &mut [u8],
 ) -> Option<Flow> {
+    execute_semantic_inner(decoded, registers, None, memory, None)
+}
+
+#[allow(clippy::too_many_lines)]
+fn execute_semantic_inner(
+    decoded: &Decoded,
+    registers: &mut [u64; VM_REGISTERS],
+    masks: Option<&[u64; VM_REGISTERS]>,
+    memory: &mut [u8],
+    memory_key: Option<u64>,
+) -> Option<Flow> {
     let values = &decoded.values;
     let write_binary =
         |registers: &mut [u64; VM_REGISTERS], operation: fn(u64, u64) -> u64| -> Option<()> {
-            let left = reg_value(registers, values, 0)?;
-            let right = reg_value(registers, values, 1)?;
-            set_reg_value(registers, values, 0, operation(left, right))
+            let left = reg_value(registers, masks, values, 0)?;
+            let right = reg_value(registers, masks, values, 1)?;
+            set_reg_value(registers, masks, values, 0, operation(left, right))
         };
     let write_binary_imm =
         |registers: &mut [u64; VM_REGISTERS], operation: fn(u64, u64) -> u64| -> Option<()> {
-            let left = reg_value(registers, values, 0)?;
+            let left = reg_value(registers, masks, values, 0)?;
             let right = immediate(values, 1)?;
-            set_reg_value(registers, values, 0, operation(left, right))
+            set_reg_value(registers, masks, values, 0, operation(left, right))
         };
     let write_unary =
         |registers: &mut [u64; VM_REGISTERS], operation: fn(u64) -> u64| -> Option<()> {
-            let value = reg_value(registers, values, 0)?;
-            set_reg_value(registers, values, 0, operation(value))
+            let value = reg_value(registers, masks, values, 0)?;
+            set_reg_value(registers, masks, values, 0, operation(value))
         };
 
     match decoded.semantic {
         SEM_NOP => Some(Flow::Continue),
         SEM_MOV_RR => {
-            let source = reg_value(registers, values, 1)?;
-            set_reg_value(registers, values, 0, source)?;
+            let source = reg_value(registers, masks, values, 1)?;
+            set_reg_value(registers, masks, values, 0, source)?;
             Some(Flow::Continue)
         }
         SEM_MOV_RI => {
             let source = immediate(values, 1)?;
-            set_reg_value(registers, values, 0, source)?;
+            set_reg_value(registers, masks, values, 0, source)?;
             Some(Flow::Continue)
         }
         SEM_ADD_RR => {
@@ -434,8 +494,8 @@ fn execute_semantic(
             Some(Flow::Continue)
         }
         SEM_CMPEQ_RR | SEM_CMPLTU_RR | SEM_CMPLTS_RR | SEM_CMPLEU_RR | SEM_CMPLES_RR => {
-            let left = reg_value(registers, values, 1)?;
-            let right = reg_value(registers, values, 2)?;
+            let left = reg_value(registers, masks, values, 1)?;
+            let right = reg_value(registers, masks, values, 2)?;
             let result = match decoded.semantic {
                 SEM_CMPEQ_RR => left == right,
                 SEM_CMPLTU_RR => left < right,
@@ -443,17 +503,17 @@ fn execute_semantic(
                 SEM_CMPLEU_RR => left <= right,
                 _ => as_i64(left) <= as_i64(right),
             };
-            set_reg_value(registers, values, 0, u64::from(result))?;
+            set_reg_value(registers, masks, values, 0, u64::from(result))?;
             Some(Flow::Continue)
         }
         SEM_SELECT_RRRR => {
-            let condition = reg_value(registers, values, 1)?;
+            let condition = reg_value(registers, masks, values, 1)?;
             let selected = if condition != 0 {
-                reg_value(registers, values, 2)?
+                reg_value(registers, masks, values, 2)?
             } else {
-                reg_value(registers, values, 3)?
+                reg_value(registers, masks, values, 3)?
             };
-            set_reg_value(registers, values, 0, selected)?;
+            set_reg_value(registers, masks, values, 0, selected)?;
             Some(Flow::Continue)
         }
         SEM_LOAD8 | SEM_LOAD16 | SEM_LOAD32 | SEM_LOAD64 => {
@@ -463,9 +523,9 @@ fn execute_semantic(
                 SEM_LOAD32 => 4,
                 _ => 8,
             };
-            let address = reg_value(registers, values, 1)?;
-            let loaded = load_memory(memory, address, width)?;
-            set_reg_value(registers, values, 0, loaded)?;
+            let address = reg_value(registers, masks, values, 1)?;
+            let loaded = load_memory_with_key(memory, address, width, memory_key)?;
+            set_reg_value(registers, masks, values, 0, loaded)?;
             Some(Flow::Continue)
         }
         SEM_STORE8 | SEM_STORE16 | SEM_STORE32 | SEM_STORE64 => {
@@ -475,18 +535,18 @@ fn execute_semantic(
                 SEM_STORE32 => 4,
                 _ => 8,
             };
-            let address = reg_value(registers, values, 0)?;
-            let value = reg_value(registers, values, 1)?;
-            store_memory(memory, address, width, value)?;
+            let address = reg_value(registers, masks, values, 0)?;
+            let value = reg_value(registers, masks, values, 1)?;
+            store_memory_with_key(memory, address, width, value, memory_key)?;
             Some(Flow::Continue)
         }
         SEM_JMP => {
             let target = immediate(values, 0)?;
-            let mix = reg_value(registers, values, 1)?;
+            let mix = reg_value(registers, masks, values, 1)?;
             Some(Flow::Jump(target.wrapping_add(mix).wrapping_sub(mix)))
         }
         SEM_JCC => {
-            let condition = reg_value(registers, values, 0)?;
+            let condition = reg_value(registers, masks, values, 0)?;
             let true_target = immediate(values, 1)?;
             let false_target = immediate(values, 2)?;
             let target = if condition != 0 {
@@ -494,11 +554,11 @@ fn execute_semantic(
             } else {
                 false_target
             };
-            let mix = reg_value(registers, values, 3)?;
+            let mix = reg_value(registers, masks, values, 3)?;
             Some(Flow::Jump(target.wrapping_add(mix).wrapping_sub(mix)))
         }
         SEM_RET => {
-            let value = reg_value(registers, values, 0)?;
+            let value = reg_value(registers, masks, values, 0)?;
             Some(Flow::Return(value))
         }
         SEM_TRAP => Some(Flow::Trap),
@@ -547,13 +607,25 @@ fn read_manifest_u32_at(payload: &[u8], key: u64, start: usize, big_endian: bool
     Some(decode_manifest_u32(&bytes, big_endian))
 }
 
-/// Executes a protected function.
+/// Executes a protected function with tables derived from the plan seed.
 #[inline]
 #[must_use]
 pub fn execute(input: VmInput<'_>, entry_index: usize, args: [u64; 6]) -> Run {
+    let tables = Tables::derive(input.seed).decode_tables();
+    execute_with_tables(input, entry_index, args, &tables)
+}
+
+/// Executes a protected function using a precomputed decode table.
+#[inline]
+#[must_use]
+pub fn execute_with_tables(
+    input: VmInput<'_>,
+    entry_index: usize,
+    args: [u64; 6],
+    tables: &DecodeTables,
+) -> Run {
     let mut steps = 0_u64;
     let mut fuel = input.fuel;
-    let tables = Tables::derive(input.seed);
     let actual_hash = payload_hash(input.seed, input.payload);
     let key = effective_key(input.base_a, input.base_b, actual_hash, input.expected_hash);
     let Some(entry) = input.entry_states.get(entry_index) else {
@@ -562,8 +634,17 @@ pub fn execute(input: VmInput<'_>, entry_index: usize, args: [u64; 6]) -> Run {
     let [entry_a, entry_b] = *entry;
     let mut state = entry_a ^ entry_b;
     let fill_key = key ^ 0x9e37_79b9_7f4a_7c15;
-    let mut registers: [u64; VM_REGISTERS] =
-        core::array::from_fn(|index| fill_key.rotate_left(u32::try_from(index & 63).unwrap_or(0)));
+    let masks: [u64; VM_REGISTERS] = core::array::from_fn(|index| {
+        fill_key
+            .rotate_left(u32::try_from(index.wrapping_mul(7) & 63).unwrap_or(0))
+            .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+            .rotate_left(u32::try_from(index & 63).unwrap_or(0))
+    });
+    let mut registers: [u64; VM_REGISTERS] = core::array::from_fn(|index| {
+        fill_key.rotate_left(u32::try_from(index & 63).unwrap_or(0))
+            ^ masks.get(index).copied().unwrap_or(0)
+    });
+    let memory_key = key.rotate_left(23) ^ 0xa5a5_5a5a_9696_6969;
     let [
         argument0,
         argument1,
@@ -572,17 +653,18 @@ pub fn execute(input: VmInput<'_>, entry_index: usize, args: [u64; 6]) -> Run {
         argument4,
         argument5,
     ] = args;
-    let _ = set_reg_value_raw(&mut registers, REG_RDI, argument0);
-    let _ = set_reg_value_raw(&mut registers, REG_RSI, argument1);
-    let _ = set_reg_value_raw(&mut registers, REG_RDX, argument2);
-    let _ = set_reg_value_raw(&mut registers, REG_RCX, argument3);
-    let _ = set_reg_value_raw(&mut registers, REG_R8, argument4);
-    let _ = set_reg_value_raw(&mut registers, REG_R9, argument5);
-    let _ = set_reg_value_raw(&mut registers, REG_RSP, VM_STACK_TOP);
-    let _ = set_reg_value_raw(&mut registers, REG_RAX, 0);
+    let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_RDI, argument0);
+    let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_RSI, argument1);
+    let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_RDX, argument2);
+    let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_RCX, argument3);
+    let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_R8, argument4);
+    let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_R9, argument5);
+    let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_RSP, VM_STACK_TOP);
+    let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_RAX, 0);
     let fill_byte = u8::try_from(fill_key & 0xff).unwrap_or(0);
-    let mut memory: [u8; VM_MEMORY_SIZE] =
-        core::array::from_fn(|index| u8::try_from(index & 0xff).unwrap_or(0) ^ fill_byte);
+    let mut memory: [u8; VM_MEMORY_SIZE] = core::array::from_fn(|index| {
+        (u8::try_from(index & 0xff).unwrap_or(0) ^ fill_byte) ^ memory_mask(memory_key, index)
+    });
 
     'dispatch: loop {
         let Some(count_value) =
@@ -672,7 +754,7 @@ pub fn execute(input: VmInput<'_>, entry_index: usize, args: [u64; 6]) -> Run {
 
         let mut reader = BodyReader::new(
             input.payload,
-            &tables,
+            tables,
             BodyCipher::new(key, state, body_start),
             body_start,
             body_end,
@@ -686,7 +768,13 @@ pub fn execute(input: VmInput<'_>, entry_index: usize, args: [u64; 6]) -> Run {
             let Some(decoded) = reader.read_instruction() else {
                 return halt(Status::BadPayload, steps);
             };
-            let Some(flow) = execute_semantic(&decoded, &mut registers, &mut memory) else {
+            let Some(flow) = execute_semantic_inner(
+                &decoded,
+                &mut registers,
+                Some(&masks),
+                &mut memory,
+                Some(memory_key),
+            ) else {
                 return halt(Status::BadPayload, steps);
             };
             match flow {
@@ -713,16 +801,27 @@ pub fn execute(input: VmInput<'_>, entry_index: usize, args: [u64; 6]) -> Run {
 }
 
 #[inline]
-fn set_reg_value_raw(registers: &mut [u64; VM_REGISTERS], slot: u8, value: u64) -> Option<()> {
-    let target = registers.get_mut(usize::from(slot))?;
-    *target = value;
+fn set_reg_value_raw(
+    registers: &mut [u64; VM_REGISTERS],
+    masks: Option<&[u64; VM_REGISTERS]>,
+    slot: u8,
+    value: u64,
+) -> Option<()> {
+    let target = usize::from(slot);
+    let mask = match masks {
+        Some(masks) => masks.get(target).copied()?,
+        None => 0,
+    };
+    let slot = registers.get_mut(target)?;
+    *slot = value ^ mask;
     Some(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        Decoded, Flow, as_i64, as_u64, execute_semantic, load_memory, shift_amount, store_memory,
+        Decoded, Flow, as_i64, as_u64, execute_semantic, load_memory, load_memory_with_key,
+        reg_value, set_reg_value, shift_amount, store_memory, store_memory_with_key,
     };
     use crate::shared::format::{
         MAX_OPERANDS, REG_RAX, REG_RBX, REG_RCX, REG_RDX, REG_RSP, SEM_ADD_RI, SEM_ADD_RR,
@@ -1046,11 +1145,42 @@ mod tests {
         );
         assert_eq!(execute_semantic(&instruction, &mut regs, &mut mem), None);
     }
+
+    #[test]
+    fn masked_register_and_memory_state_hide_plaintext_and_round_trip() {
+        let masks = [0x9e37_79b9_7f4a_7c15_u64; VM_REGISTERS];
+        let mut register_file = [0_u64; VM_REGISTERS];
+        let values = [3_u64, 0, 0, 0];
+        set_reg_value(&mut register_file, Some(&masks), &values, 0, 0xdead_beef)
+            .expect("set masked register");
+        assert_ne!(register_file.get(3).copied(), Some(0xdead_beef));
+        assert_eq!(
+            reg_value(&register_file, Some(&masks), &values, 0),
+            Some(0xdead_beef)
+        );
+
+        let key = 0x0123_4567_89ab_cdef_u64;
+        let mut memory = [0_u8; 16];
+        store_memory_with_key(&mut memory, 2, 8, 0xfeed_face_cafe_beef, Some(key))
+            .expect("masked store");
+        assert_ne!(
+            memory.get(2..10),
+            Some(0xfeed_face_cafe_beef_u64.to_le_bytes().as_slice())
+        );
+        assert_eq!(
+            load_memory_with_key(&memory, 2, 8, Some(key)),
+            Some(0xfeed_face_cafe_beef)
+        );
+    }
 }
 
 #[cfg(kani)]
 mod proofs {
-    use super::{load_memory, store_memory};
+    use super::{
+        load_memory, load_memory_with_key, reg_value, set_reg_value, store_memory,
+        store_memory_with_key,
+    };
+    use crate::shared::format::VM_REGISTERS;
 
     #[kani::proof]
     #[kani::unwind(10)]
@@ -1060,6 +1190,17 @@ mod proofs {
         let width: usize = kani::any();
         kani::assume(width >= 1 && width <= 8);
         let _ = load_memory(&memory, address, width);
+    }
+
+    #[kani::proof]
+    fn masked_register_round_trip() {
+        let mask: u64 = kani::any();
+        let value: u64 = kani::any();
+        let mut registers = [0_u64; VM_REGISTERS];
+        let masks = [mask; VM_REGISTERS];
+        let values = [7_u64, 0, 0, 0];
+        let _ = set_reg_value(&mut registers, Some(&masks), &values, 0, value);
+        assert_eq!(reg_value(&registers, Some(&masks), &values, 0), Some(value));
     }
 
     #[kani::proof]

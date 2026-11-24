@@ -2,8 +2,8 @@
 //!
 //! The tables are never serialized into the runtime. Both the build-time
 //! encoder and the injected VM call this module with the same seed. Alias
-//! operand layouts are derived on demand, which keeps the runtime table small
-//! enough to initialize without libc bulk-memory helpers.
+//! operand layouts are derived once per invocation into a fixed table, then
+//! indexed per instruction; this avoids per-instruction SipHash/shuffle work.
 
 use crate::shared::format::{
     ALIASES_PER_SEMANTIC, MAX_OPERANDS, SEMANTIC_COUNT, SEMANTIC_IDS, VM_REGISTERS, format,
@@ -33,12 +33,281 @@ pub struct AliasSpec {
     pub big_endian: bool,
 }
 
+/// Serialized bytes for one alias: opcode, four order bytes, register map,
+/// endian flag, reserved.
+pub const ALIAS_SERIALIZED_BYTES: usize = 8;
+
+/// Encrypted runtime decode-table image length.
+pub const RUNTIME_TABLE_BYTES: usize =
+    256 + 256 + 2 * 256 + ALIAS_COUNT * ALIAS_SERIALIZED_BYTES + 1;
+
+/// Runtime decode tables. This is the subset the VM needs during execution;
+/// build-only encoding maps and the seed are deliberately absent.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug)]
+pub struct DecodeTables {
+    semantic_of_opcode: [u8; 256],
+    alias_of_opcode: [u8; 256],
+    reg_decode: [[u8; 256]; 2],
+    aliases: [AliasSpec; ALIAS_COUNT],
+    /// Whether manifest integers use big-endian byte order.
+    pub manifest_big_endian: bool,
+}
+
+impl DecodeTables {
+    /// Decrypts and validates one per-build decode-table image.
+    #[must_use]
+    #[inline]
+    pub fn from_encrypted(bytes: &[u8], key: u64) -> Option<Self> {
+        let mut semantic_of_opcode = [INVALID_ENTRY; 256];
+        let mut alias_of_opcode = [INVALID_ENTRY; 256];
+        let mut reg_decode = [[INVALID_ENTRY; 256]; 2];
+        let mut aliases = [AliasSpec::default(); ALIAS_COUNT];
+        let mut index = 0_usize;
+        while index < 256 {
+            if let Some(slot) = semantic_of_opcode.get_mut(index) {
+                *slot = table_plain(bytes, key, index)?;
+            }
+            index = index.saturating_add(1);
+        }
+        index = 0;
+        while index < 256 {
+            if let Some(slot) = alias_of_opcode.get_mut(index) {
+                *slot = table_plain(bytes, key, 256 + index)?;
+            }
+            index = index.saturating_add(1);
+        }
+        let mut variant = 0_usize;
+        while variant < 2 {
+            index = 0;
+            while index < 256 {
+                if let Some(slot) = reg_decode
+                    .get_mut(variant)
+                    .and_then(|table| table.get_mut(index))
+                {
+                    *slot = table_plain(bytes, key, 512 + variant * 256 + index)?;
+                }
+                index = index.saturating_add(1);
+            }
+            variant = variant.saturating_add(1);
+        }
+        index = 0;
+        while index < ALIAS_COUNT {
+            let start = 1024 + index * ALIAS_SERIALIZED_BYTES;
+            let mut order = [0_u8; MAX_OPERANDS];
+            if let Some(slot) = aliases.get_mut(index) {
+                let mut field = 0_usize;
+                let opcode = table_plain(bytes, key, start)?;
+                while field < MAX_OPERANDS {
+                    if let Some(value) = order.get_mut(field) {
+                        *value = table_plain(bytes, key, start + 1 + field)?;
+                    }
+                    field = field.saturating_add(1);
+                }
+                let reg_map = table_plain(bytes, key, start + 5)?;
+                let big_endian = table_plain(bytes, key, start + 6)? != 0;
+                *slot = AliasSpec {
+                    opcode,
+                    order,
+                    reg_map,
+                    big_endian,
+                };
+            }
+            index = index.saturating_add(1);
+        }
+        let manifest_big_endian = table_plain(bytes, key, RUNTIME_TABLE_BYTES - 1)? != 0;
+        Some(Self {
+            semantic_of_opcode,
+            alias_of_opcode,
+            reg_decode,
+            aliases,
+            manifest_big_endian,
+        })
+    }
+
+    /// Returns one alias for a semantic and alias index.
+    #[inline]
+    #[must_use]
+    pub fn alias_for(&self, semantic: u8, choice: usize) -> Option<AliasSpec> {
+        let alias_index = choice % ALIASES_PER_SEMANTIC;
+        let flat_index = usize::from(semantic)
+            .checked_mul(ALIASES_PER_SEMANTIC)?
+            .checked_add(alias_index)?;
+        self.aliases.get(flat_index).copied()
+    }
+
+    /// Decodes a wire register byte for an alias map.
+    #[inline]
+    #[must_use]
+    pub fn decode_register(&self, variant: u8, encoded: u8) -> Option<u8> {
+        let variant_index = usize::from(variant & 1);
+        self.reg_decode
+            .get(variant_index)
+            .and_then(|table| table.get(usize::from(encoded)))
+            .copied()
+            .filter(|value| *value < slot_u8(VM_REGISTERS))
+    }
+
+    /// Returns the semantic for an encoded opcode.
+    #[inline]
+    #[must_use]
+    pub fn semantic_for_opcode(&self, opcode: u8) -> Option<u8> {
+        self.semantic_of_opcode
+            .get(usize::from(opcode))
+            .copied()
+            .filter(|value| usize::from(*value) < SEMANTIC_COUNT)
+    }
+
+    /// Returns the alias index for an encoded opcode.
+    #[inline]
+    #[must_use]
+    pub fn alias_index_for_opcode(&self, opcode: u8) -> Option<usize> {
+        self.alias_of_opcode
+            .get(usize::from(opcode))
+            .copied()
+            .filter(|value| usize::from(*value) < ALIASES_PER_SEMANTIC)
+            .map(usize::from)
+    }
+}
+
+impl Tables {
+    /// Extracts the runtime-only decode view for a VM invocation.
+    #[inline]
+    #[must_use]
+    pub const fn decode_tables(&self) -> DecodeTables {
+        DecodeTables {
+            semantic_of_opcode: self.semantic_of_opcode,
+            alias_of_opcode: self.alias_of_opcode,
+            reg_decode: self.reg_decode,
+            aliases: self.aliases,
+            manifest_big_endian: self.manifest_big_endian,
+        }
+    }
+
+    /// Serializes and encrypts the runtime decode table for the generated VM.
+    #[must_use]
+    #[inline]
+    pub fn encode_runtime_table(&self, key: u64) -> [u8; RUNTIME_TABLE_BYTES] {
+        let mut bytes = [0_u8; RUNTIME_TABLE_BYTES];
+        let mut index = 0_usize;
+        while index < 256 {
+            table_put(
+                &mut bytes,
+                index,
+                self.semantic_of_opcode.get(index).copied().unwrap_or(0),
+            );
+            index = index.saturating_add(1);
+        }
+        index = 0;
+        while index < 256 {
+            table_put(
+                &mut bytes,
+                256 + index,
+                self.alias_of_opcode.get(index).copied().unwrap_or(0),
+            );
+            index = index.saturating_add(1);
+        }
+        let mut variant = 0_usize;
+        while variant < 2 {
+            index = 0;
+            while index < 256 {
+                table_put(
+                    &mut bytes,
+                    512 + variant * 256 + index,
+                    self.reg_decode
+                        .get(variant)
+                        .and_then(|table| table.get(index))
+                        .copied()
+                        .unwrap_or(INVALID_ENTRY),
+                );
+                index = index.saturating_add(1);
+            }
+            variant = variant.saturating_add(1);
+        }
+        index = 0;
+        while index < ALIAS_COUNT {
+            let start = 1024 + index * ALIAS_SERIALIZED_BYTES;
+            let spec = self.aliases.get(index).copied().unwrap_or_default();
+            table_put(&mut bytes, start, spec.opcode);
+            let mut field = 0_usize;
+            while field < MAX_OPERANDS {
+                table_put(
+                    &mut bytes,
+                    start + 1 + field,
+                    spec.order.get(field).copied().unwrap_or(0),
+                );
+                field = field.saturating_add(1);
+            }
+            table_put(&mut bytes, start + 5, spec.reg_map);
+            table_put(&mut bytes, start + 6, u8::from(spec.big_endian));
+            index = index.saturating_add(1);
+        }
+        table_put(
+            &mut bytes,
+            RUNTIME_TABLE_BYTES - 1,
+            u8::from(self.manifest_big_endian),
+        );
+        index = 0;
+        while index < RUNTIME_TABLE_BYTES {
+            if let Some(byte) = bytes.get(index).copied() {
+                table_put(&mut bytes, index, byte ^ table_mask(key, index));
+            }
+            index = index.saturating_add(1);
+        }
+        bytes
+    }
+
+    /// Returns the per-build key used to encrypt the runtime decode table.
+    #[inline]
+    #[must_use]
+    pub fn runtime_table_key(&self) -> u64 {
+        table_key(&self.seed)
+    }
+}
+
+/// Derives the per-build runtime-table encryption key from the plan seed.
+#[inline]
+#[must_use]
+pub fn table_key(seed: &Seed) -> u64 {
+    SipHasher24::hash_u64(
+        load_u64(seed, 0) ^ 0x7461_626c_655f_6b65,
+        load_u64(seed, 8).rotate_left(37),
+        0x7374_6174_655f_6964,
+    )
+}
+
+fn table_mask(key: u64, index: usize) -> u8 {
+    let mut value = key
+        ^ u64::try_from(index)
+            .unwrap_or(u64::MAX)
+            .wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    value ^= value >> 30;
+    value = value.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value ^= value >> 27;
+    value = value.wrapping_mul(0x94d0_49bb_1331_11eb);
+    u8::try_from(value & 0xff).unwrap_or(0)
+}
+
+fn table_plain(bytes: &[u8], key: u64, index: usize) -> Option<u8> {
+    bytes
+        .get(index)
+        .copied()
+        .map(|byte| byte ^ table_mask(key, index))
+}
+
+fn table_put(bytes: &mut [u8; RUNTIME_TABLE_BYTES], index: usize, value: u8) {
+    if let Some(slot) = bytes.get_mut(index) {
+        *slot = value;
+    }
+}
+
 /// Full derived tables needed by both encoder and runtime.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Tables {
     seed: Seed,
     opcodes: [u8; 256],
+    aliases: [AliasSpec; ALIAS_COUNT],
     semantic_of_opcode: [u8; 256],
     alias_of_opcode: [u8; 256],
     reg_decode: [[u8; 256]; 2],
@@ -49,26 +318,24 @@ pub struct Tables {
 
 #[derive(Clone, Debug)]
 struct Expander {
-    k0: u64,
-    k1: u64,
-    counter: u64,
+    state: u64,
 }
 
 impl Expander {
     #[inline]
     fn new(seed: &Seed) -> Self {
         Self {
-            k0: load_u64(seed, 0),
-            k1: load_u64(seed, 8).rotate_left(17),
-            counter: 0,
+            state: load_u64(seed, 0) ^ load_u64(seed, 8).rotate_left(17) ^ 0x6a09_e667_f3bc_c908,
         }
     }
 
     #[inline]
-    fn next_u64(&mut self) -> u64 {
-        let value = SipHasher24::hash_u64(self.k0, self.k1, self.counter);
-        self.counter = self.counter.wrapping_add(1);
-        value
+    const fn next_u64(&mut self) -> u64 {
+        self.state = self.state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut value = self.state;
+        value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        value ^ (value >> 31)
     }
 
     #[inline]
@@ -204,6 +471,7 @@ impl Tables {
         let mut opcode_rng = Expander::new(seed);
         shuffle(&mut opcodes, &mut opcode_rng);
 
+        let mut aliases = [AliasSpec::default(); ALIAS_COUNT];
         let mut semantic_of_opcode: [u8; 256] =
             core::array::from_fn(|index| 0xc0 | u8::try_from(index & 0x3f).unwrap_or(0));
         let mut alias_of_opcode: [u8; 256] =
@@ -212,6 +480,12 @@ impl Tables {
             let mut alias_index = 0_usize;
             while alias_index < ALIASES_PER_SEMANTIC {
                 if let Some(spec) = derive_alias_spec(seed, semantic, alias_index, &opcodes) {
+                    let flat_index = usize::from(semantic)
+                        .saturating_mul(ALIASES_PER_SEMANTIC)
+                        .saturating_add(alias_index);
+                    if let Some(slot) = aliases.get_mut(flat_index) {
+                        *slot = spec;
+                    }
                     if let Some(slot) = semantic_of_opcode.get_mut(usize::from(spec.opcode)) {
                         *slot = semantic;
                     }
@@ -247,27 +521,31 @@ impl Tables {
             };
             core::array::from_fn(|slot| pool.get(slot).copied().unwrap_or(INVALID_ENTRY))
         });
-        let reg_decode: [[u8; 256]; 2] = core::array::from_fn(|variant| {
-            core::array::from_fn(|encoded| {
-                let mut slot = 0_usize;
-                while slot < VM_REGISTERS {
-                    let candidate = reg_encode
-                        .get(variant)
-                        .and_then(|table| table.get(slot))
-                        .copied()
-                        .unwrap_or(INVALID_ENTRY);
-                    if candidate == slot_u8(encoded) {
-                        return slot_u8(slot);
-                    }
-                    slot = slot.saturating_add(1);
+        let mut reg_decode: [[u8; 256]; 2] = [[INVALID_ENTRY; 256]; 2];
+        let mut variant = 0_usize;
+        while variant < 2 {
+            let mut slot = 0_usize;
+            while slot < VM_REGISTERS {
+                let encoded = reg_encode
+                    .get(variant)
+                    .and_then(|table| table.get(slot))
+                    .copied()
+                    .unwrap_or(INVALID_ENTRY);
+                if let Some(target) = reg_decode
+                    .get_mut(variant)
+                    .and_then(|table| table.get_mut(usize::from(encoded)))
+                {
+                    *target = slot_u8(slot);
                 }
-                0xc0 | u8::try_from(encoded & 0x3f).unwrap_or(0)
-            })
-        });
+                slot = slot.saturating_add(1);
+            }
+            variant = variant.saturating_add(1);
+        }
 
         Self {
             seed: *seed,
             opcodes,
+            aliases,
             semantic_of_opcode,
             alias_of_opcode,
             reg_decode,
@@ -280,11 +558,11 @@ impl Tables {
     #[inline]
     #[must_use]
     pub fn alias_for(&self, semantic: u8, choice: usize) -> Option<AliasSpec> {
-        if usize::from(semantic) >= SEMANTIC_COUNT {
-            return None;
-        }
         let alias_index = choice % ALIASES_PER_SEMANTIC;
-        derive_alias_spec(&self.seed, semantic, alias_index, &self.opcodes)
+        let flat_index = usize::from(semantic)
+            .checked_mul(ALIASES_PER_SEMANTIC)?
+            .checked_add(alias_index)?;
+        self.aliases.get(flat_index).copied()
     }
 
     /// Encodes a logical register for an alias map.
@@ -364,6 +642,80 @@ mod tests {
         let second = Tables::derive(&seed(2));
         assert_ne!(first.alias_for(0, 0), second.alias_for(0, 0));
         assert_ne!(first.encode_register(0, 0), second.encode_register(0, 0));
+    }
+
+    #[test]
+    fn encrypted_decode_table_round_trips_and_rejects_truncation() {
+        let tables = Tables::derive(&seed(0x5a));
+        let key = tables.runtime_table_key();
+        let bytes = tables.encode_runtime_table(key);
+        assert_ne!(bytes, tables.encode_runtime_table(key ^ 1));
+        let decoded = super::DecodeTables::from_encrypted(&bytes, key).expect("decode table");
+        for semantic in SEMANTIC_IDS {
+            for alias in 0..ALIASES_PER_SEMANTIC {
+                assert_eq!(
+                    tables.alias_for(semantic, alias),
+                    decoded.alias_for(semantic, alias)
+                );
+            }
+        }
+        for index in 0..=255_u8 {
+            assert_eq!(
+                tables.semantic_for_opcode(index),
+                decoded.semantic_for_opcode(index)
+            );
+            if let Some(alias) = tables.alias_for(0, 0) {
+                assert_eq!(
+                    tables.decode_register(alias.reg_map, index),
+                    decoded.decode_register(alias.reg_map, index)
+                );
+            }
+        }
+        assert_eq!(tables.manifest_big_endian, decoded.manifest_big_endian);
+        assert!(super::DecodeTables::from_encrypted(&bytes[..bytes.len() - 1], key).is_none());
+    }
+
+    #[test]
+    fn arbitrary_decode_tables_do_not_panic_on_lookup() {
+        let mut bytes = [0_u8; super::RUNTIME_TABLE_BYTES];
+        let mut state = 0x1234_5678_9abc_def0_u64;
+        let mut round = 0_usize;
+        while round < 32 {
+            let mut index = 0_usize;
+            while index < bytes.len() {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                if let Some(slot) = bytes.get_mut(index) {
+                    *slot = u8::try_from(state & 0xff).unwrap_or(0);
+                }
+                index = index.saturating_add(1);
+            }
+            if let Some(tables) = super::DecodeTables::from_encrypted(&bytes, state) {
+                for opcode in 0..=255_u8 {
+                    let _ = tables.semantic_for_opcode(opcode);
+                    let _ = tables.alias_index_for_opcode(opcode);
+                    for variant in 0..2_u8 {
+                        let _ = tables.decode_register(variant, opcode);
+                    }
+                }
+                for semantic in 0..=255_u8 {
+                    for alias in 0..4 {
+                        let _ = tables.alias_for(semantic, alias);
+                    }
+                }
+            }
+            round = round.saturating_add(1);
+        }
+    }
+
+    #[test]
+    fn zero_bounds_yield_zero_without_advancing() {
+        let seed = seed(3);
+        let mut expander = super::Expander::new(&seed);
+        assert_eq!(expander.below(0), 0);
+        let mut alias = super::AliasRng::new(&seed, 0);
+        assert_eq!(alias.below(0), 0);
     }
 
     #[test]

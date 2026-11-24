@@ -152,10 +152,10 @@ Per build, a 256-bit seed derives:
 - manifest integer endianness;
 - rolling keys, state ids, block order, entry shares, MBA shapes, decoys.
 
-Alias operand layouts are derived on demand from the seed instead of stored as a
-large plaintext table. The runtime stores only compact mapping arrays and the
-opcode pool, all built with varying values so LLVM cannot lower initialization to
-libc `memset`/`memcpy`.
+Alias operand layouts are derived from the seed once per VM invocation into a
+fixed 1.2 KiB runtime table, then indexed per instruction. They are not serialized
+into the executable. The cached table removes a per-instruction SipHash/shuffle
+cost while keeping the static image free of a plaintext alias table.
 
 ---
 
@@ -172,6 +172,8 @@ payload =
 - Bodies use a rolling cipher seeded by global key, block state, and absolute
   offset; each byte depends on position and the previous decoded byte.
 - Decrypted instructions exist only in locals; no decrypted body cache exists.
+- Virtual registers and private stack bytes are masked at rest with per-invocation
+  keys; the VM unmasks only the operand consumed by the current instruction.
 - The runtime computes a SipHash integrity hash over the final encrypted payload.
 - Effective key = `base_a ^ base_b ^ actual_hash ^ expected_hash`.
   Intact payload yields the intended key; any modified byte changes the key and

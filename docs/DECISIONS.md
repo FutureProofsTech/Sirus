@@ -45,14 +45,19 @@ build if libc symbols or writable segments appeared.
 
 ---
 
-## ADR-004 — Derive alias tables on demand
+## ADR-004 — Cache derived alias tables per invocation
 
-**Decision:** Do not store the 1.2 KiB alias-spec table in the runtime. Store a
-compact opcode pool and derive per-alias order/map/endian from the seed on demand.
+**Decision:** Derive every alias order/map/endian once at the start of a VM
+invocation into a fixed 1.2 KiB table, then index that table per instruction.
+The table is never serialized into the executable; it is rebuilt from the seed
+for each invocation.
 
-**Reason:** Large table initialization and copies triggered libc bulk-memory
-helpers and increased static plaintext ISA exposure. On-demand derivation keeps
-the runtime self-contained and reduces at-rest table structure.
+**Reason:** Re-deriving an alias with SipHash and a shuffle for every decoded
+instruction was a dominant cost. Caching the table once per call preserves the
+no-plaintext-table property while removing a per-instruction keyed derivation.
+
+**Trade-off:** The runtime stack table is larger. The generated VM is still
+compiled at `opt-level=z` to avoid libc `memset`/`memcpy` lowering.
 
 ---
 
@@ -175,5 +180,52 @@ flow and keep virtual registers in memory. Safe Rust cannot add RDTSC, debug
 register, or speculative barriers, and a constant-time interpreter would require
 executing both sides of every branch and a fully oblivious memory model.
 
-**Residual:** Official dudect-bencher measured the VM branch at max |t| = 358.73,
+**Residual:** Official dudect-bencher measured the VM branch at max |t| = 745.81,
 far above the conventional threshold of 5.
+
+---
+
+## ADR-014 — Fast ARX body stream, SipHash for integrity/manifest
+
+**Decision:** Use a keyed SplitMix64-style ARX mixer for the per-byte body stream.
+Keep SipHash-2-4 for payload integrity, manifest encryption, and key derivation.
+
+**Reason:** A full SipHash-2-4 invocation for every encrypted body byte dominated
+the VM's runtime. The body stream only needs high-entropy, position-dependent
+obfuscation with rolling chaining; it is not an authentication primitive.
+SipHash still binds the complete payload and key.
+
+**Trade-off:** The body keystream is not a cryptographic cipher construction and
+must not be described as one. The integrity boundary remains SipHash-based.
+
+---
+
+## ADR-015 — Encrypted static decode table
+
+**Decision:** Serialize the runtime decode subset into a per-build encrypted
+static image; decrypt it into a fixed stack table once per invocation.
+
+**Reason:** Per-call table derivation was a visible fixed cost. The encrypted
+image removes plaintext alias maps from the static binary while avoiding the
+per-instruction derivation cost. The full table is still never persisted in
+plaintext and all lookups are bounds-checked.
+
+**Trade-off:** The table key is present in generated code, so this is
+obfuscation rather than key secrecy. The table is not authenticated independently;
+payload integrity still binds the bytecode and key.
+
+---
+
+## ADR-016 — Masked virtual registers and private memory
+
+**Decision:** XOR every virtual register and private stack byte with a
+per-invocation mask before it is stored, and unmask it only inside the instruction
+that consumes it.
+
+**Reason:** A live process dump previously observed a repeatedly used sensitive
+constant in VM register state. Masking at rest removes that passive-scan
+exposure without unsafe code or heap allocation.
+
+**Trade-off:** Every register/memory access pays a keyed XOR. A decoded local can
+still exist transiently inside one instruction. This is not constant-time
+execution and does not defeat an instruction-level tracer.

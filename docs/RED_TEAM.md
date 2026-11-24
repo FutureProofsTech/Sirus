@@ -34,7 +34,7 @@ PASS no obvious strings in injected segment
 
 **Executed:**
 
-- **Ghidra 12.2 headless** decompiled 18 scoped functions (16 inside `.sirus`).
+- **Ghidra 12.2 headless** decompiled 7 scoped functions (5 inside `.sirus`).
   The patched host functions resolve to `halt_baddata()` because of the jump plus
   random scrub; no original branch structure is recovered. The `.sirus` VM
   functions decompile only as engine/state machinery.
@@ -125,7 +125,7 @@ MBA, decoys, finite fuel, data-dependent transitions.
   out after **120 s** with one active state, no completed return, and no preimage
   (`scripts/angr-check.py`).
 - **KLEE 3.3 (LLVM 18)** on the generated `no_std` VM source, with symbolic
-  arguments. The 60 s run executed **8,684,268 instructions**, completed 0 paths,
+  arguments. The 60 s run executed **2,180,488 instructions**, completed 0 paths,
   left 2 partially completed paths, and reported no memory errors
   (`scripts/klee-check.sh`). The source was compiled with rustc 1.78 for LLVM 18;
   `const fn` was removed only for compiler compatibility.
@@ -145,10 +145,10 @@ a mathematical proof that no input exists. No SMT-solver proof is claimed.
 
 - manifest/body cipher streams are decrypted in locals;
 - no entire decrypted body is stored;
-- ISA tables are derived on demand;
+- ISA tables are derived once per invocation and indexed;
 - static `.sirus` has no obvious plaintext strings.
 
-**Local evidence:** payload entropy `shannon=7.995`, `min=7.691`, 256 distinct
+**Local evidence:** payload entropy `shannon=7.996`, `min=7.751`, 256 distinct
 bytes; static string scan passes.
 
 **Live snapshot evidence:** `scripts/memory-dump.sh` attaches to a long-running
@@ -157,14 +157,14 @@ unique secret constant.
 
 ```text
 PASS original protected body absent from live memory
-RESIDUAL sensitive constant observed in transient VM register state
+PASS sensitive constant not observed in this snapshot
 PASS original body absent from protected file
 ```
 
-The constant is used every loop iteration; a safe-Rust VM stores its virtual
-registers in memory, so repeated use makes a transient snapshot observable. The
-bytecode itself is not cached in decrypted form. This remains a residual, not a
-claim of zero plaintext data in live memory.
+Virtual registers and private stack bytes are stored XOR-masked with
+per-invocation keys; a passive dump no longer exposes the previously observed
+constant. A single instruction may hold a decoded local transiently during its
+own execution, but the VM state is masked at rest.
 
 ---
 
@@ -199,13 +199,14 @@ cipher path.
 **Executed:** official `dudect-bencher` 0.7.0 (`scripts/dudect-external.sh`):
 
 ```text
-bench crypto ... : max t = +4.42157
-bench vm     ... : max t = -358.73247
+bench crypto      ... : max t = +3.37690
+bench crypto_same ... : max t = -1.01007
+bench vm          ... : max t = -745.81435
 ```
 
 The cipher path is below the conventional |t| = 5 leak threshold; the VM
 data-dependent branch is far above it. The in-tree Welch harness independently
-measured `crypto_t=-1.199` and `vm_t=53.023`.
+measured `crypto_t=-3.794` and `vm_t=-56.685`.
 
 **Residual:** the VM is not constant-time. Safe Rust can avoid secret-dependent
 machine branches inside a cipher, but a general virtualizer must branch on
@@ -236,12 +237,12 @@ MBA shapes, decoys, payload size, and code/data offsets.
 **Local evidence:**
 
 ```text
-differential .sirus.payload equal-byte ratio = 0.0038
-differential .sirus segment equal-byte ratio = 0.1091
+differential .sirus.payload equal-byte ratio = 0.0040
+differential .sirus segment equal-byte ratio = 0.1101
 payload sizes = 45669 / 45607 bytes
 ```
 
-**Residual:** the interpreter skeleton is reused; 10.9% of the full VM segment
+**Residual:** the interpreter skeleton is reused; 11.01% of the full VM segment
 matches byte-for-byte at equal offsets. Full handler-layout mutation is not
 complete. BinDiff has not been run.
 
@@ -258,7 +259,7 @@ masked shifts, no division, checked memory, deterministic fuel, no panic path.
 
 - deterministic in-tree fuzz: 20,000 random payloads + 10,000 valid-payload
   mutations, no panic/hang;
-- libFuzzer: **63,455 final-tree runs in 21 s; 164,729 cumulative across sessions**, no crash;
+- libFuzzer: **348,151 final-tree runs in 21 s; 887,210 cumulative across sessions**, no crash;
 - Kani: 5 core + 2 VM bounds harnesses verified;
 - Miri: core and VM unit/full execution suites pass;
 - malformed-payload suite covers bad count/offset/length/opcode/register/trap/fuel.
@@ -274,10 +275,10 @@ masked shifts, no division, checked memory, deterministic fuel, no panic path.
 | 3 | DBI resistance | partial; timing/DBI detection impossible/unsafe |
 | 4 | taint resistance | design + bypass evidence; no formal taint tool |
 | 5 | symbolic resistance | angr 120 s timeout; KLEE 60 s timeout with no completed paths or memory errors |
-| 6 | memory dump | entropy/string pass; live dump finds transient register constants |
+| 6 | memory dump | entropy/string pass; masked VM state, live constant not observed |
 | 7 | patch/forced return | pass |
 | 8 | hypervisor | not capable; documented |
-| 9 | differential | payload 0.38% equal; full segment 10.9% equal residual |
+| 9 | differential | payload 0.40% equal; full segment 11.01% equal residual |
 | 10 | fuzzing | pass across in-tree, libFuzzer, Kani, Miri |
 
 No gate in this report is marked “passed” unless its local command was executed.

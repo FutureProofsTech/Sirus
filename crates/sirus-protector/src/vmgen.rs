@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::entropy::junk;
 use sirus_binfmt::elf::{Elf64, PF_R, PF_W, PF_X, PT_LOAD, STT_FUNC, STT_OBJECT, SymbolEntry};
 use sirus_core::program::CompiledProgram;
-use sirus_core::shared::derive::Seed;
+use sirus_core::shared::derive::{Seed, Tables, table_key};
 
 use crate::entropy::build_id;
 use crate::error::{ProtectError, Result};
@@ -45,7 +45,11 @@ macro_rules! emit {
 }
 
 fn append_u8_array(source: &mut String, name: &str, bytes: &[u8]) -> Result<()> {
-    emit!(source, "static {name}: [u8; {}] = [\n", bytes.len());
+    emit!(
+        source,
+        "#[used]\nstatic {name}: [u8; {}] = [\n",
+        bytes.len()
+    );
     for (index, byte) in bytes.iter().enumerate() {
         if index % 16 == 0 {
             source.push_str("    ");
@@ -118,6 +122,8 @@ fn generate_source(program: &CompiledProgram, id: &str, vm_base: u64) -> Result<
     let payload_name = format!("SIRUS_PAYLOAD_{id}");
     let seed_name = format!("SIRUS_SEED_{id}");
     let states_name = format!("SIRUS_ENTRY_STATES_{id}");
+    let table_name = format!("SIRUS_DECODE_TABLE_{id}");
+    let table_key_name = format!("SIRUS_TABLE_KEY_{id}");
     let hash_name = format!("SIRUS_EXPECTED_HASH_{id}");
     let key_a_name = format!("SIRUS_BASE_A_{id}");
     let second_key_name = format!("SIRUS_BASE_B_{id}");
@@ -148,6 +154,14 @@ fn generate_source(program: &CompiledProgram, id: &str, vm_base: u64) -> Result<
 
     append_u8_array(&mut source, &payload_name, program.payload())?;
     append_u8_array(&mut source, &seed_name, program.seed())?;
+    let tables = Tables::derive(program.seed());
+    let decode_key = table_key(program.seed());
+    let decode_bytes = tables.encode_runtime_table(decode_key);
+    append_u8_array(&mut source, &table_name, &decode_bytes)?;
+    emit!(
+        source,
+        "const {table_key_name}: u64 = 0x{decode_key:016x};\n"
+    );
     append_u64_pair_array(&mut source, &states_name, program.entry_states())?;
     emit!(
         source,
@@ -168,7 +182,13 @@ fn generate_source(program: &CompiledProgram, id: &str, vm_base: u64) -> Result<
             source,
             "#[inline(never)]\n\
              pub extern \"C\" fn {entry_name}(a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> u64 {{\n\
-             \x20   engine::execute(\n\
+             \x20   let Some(tables) = shared::derive::DecodeTables::from_encrypted(\n\
+             \x20       &{table_name},\n\
+             \x20       {table_key_name},\n\
+             \x20   ) else {{\n\
+             \x20       return 0;\n\
+             \x20   }};\n\
+             \x20   engine::execute_with_tables(\n\
              \x20       engine::VmInput::new(\n\
              \x20           &{payload_name},\n\
              \x20           &{seed_name},\n\
@@ -180,6 +200,7 @@ fn generate_source(program: &CompiledProgram, id: &str, vm_base: u64) -> Result<
              \x20       ),\n\
              \x20       {index},\n\
              \x20       [a0, a1, a2, a3, a4, a5],\n\
+             \x20       &tables,\n\
              \x20   )\n\
              \x20   .value\n\
              }}\n\n\
@@ -303,7 +324,8 @@ fn find_unique_symbol<'a>(
             selected = Some(symbol);
         }
     }
-    selected.ok_or_else(|| ProtectError::internal("generated VM symbol missing"))
+    selected
+        .ok_or_else(|| ProtectError::internal(&format!("generated VM symbol missing: {needle}")))
 }
 
 #[allow(
@@ -380,6 +402,13 @@ fn validate_blob(blob: &[u8], program: &CompiledProgram, id: &str) -> Result<VmB
     }
     let seed_name = format!("SIRUS_SEED_{id}");
     let seed_symbol = find_unique_symbol(&elf, &seed_name, STT_OBJECT)?;
+    let table_name = format!("SIRUS_DECODE_TABLE_{id}");
+    let table_symbol = find_unique_symbol(&elf, &table_name, STT_OBJECT)?;
+    if table_symbol.size
+        != u64::try_from(sirus_core::shared::derive::RUNTIME_TABLE_BYTES).unwrap_or(0)
+    {
+        return Err(ProtectError::internal("decode table symbol size mismatch"));
+    }
     if seed_symbol.size != 32 {
         return Err(ProtectError::internal("seed symbol size mismatch"));
     }
@@ -500,7 +529,9 @@ mod tests {
         assert!(first.contains("#![forbid(unsafe_code)]"));
         assert!(first.contains("sirus_entry_"));
         assert!(first.contains("SIRUS_PAYLOAD_"));
-        assert!(first.contains("engine::execute"));
+        assert!(first.contains("SIRUS_DECODE_TABLE_"));
+        assert!(first.contains("DecodeTables::from_encrypted"));
+        assert!(first.contains("execute_with_tables"));
     }
 
     #[test]

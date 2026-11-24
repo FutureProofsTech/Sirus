@@ -2,7 +2,7 @@
 
 **Zero-dependency polymorphic code virtualizer in Safe Rust.**
 
-**Release:** `1.1.0-safe` — see [`RELEASE.md`](RELEASE.md) and [`CHANGELOG.md`](CHANGELOG.md).
+**Release:** `1.2.0-safe` — see [`RELEASE.md`](RELEASE.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 Sirus takes a compiled Linux x86-64 ELF, lifts a selected function into an
 internal IR, flattens its control flow, expands sensitive arithmetic through
@@ -13,8 +13,10 @@ the original function body.
 
 The project is a production-grade prototype, not a claim of mathematical
 unbreakability. The full engineering plan is [`PLAN.md`](PLAN.md), the exact
-verification evidence is [`docs/VERIFICATION.md`](docs/VERIFICATION.md), and
-known limits are in [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md).
+verification evidence is [`docs/VERIFICATION.md`](docs/VERIFICATION.md), known
+limits are in [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md), and the measured
+commercial/open-source positioning is in
+[`docs/POSITIONING.md`](docs/POSITIONING.md).
 
 ---
 
@@ -27,6 +29,7 @@ known limits are in [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md).
 | PE/Win64 runtime execution | not yet supported |
 | Random per-build ISA, aliases, operand orders, register maps | working |
 | CFG flattening, encrypted manifest/bodies, decoys, constant blinding | working |
+| Encrypted per-build decode table + fast ARX body stream | working |
 | Linear + non-linear MBA (variable shifts, modular inverse) | working; GAMBA times out, SiMBA reduces |
 | Shared VM for multiple protected functions | working |
 | Safe Rust / no external crates | enforced |
@@ -34,6 +37,9 @@ known limits are in [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md).
 | angr, KLEE, Creusot, dudect-bencher | run locally; bounded/model results stated |
 | 100% line coverage | **not reached; exact current numbers in `docs/VERIFICATION.md`** |
 | Constant-time VM execution | **not claimed; dudect measures a branch leak** |
+| Live memory state | virtual registers/private stack masked at rest; snapshot constant scan passes |
+| Per-call overhead (benchmark leaf function) | default ~74 µs / balanced ~55 µs / minimal ~15 µs; VMProtect 3.11 demo ~10 µs |
+| Cold startup | ~1.2 ms (no packer); VMProtect demo ~2.6 s |
 
 ---
 
@@ -89,6 +95,7 @@ sirus version
 Options:
 
 - `--seed <64-hex>` deterministic build seed
+- `--profile <max|balanced|minimal>` security/performance preset
 - `--fuel <n>` runtime instruction budget (default 2,000,000)
 - `--mba-depth <n>` 0..=8 (default 3)
 - `--mba-budget <n>` expression node budget (default 512)
@@ -168,6 +175,7 @@ crates/sirus-core       no_std compiler, IR, lifter, MBA, ISA, cipher, encoder
 crates/sirus-vm         no_std VM engine and execution tests
 crates/sirus-binfmt     no_std ELF/PE parsers and safe editors
 crates/sirus-protector  std CLI, VM synthesis, rustc driver, injection pipeline
+bench/                   reproducible call-overhead victim and comparison
 fuzz/                    cargo-fuzz harness (external verification tooling only)
 verification/creusot     Creusot/Why3 boundary proof models
 verification/dudect      official dudect-bencher harness

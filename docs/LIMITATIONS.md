@@ -94,19 +94,29 @@ of these controls.
 
 ## 5. Security residuals
 
-- Full `.sirus` segment differential equality is 10.9% between two seeds; handler
+- Full `.sirus` segment differential equality is 11.01% between two seeds; handler
   code skeleton is reused. Payload equality is 0.38%.
 - The linear MBA forms are reduced by GAMBA/SiMBA. On the non-linear
   modular-inverse corpus, GAMBA times out at 20 s and the variable-shift form
   parser-fails; SiMBA still reduces the inverse form. This is measured cost
   asymmetry, not a proof of MBA irreducibility.
+- The body stream is a keyed ARX obfuscation stream, not a cryptographic cipher.
+  SipHash-2-4 remains the manifest/integrity/key primitive.
 - The VM is not constant-time. Official dudect-bencher measured the cipher path at
-  max |t| = 4.42 and the data-dependent VM branch at max |t| = 358.73.
+  max |t| = 3.38 and the data-dependent VM branch at max |t| = 745.81 in the
+  pre-optimization run; the current-tree rerun is recorded in
+  `docs/VERIFICATION.md`.
+- Per-call overhead is about 74 us for the default profile, 55 us for the balanced
+  profile, and 15 us for the minimal profile on the benchmark host. The same
+  function under VMProtect 3.11 demo virtualization is about 10 us. Sirus has
+  much lower startup cost because it does not pack the host image.
 - No whole decrypted bytecode is cached, and the static injected segment has no
-  obvious strings. However, the live-memory diagnostic shows that a sensitive
-  constant used repeatedly can be observed transiently in VM register state.
-  Virtual registers are memory-resident in the safe-Rust VM; this is inherent,
-  not hidden.
+  obvious strings.
+- Virtual registers and private stack bytes are XOR-masked at rest with
+  per-invocation keys. The live-memory diagnostic no longer observes the
+  previously exposed constant. A decoded value can still exist briefly in a
+  local while one instruction executes; an instruction-level tracer is a
+  stronger attacker than the snapshot diagnostic.
 - Payload integrity is not a MAC against an attacker who can rewrite both
   expected hash and key shares; it detects accidental/naive patching, not an
   unlimited local adversary.

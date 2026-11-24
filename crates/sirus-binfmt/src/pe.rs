@@ -889,4 +889,38 @@ mod tests {
         no_slack[0x98 + 60..0x98 + 64].copy_from_slice(&0x1a8_u32.to_le_bytes());
         assert!(append_executable_section(&no_slack, &[0x90; 0x20]).is_err());
     }
+    #[test]
+    fn malformed_prefixes_and_mutations_fail_closed() {
+        let base = synthetic_pe();
+        let mut length = 0_usize;
+        while length <= base.len() {
+            if let Some(prefix) = base.get(..length) {
+                drop(Pe64::parse(prefix));
+            }
+            length = length.saturating_add(5);
+        }
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut round = 0_usize;
+        while round < 512 {
+            let mut mutated = base.clone();
+            let mut flips = 0_usize;
+            while flips < 4 {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                let index =
+                    usize::try_from(state % u64::try_from(mutated.len()).unwrap_or(1)).unwrap_or(0);
+                if let Some(byte) = mutated.get_mut(index) {
+                    *byte ^= u8::try_from((state >> 24) & 0xff).unwrap_or(1);
+                }
+                flips = flips.saturating_add(1);
+            }
+            if let Ok(pe) = Pe64::parse(&mutated) {
+                let _ = pe.find_section(".text");
+                let _ = pe.max_rva_end();
+                let _ = pe.section_table_end();
+            }
+            round = round.saturating_add(1);
+        }
+    }
 }

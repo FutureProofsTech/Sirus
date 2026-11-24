@@ -196,12 +196,12 @@ Implemented exactly in the root `Cargo.toml`:
 | `cargo doc` | stable | executed with `-D warnings`, passing |
 | `cargo-audit` | installed | executed; 0 vulnerabilities |
 | `cargo-deny` | installed | executed; advisories/bans/licenses/sources pass |
-| `cargo-nextest` | installed | executed; 146 tests passing |
-| `cargo-tarpaulin` | installed | executed; 88.51% lines (4921/5560), below 100% |
-| `cargo-llvm-cov` | installed | executed; 88.53% lines / 83.97% regions |
-| `cargo-fuzz` | installed | 164,729 cumulative runs, no crash |
-| Kani 0.68.0 | installed | 5 core + 2 VM harnesses verified |
-| Miri | nightly | 75 core + 8 VM lib + 15 VM execution tests pass |
+| `cargo-nextest` | installed | executed; 158 tests passing |
+| `cargo-tarpaulin` | installed | executed; 90.01% lines (5224/5804), below 100% |
+| `cargo-llvm-cov` | installed | executed; 89.97% lines / 85.14% regions |
+| `cargo-fuzz` | installed | 887,210 cumulative runs, no crash |
+| Kani 0.68.0 | installed | 5 core + 3 VM harnesses verified |
+| Miri | nightly | 80 core + 8 VM lib + 15 VM execution tests pass |
 | valgrind | installed | protected sample clean |
 | gdb/strace/perf | installed | available; no scripted gate yet |
 | cargo-show-asm | installed | used for assembly inspection |
@@ -228,11 +228,11 @@ These remain open, not claimed:
    unavailable licences/accounts; AORAI is a C-only tool; Triton was not run.
    Ghidra, radare2, GAMBA, SiMBA, MBA-Blast, angr, KLEE, Creusot, and
    dudect-bencher are executed.
-3. The VM timing measurement is a real leak (VM branch max |t| = 358.73); it is
+3. The VM timing measurement is a real leak (VM branch max |t| = 745.81); it is
    not constant-time.
 4. Live memory-dump diagnostic exists; its residual transient-constant finding
    must be accepted or mitigated.
-5. Full handler-layout mutation across builds (full `.sirus` equality 10.9%).
+5. Full handler-layout mutation across builds (full `.sirus` equality 11.01%).
 6. Windows PE runtime execution and Win64 ABI validation.
 
 All protector modules are now wired into the crate and included in the Clippy

@@ -21,7 +21,7 @@
 | M6 multiple functions and data binding | complete, shared-VM e2e test |
 | M7 PE structural backend | complete structurally; Windows runtime open |
 | M8 adversarial suite | partial: in-tree, libFuzzer, Kani, Miri, differential, tamper, bypass, valgrind, Ghidra, radare2, GAMBA/SiMBA/MBA-Blast, angr, KLEE, Creusot, dudect-bencher; IDA/Binary Ninja, Ferrocene, Triton, and AORAI remain unavailable/not applicable |
-| M9 production release | **not complete**: coverage is below the 100% target, handler-layout mutation is partial (10.9% equal segment bytes), live memory-dump finds transient VM-register constants, the VM timing branch leaks under dudect, and Windows runtime remains open |
+| M9 production release | **not complete**: coverage is below the 100% target, handler-layout mutation is partial (11.01% equal segment bytes), live memory state is masked at rest and the snapshot diagnostic passes, the VM timing branch leaks under dudect, and Windows runtime remains open; measured performance is ~74 us default / ~15 us minimal versus ~10 us for VMProtect 3.11 demo virtualization |
 
 See `docs/TRACEABILITY.md` and `docs/VERIFICATION.md` for the exact matrix and
 measured evidence.
@@ -930,6 +930,7 @@ These are starting budgets and release gates for the reference sample. Optimizat
 - `docs/TRACEABILITY.md` — every supplied requirement mapped to code/test/status.
 - `docs/VERIFICATION.md` — actual tool transcript and coverage evidence.
 - `docs/RED_TEAM.md` — attack plan, commands, findings, residuals.
+- `docs/POSITIONING.md` — measured comparison with commercial/open-source protectors.
 - `docs/LIMITATIONS.md` — unsupported instructions, ABI, OS support, anti-debug.
 
 ---

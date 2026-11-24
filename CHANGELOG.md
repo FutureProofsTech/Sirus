@@ -2,6 +2,44 @@
 
 All notable changes to Sirus.
 
+## [1.2.0-safe] — 2026-11-24
+
+### Added
+
+- Fast keyed ARX body stream; SipHash-2-4 remains the integrity, manifest, and
+  key-derivation primitive.
+- Per-invocation alias-spec cache and linear-time register-map inversion.
+- Faster deterministic table expander.
+- Encrypted per-build decode-table image with per-call decryption.
+- Masked virtual registers and private stack memory at rest.
+- `max`, `balanced`, and `minimal` profiles.
+- Reproducible call-overhead benchmark (`bench/overhead.rs`,
+  `scripts/bench-overhead.sh`) with default, balanced, and minimal profiles.
+- Measured comparison against VMProtect 3.11 Linux demo virtualization.
+
+### Changed
+
+- Default benchmark per-call overhead reduced from ~539 us to ~74 us on the
+  benchmark host; balanced profile ~55 us, minimal ~15 us. VMProtect 3.11 demo
+  virtualization of the same function is ~10 us.
+- Live memory snapshot no longer observes the sensitive constant; VM state is
+  masked at rest.
+- Full `.sirus` segment equality is 10.95% between two seeds; payload equality is
+  0.40%; entropy is 7.996 Shannon / 7.751 min-entropy.
+- Coverage on the final tree: 90.01% tarpaulin lines (5224/5804); exact llvm-cov number in `docs/VERIFICATION.md`.
+
+### Known limitations
+
+- The body stream is obfuscation, not a cryptographic cipher or MAC.
+- VM execution remains non-constant-time; dudect measures a branch timing leak.
+- Default profile is about 8x slower per call than VMProtect demo virtualization;
+  minimal is about 2x slower but disables MBA/decoy layers.
+- Coverage remains below 100%.
+- Windows runtime, anti-debug/anti-tamper, native self-checksum, and LFENCE remain
+  unsupported or impossible under the safe-Rust constraint.
+- IDA/Binary Ninja, Ferrocene, and Triton are unavailable; AORAI is not applicable
+  to Rust.
+
 ## [1.1.0-safe] — 2026-11-23
 
 ### Added

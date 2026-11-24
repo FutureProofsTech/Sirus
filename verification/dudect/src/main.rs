@@ -1,7 +1,7 @@
-use dudect_bencher::{BenchRng, Class, CtRunner, ctbench_main};
+use dudect_bencher::{ctbench_main, BenchRng, Class, CtRunner};
 use sirus_core::lifter::lift_function;
-use sirus_core::program::{CompileOptions, compile};
-use sirus_vm::engine::{Status, VmInput, execute};
+use sirus_core::program::{compile, CompileOptions};
+use sirus_vm::engine::{execute, Status, VmInput};
 use sirus_vm::shared::chacha::ChaCha20;
 
 struct XorShift(u64);
@@ -25,15 +25,27 @@ fn crypto(runner: &mut CtRunner, _rng: &mut BenchRng) {
     for _ in 0..200_000 {
         let left = random.next() & 1 == 0;
         let key = if left { first_key } else { second_key };
-        runner.run_one(
-            if left { Class::Left } else { Class::Right },
-            || {
-                let mut output = [0_u8; 64];
-                let mut cipher = ChaCha20::new(key, nonce);
-                cipher.fill(&mut output);
-                std::hint::black_box(output);
-            },
-        );
+        runner.run_one(if left { Class::Left } else { Class::Right }, || {
+            let mut output = [0_u8; 64];
+            let mut cipher = ChaCha20::new(key, nonce);
+            cipher.fill(&mut output);
+            std::hint::black_box(output);
+        });
+    }
+}
+
+fn crypto_same(runner: &mut CtRunner, _rng: &mut BenchRng) {
+    let key = [0x11_u8; 32];
+    let nonce = [0x5a_u8; 12];
+    let mut random = XorShift(0x1357_9bdf_2468_ace0);
+    for _ in 0..200_000 {
+        let left = random.next() & 1 == 0;
+        runner.run_one(if left { Class::Left } else { Class::Right }, || {
+            let mut output = [0_u8; 64];
+            let mut cipher = ChaCha20::new(key, nonce);
+            cipher.fill(&mut output);
+            std::hint::black_box(output);
+        });
     }
 }
 
@@ -67,17 +79,14 @@ fn vm(runner: &mut CtRunner, _rng: &mut BenchRng) {
     let mut random = XorShift(0x0f0e_0d0c_0b0a_0908);
     for _ in 0..100_000 {
         let left = random.next() & 1 == 0;
-        runner.run_one(
-            if left { Class::Left } else { Class::Right },
-            || {
-                std::hint::black_box(run(if left {
-                    [7, 3, 0, 0, 0, 0]
-                } else {
-                    [3, 7, 0, 0, 0, 0]
-                }));
-            },
-        );
+        runner.run_one(if left { Class::Left } else { Class::Right }, || {
+            std::hint::black_box(run(if left {
+                [7, 3, 0, 0, 0, 0]
+            } else {
+                [3, 7, 0, 0, 0, 0]
+            }));
+        });
     }
 }
 
-ctbench_main!(crypto, vm);
+ctbench_main!(crypto, crypto_same, vm);

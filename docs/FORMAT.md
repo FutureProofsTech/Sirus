@@ -138,15 +138,47 @@ state = global_key ^ rotl(block_state, 17) ^ body_offset ^ BODY_DOMAIN
 For each byte at absolute offset `i`:
 
 ```text
-h = SipHash24(k0 = state,
-               k1 = rotl(state,29) ^ previous_plain,
-               message = i)
-state = rotl(state,11) + h + i ^ previous_plain
-cipher = plain ^ low8(h)
+mixed = body_mix(state ^ rotl(i,23) ^ previous_plain)
+state = rotl(state,7) + rotl(mixed,31) ^ i ^ previous_plain
+cipher = plain ^ low8(mixed)
 ```
 
-Encryption and decryption are symmetric. Bytes are decoded sequentially into
-locals; no plaintext body buffer exists in the runtime.
+`body_mix` is a SplitMix64-style ARX avalanche function. SipHash-2-4 remains the
+manifest, integrity, and key-derivation primitive; the body stream is an
+obfuscation stream, not a MAC. Encryption and decryption are symmetric. Bytes are
+decoded sequentially into locals; no plaintext body buffer exists in the
+runtime.
+
+---
+
+## 5b. Generated decode table
+
+Generated runtimes embed an encrypted decode-table image containing:
+
+```text
+semantic_of_opcode[256]
+alias_of_opcode[256]
+reg_decode[2][256]
+aliases[160] (opcode, order[4], reg_map, endian, reserved)
+manifest_big_endian
+```
+
+The bytes are XOR-masked with a per-build ARX stream keyed by
+`SipHash24(seed domain)`. `DecodeTables::from_encrypted` verifies length and
+decrypts into a fixed stack table once per protected invocation. Bounds and
+semantic/register filters are applied at use sites; malformed tables fail closed.
+
+---
+
+## 5c. Masked execution state
+
+Before execution, the VM derives a register mask for each virtual register and a
+private-memory keystream from the effective payload key. Register and memory
+reads XOR the mask back in; writes XOR it out. The initial stack fill is also
+stored masked. A passive process dump therefore sees masked values, not the
+plaintext constants used by the protected function. The key is in generated
+code, so this is an at-rest masking layer, not cryptographic isolation from an
+attacker who can execute/debug the VM.
 
 ---
 

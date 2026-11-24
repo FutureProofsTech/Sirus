@@ -21,7 +21,7 @@ under the safe-Rust/no-unsafe constraint.
 | Asymmetric cost, not unbreakability | implemented as stated | `docs/THREAT_MODEL.md`, red-team report |
 | Defeat static decompilation of protected logic | partial | body scrubbed, flattened, encrypted; Ghidra/radare2 executed; IDA/BN unavailable |
 | Break automated symbolic execution | partial | angr 120 s timeout, KLEE 60 s timeout, no completed symbolic path |
-| Invalidate prior work across builds | partial | payload 0.38% equal, ISA/state randomization; full segment 10.9% equal |
+| Invalidate prior work across builds | partial | payload 0.40% equal, ISA/state randomization; full segment 11.01% equal |
 | Two components in one workspace | implemented | core/vm/binfmt/protector crates |
 | Zero external libraries | implemented | `cargo tree`, `cargo deny` |
 
@@ -77,7 +77,7 @@ under the safe-Rust/no-unsafe constraint.
 | Rolling bytecode encryption | implemented | per-byte chained cipher |
 | No complete plaintext bytecode in RAM | implemented by design | byte-at-a-time locals; live scan finds transient register values |
 | ISA layout mutation | partial | payload/aliases/maps/states; handler skeleton reused |
-| Handler layout mutation | partial | `.sirus` similar bytes 10.9% equal |
+| Handler layout mutation | partial | `.sirus` similar bytes 11.01% equal |
 | Build-specific static data | implemented | seed/payload/hash/entry shares |
 
 ### Stage 6 — VM synthesis and injection
@@ -171,7 +171,7 @@ See `docs/CODE_STANDARD_COMPLIANCE.md` and ADR-001.
 | Kani / SMT | run, 7 harnesses pass | `docs/VERIFICATION.md` |
 | Creusot | run, 3 boundary models proved | `verification/creusot`, `scripts/creusot-check.sh` |
 | AORAI | installed (Frama-C 33.0); C-only, not applicable | `docs/VERIFICATION.md` |
-| cargo-fuzz | run, 63,455 final-tree executions (164,729 cumulative) | fuzz/ |
+| cargo-fuzz | run, 348,151 final-tree executions (887,210 cumulative) | fuzz/ |
 | Proptest | external crate prohibited; in-tree property tests implemented | tests |
 | cargo-tarpaulin | run, below the 100% target | coverage report |
 | cargo-llvm-cov | run, independent coverage | `docs/VERIFICATION.md` |
@@ -196,7 +196,7 @@ See `docs/CODE_STANDARD_COMPLIANCE.md` and ADR-001.
 | 6 | No decrypted bytecode in memory | partial | no body cache; live dump finds transient constants in VM registers |
 | 7 | Deep binding / bypass fails | implemented | tamper and forced-return tests |
 | 8 | Hypervisor/debug-register resistance | **not feasible safely** | documented |
-| 9 | Differential builds mutate everything | partial | payload 0.38% equal; full segment 10.9% |
+| 9 | Differential builds mutate everything | partial | payload 0.40% equal; full segment 11.01% |
 | 10 | VM fuzzing no panic/OOB/hang | implemented | in-tree + libFuzzer + Miri + Kani |
 
 ---

@@ -338,4 +338,12 @@ mod tests {
         assert_eq!(custom.len, 2);
         assert_eq!(custom.roles, [ROLE_REG, ROLE_IMM, 0, 0]);
     }
+
+    #[test]
+    fn every_semantic_has_a_layout_and_unknown_is_none() {
+        for semantic in SEMANTIC_IDS {
+            assert!(format(semantic).is_some());
+        }
+        assert!(format(0xfe).is_none());
+    }
 }

@@ -1,7 +1,7 @@
-# Sirus 1.1.0-safe — Release Notes
+# Sirus 1.2.0-safe — Release Notes
 
 **Release type:** safe-tier production prototype
-**Tag:** `v1.1.0-safe`
+**Tag:** `v1.2.0-safe`
 **Platform:** Linux x86-64 end-to-end; PE32+ structural backend
 **Dependency policy:** zero external crates in shipped code
 **Unsafe policy:** `forbid(unsafe_code)` in every shipped crate and generated VM
@@ -37,6 +37,12 @@
 - CFG flattening with random 64-bit state ids.
 - Linear MBA expansion, a variable-shift non-linear layer, data-dependent
   modular multiplication with a Newton modular inverse, and constant blinding.
+- Fast keyed ARX body stream with SipHash-2-4 retained for manifest, integrity,
+  and key derivation.
+- Per-invocation alias-spec caching and linear-time register-map inversion.
+- Encrypted per-build decode-table image, decrypted once per call.
+- Masked virtual registers and private stack memory at rest.
+- `max`, `balanced`, and `minimal` profiles.
 - Opaque guard/decoy synthesis.
 - Randomized ISA: four aliases per semantic, per-alias operand order, two
   register maps, per-alias endianness.
@@ -51,7 +57,7 @@
 
 ### Verification
 
-- 146 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
+- 158 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
   statistical-timing measurement hooks.
 - Real victim compilation and execution differential matrix.
 - Differential two-seed builds.
@@ -75,7 +81,7 @@
 ./scripts/verify.sh
 ```
 
-Passes formatting, Clippy (`-D warnings`, all targets), 146 tests, rustdoc,
+Passes formatting, Clippy (`-D warnings`, all targets), 158 tests, rustdoc,
 audit, deny, Kani, red-team, and memory-dump diagnostic.
 
 ```sh
@@ -88,14 +94,17 @@ Runs Kani, Miri, and libFuzzer. Full Miri execution is slow; set
 
 Recorded evidence:
 
-- Kani: 5 core + 2 VM harnesses.
-- Miri: 8 VM lib + 15 VM execution + 75 core tests.
-- libFuzzer: 164,729 cumulative executions, no crash.
-- Tarpaulin: 88.51% lines (4921/5560).
-- llvm-cov: 88.53% lines, 83.97% regions.
-- Payload differential: 0.38% equal bytes.
-- Full VM segment differential: 10.9% equal bytes.
-- Payload entropy: 7.995 Shannon / 7.691 min-entropy bits/byte.
+- Kani: 5 core + 3 VM harnesses.
+- Miri: 8 VM lib + 15 VM execution + 80 core tests.
+- libFuzzer: 887,210 cumulative executions, no crash.
+- Tarpaulin: 90.01% lines (5224/5804).
+- llvm-cov: 89.97% lines, 85.14% regions.
+- Payload differential: 0.40% equal bytes.
+- Full VM segment differential: 11.01% equal bytes.
+- Payload entropy: 7.996 Shannon / 7.751 min-entropy bits/byte.
+- Per-call benchmark: native 2.1 ns; Sirus default ~74 us; balanced ~55 us;
+  minimal ~15 us; VMProtect 3.11 demo virtualization ~10 us.
+- Cold startup: Sirus ~1.2 ms; VMProtect demo ~2.6 s (packed).
 - No obvious strings in `.sirus`.
 - Original bodies absent from protected file and live memory.
 - Tamper/forced-return alter results; valgrind clean.
@@ -125,9 +134,10 @@ safe-tier substitutes.
 
 ### Live memory
 
-The original body and decrypted body cache are absent. VM virtual registers are
-memory-resident by design; a live dump can observe transient values, including a
-constant used repeatedly. This is documented as a residual.
+The original body and decrypted body cache are absent. Virtual registers and
+private stack bytes are XOR-masked at rest with per-invocation keys; the live
+snapshot diagnostic no longer observes the previously exposed constant. A decoded
+value can still exist briefly in a local inside one executing instruction.
 
 ### External security tools
 
@@ -145,7 +155,7 @@ prebuilt binding.
 ### Coverage
 
 The supplied standard requests 100%. This release remains below that target at
-**88.51% tarpaulin lines / 88.53% llvm-cov lines**. Defensive/error branches remain uncovered. The proof
+**90.01% tarpaulin lines / 89.97% llvm-cov lines**. Defensive/error branches remain uncovered. The proof
 script enforces an 85% regression floor; 100% is not claimed.
 
 ---
@@ -172,6 +182,7 @@ into the safe core silently.
 ```text
 target/release/sirus          stripped protector CLI
 crates/                       shipped source
+bench/                        call-overhead benchmark victim
 fuzz/                         external fuzzing harness
 scripts/verify.sh             fast release gate
 scripts/prove.sh              proof/fuzz gate
@@ -203,9 +214,9 @@ docs/                          architecture, format, threat, proof, traceability
 | External decompiler/MBA/symbolic/formal tools | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect executed; IDA/BN/Ferrocene/Triton unavailable; AORAI not applicable |
 | Windows runtime | **not supported** |
 | Anti-debug/self-code/timing/LFENCE | **not possible under safe-Rust constraint** |
-| Live memory constant secrecy | **residual** |
-| VM constant-time execution | **fail — dudect VM branch max \|t\| = 358.73** |
-| Full handler-layout mutation | **partial (10.9% segment equality)** |
+| Live memory constant secrecy | masked at rest; snapshot scan passes; instruction-local transient remains |
+| VM constant-time execution | **fail — dudect VM branch max \|t\| = 745.81** |
+| Full handler-layout mutation | **partial (11.01% segment equality)** |
 
 This is the final safe-tier product. The items marked fail/open are release
 exceptions, not hidden passes.

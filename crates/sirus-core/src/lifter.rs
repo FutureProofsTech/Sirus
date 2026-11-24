@@ -1212,4 +1212,35 @@ mod tests {
         let code = [0x74, 0x00, 0xc3];
         assert!(lift_function(&code, 0xa000).is_err());
     }
+    #[test]
+    fn arbitrary_opcode_corpus_never_panics() {
+        let mut state = 0x1234_5678_9abc_def0_u64;
+        let mut first = 0_u16;
+        while first < 256 {
+            let mut tail = [0_u8; 16];
+            let mut index = 0_usize;
+            while index < tail.len() {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                if let Some(slot) = tail.get_mut(index) {
+                    *slot = u8::try_from(state & 0xff).unwrap_or(0);
+                }
+                index = index.saturating_add(1);
+            }
+            let mut code = [0_u8; 17];
+            if let Some(slot) = code.first_mut() {
+                *slot = u8::try_from(first & 0xff).unwrap_or(0);
+            }
+            let mut copy = 0_usize;
+            while copy < tail.len() {
+                if let (Some(target), Some(source)) = (code.get_mut(copy + 1), tail.get(copy)) {
+                    *target = *source;
+                }
+                copy = copy.saturating_add(1);
+            }
+            drop(lift_function(&code, 0xb000));
+            first = first.saturating_add(1);
+        }
+    }
 }

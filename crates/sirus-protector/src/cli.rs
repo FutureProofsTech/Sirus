@@ -120,6 +120,32 @@ fn hex_value(arguments: &[OsString], index: &mut usize, flag: &str) -> Result<u6
         .map_err(|_| ProtectError::usage(format!("{flag} must be hexadecimal")))
 }
 
+fn apply_profile(options: &mut CompileOptions, profile: &str) -> Result<()> {
+    match profile {
+        "max" => {
+            options.mba_depth = 3;
+            options.mba_budget = 512;
+            options.decoys = 2;
+        }
+        "balanced" => {
+            options.mba_depth = 1;
+            options.mba_budget = 128;
+            options.decoys = 1;
+        }
+        "minimal" => {
+            options.mba_depth = 0;
+            options.mba_budget = 0;
+            options.decoys = 0;
+        }
+        other => {
+            return Err(ProtectError::usage(format!(
+                "unknown profile `{other}`; expected max, balanced, or minimal"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn parse_protect(arguments: &[OsString]) -> Result<Action> {
     let mut input: Option<PathBuf> = None;
     let mut output: Option<PathBuf> = None;
@@ -167,6 +193,10 @@ fn parse_protect(arguments: &[OsString]) -> Result<Action> {
                 });
             }
             "--seed" => seed = Some(text_value(arguments, &mut index, flag)?),
+            "--profile" => {
+                let profile = text_value(arguments, &mut index, flag)?;
+                apply_profile(&mut options, &profile)?;
+            }
             "--fuel" => options.fuel = number_value(arguments, &mut index, flag)?,
             "--mba-depth" => options.mba_depth = number_value(arguments, &mut index, flag)?,
             "--mba-budget" => options.mba_budget = number_value(arguments, &mut index, flag)?,
@@ -253,6 +283,7 @@ pub const fn help_text() -> &'static str {
      \x20 --marker-begin <hex> --marker-end <hex>\n\n\
      Options:\n\
      \x20 --seed <64-hex>          deterministic build seed\n\
+     \x20 --profile <name>         max (default), balanced, or minimal\n\
      \x20 --fuel <n>               runtime instruction budget (default 2000000)\n\
      \x20 --mba-depth <n>          MBA rewrite depth (0..=8, default 3)\n\
      \x20 --mba-budget <n>         MBA node budget (default 512)\n\
@@ -337,6 +368,60 @@ mod tests {
     }
 
     #[test]
+    fn profiles_set_bounded_compiler_options_and_flags_override() {
+        let action = parse_from(arguments(&[
+            "protect",
+            "--input",
+            "in",
+            "--output",
+            "out",
+            "--function",
+            "demo",
+            "--profile",
+            "balanced",
+        ]))
+        .expect("balanced profile");
+        let Action::Protect(parsed) = action else {
+            panic!("expected protect");
+        };
+        assert_eq!(parsed.options.mba_depth, 1);
+        assert_eq!(parsed.options.mba_budget, 128);
+        assert_eq!(parsed.options.decoys, 1);
+
+        let action = parse_from(arguments(&[
+            "protect",
+            "--input",
+            "in",
+            "--output",
+            "out",
+            "--function",
+            "demo",
+            "--profile",
+            "minimal",
+            "--mba-depth",
+            "2",
+        ]))
+        .expect("profile override");
+        let Action::Protect(parsed) = action else {
+            panic!("expected protect");
+        };
+        assert_eq!(parsed.options.mba_depth, 2);
+        assert_eq!(parsed.options.mba_budget, 0);
+
+        assert!(usage_error(&parse_from(arguments(&[
+            "protect",
+            "--input",
+            "in",
+            "--output",
+            "out",
+            "--function",
+            "demo",
+            "--profile",
+            "unknown",
+        ]))));
+    }
+
+    #[test]
     fn parses_markers_and_exact_symbols() {
         let result = parse_from(arguments(&[
             "protect",
@@ -375,6 +460,72 @@ mod tests {
             parse_from(arguments(&["inspect", "--help"])),
             Ok(Action::Help)
         );
+    }
+
+    #[test]
+    fn rejects_invalid_utf8_and_incomplete_forms() {
+        use std::os::unix::ffi::OsStringExt;
+
+        assert!(usage_error(&parse_from(vec![OsString::from_vec(vec![
+            0xff
+        ])])));
+        assert!(usage_error(&parse_from(vec![
+            OsString::from("protect"),
+            OsString::from_vec(vec![0xff]),
+        ])));
+        assert!(usage_error(&parse_from(arguments(&[
+            "protect",
+            "--input",
+            "in",
+            "--function",
+            "demo",
+        ]))));
+        assert!(usage_error(&parse_from(arguments(&[
+            "protect", "--input", "in", "--output", "out",
+        ]))));
+        assert!(usage_error(&parse_from(arguments(&[
+            "protect",
+            "--input",
+            "in",
+            "--output",
+            "out",
+            "--marker-begin",
+            "48",
+            "--marker-begin",
+            "90",
+        ]))));
+        assert!(usage_error(&parse_from(arguments(&[
+            "protect",
+            "--input",
+            "in",
+            "--output",
+            "out",
+            "--marker-end",
+            "c3",
+        ]))));
+        assert!(usage_error(&parse_from(vec![
+            OsString::from("inspect"),
+            OsString::from_vec(vec![0xff]),
+        ])));
+        assert!(usage_error(&parse_from(arguments(&["inspect", "a", "b"]))));
+        let action = parse_from(arguments(&[
+            "protect",
+            "--input",
+            "in",
+            "--output",
+            "out",
+            "--function",
+            "demo",
+            "--profile",
+            "max",
+        ]))
+        .expect("max profile");
+        let Action::Protect(parsed) = action else {
+            panic!("expected protect");
+        };
+        assert_eq!(parsed.options.mba_depth, 3);
+        assert_eq!(parsed.options.mba_budget, 512);
+        assert_eq!(parsed.options.decoys, 2);
     }
 
     #[test]

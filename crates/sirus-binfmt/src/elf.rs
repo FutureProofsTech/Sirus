@@ -1658,4 +1658,40 @@ mod tests {
         assert!(elf.find_section(".sirus").is_some());
         assert!(elf.find_section(".sirus.payload").is_some());
     }
+    #[test]
+    fn malformed_prefixes_and_mutations_fail_closed() {
+        let base = synthetic_elf();
+        let mut length = 0_usize;
+        while length <= base.len() {
+            if let Some(prefix) = base.get(..length) {
+                drop(Elf64::parse(prefix));
+            }
+            length = length.saturating_add(7);
+        }
+        let mut state = 0x1234_5678_9abc_def0_u64;
+        let mut round = 0_usize;
+        while round < 512 {
+            let mut mutated = base.clone();
+            let mut flips = 0_usize;
+            while flips < 4 {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                let index =
+                    usize::try_from(state % u64::try_from(mutated.len()).unwrap_or(1)).unwrap_or(0);
+                if let Some(byte) = mutated.get_mut(index) {
+                    *byte ^= u8::try_from((state >> 32) & 0xff).unwrap_or(1);
+                }
+                flips = flips.saturating_add(1);
+            }
+            if let Ok(elf) = Elf64::parse(&mutated) {
+                let _ = elf.find_section(".text");
+                drop(elf.symbols());
+                drop(elf.undefined_symbols());
+                let _ = elf.max_load_end();
+                let _ = elf.next_free_vaddr(0x1000);
+            }
+            round = round.saturating_add(1);
+        }
+    }
 }

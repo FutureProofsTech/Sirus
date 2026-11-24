@@ -194,3 +194,43 @@ pub(crate) fn align_up_usize(value: usize, alignment: usize) -> Result<usize> {
         .map(|sum| sum & !mask)
         .ok_or(FormatError::Bounds)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{FormatError, align_up, align_up_usize};
+    use alloc::string::ToString;
+
+    #[test]
+    fn every_format_error_has_a_message() {
+        let errors = [
+            FormatError::Malformed,
+            FormatError::Unsupported,
+            FormatError::Bounds,
+            FormatError::TooManyItems,
+            FormatError::NotFound,
+            FormatError::Ambiguous,
+            FormatError::Overlap,
+            FormatError::JumpOutOfRange,
+            FormatError::PayloadOutsideVm,
+            FormatError::RangeOutsideExecutable,
+            FormatError::BadAlignment,
+            FormatError::SectionTableInvalid,
+            FormatError::AlreadyProtected,
+        ];
+        for error in errors {
+            assert_ne!(error.to_string(), "");
+        }
+    }
+
+    #[test]
+    fn alignment_helpers_reject_zero_non_power_two_and_overflow() {
+        assert_eq!(align_up(0x1000, 0x1000), Ok(0x1000));
+        assert!(align_up(0x1000, 0).is_err());
+        assert!(align_up(0x1000, 3).is_err());
+        assert!(align_up(u64::MAX, 0x1000).is_err());
+        assert_eq!(align_up_usize(0x1000, 0x1000), Ok(0x1000));
+        assert!(align_up_usize(0x1000, 0).is_err());
+        assert!(align_up_usize(0x1000, 3).is_err());
+        assert!(align_up_usize(usize::MAX, 0x1000).is_err());
+    }
+}

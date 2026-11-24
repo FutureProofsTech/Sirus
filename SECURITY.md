@@ -33,10 +33,13 @@ In scope:
 
 Out of scope / documented residuals:
 
+- confidentiality against an analyst who can observe the running process; the body
+  stream is obfuscation, not a cryptographic cipher/MAC (SipHash binds integrity);
 - native self-code checksum evasion (not implemented);
 - RDTSC/debug-register/hypervisor detection (not implemented);
 - LFENCE/Spectre mitigation (not implemented);
-- live memory observation of transient VM register values;
+- live memory observation of a decoded value inside one executing instruction;
+  persistent VM state is masked at rest and the snapshot diagnostic passes;
 - absolute resistance claims beyond the tested Ghidra/radare2/GAMBA/SiMBA/angr/KLEE
   corpus and bounded timeouts;
 - constant-time VM execution (dudect measures a branch timing leak);

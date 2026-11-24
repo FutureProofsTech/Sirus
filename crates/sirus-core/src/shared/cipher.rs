@@ -128,6 +128,16 @@ pub const fn encode_manifest_u64(value: u64, big_endian: bool) -> [u8; 8] {
     }
 }
 
+/// Fast keyed avalanche mixer for the body byte stream.
+#[inline]
+const fn body_mix(mut value: u64) -> u64 {
+    value ^= value >> 30;
+    value = value.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value ^= value >> 27;
+    value = value.wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^ (value >> 31)
+}
+
 /// Rolling cipher state for one block body.
 #[derive(Clone, Copy, Debug)]
 pub struct BodyCipher {
@@ -147,20 +157,21 @@ impl BodyCipher {
 
     /// XORs one byte at an absolute payload offset. `previous_plain` is the
     /// previous decoded byte of the same body, or zero at the start.
+    ///
+    /// The body stream uses a keyed 64-bit ARX mixer rather than a full
+    /// `SipHash-2-4` invocation per byte. `SipHash` remains the integrity,
+    /// manifest, and key-derivation primitive; this fast stream only hides the
+    /// bytecode and must not be treated as a MAC.
     #[inline]
     pub fn apply(&mut self, absolute_offset: usize, previous_plain: u8, byte: u8) -> u8 {
         let index = u64::try_from(absolute_offset).unwrap_or(u64::MAX);
-        let hash = SipHasher24::hash_u64(
-            self.state,
-            self.state.rotate_left(29) ^ u64::from(previous_plain),
-            index,
-        );
-        let mask = u8::try_from(hash & 0xff).unwrap_or(0);
+        let mixed = body_mix(self.state ^ index.rotate_left(23) ^ u64::from(previous_plain));
+        let mask = u8::try_from(mixed & 0xff).unwrap_or(0);
         self.state = self
             .state
-            .rotate_left(11)
-            .wrapping_add(hash)
-            .wrapping_add(index)
+            .rotate_left(7)
+            .wrapping_add(mixed.rotate_left(31))
+            ^ index
             ^ u64::from(previous_plain);
         byte ^ mask
     }
