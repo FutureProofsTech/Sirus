@@ -305,9 +305,12 @@ VMProtect demo 3.11 virtualization measured on its own native baseline):
 | Native (Sirus benchmark build) | ~1.2-1.4 ns | 1x | ~0.0002x |
 | Native (VMProtect benchmark build) | ~1.89 ns | 1x | ~0.0002x |
 | VMProtect 3.11 demo, virtualization | ~8.48 us | ~4,490x | 1x |
-| Sirus default | ~78.6 us | ~66,000x | ~9.3x |
-| Sirus balanced (`depth=1, budget=128, decoys=1`) | ~56.6 us | ~40,700x | ~6.7x |
-| Sirus minimal (`depth=0, budget=0, decoys=0`) | ~13.5 us | ~10,400x | ~1.6x |
+| Sirus default | ~78.1 us | ~41,500x | ~9.2x |
+| Sirus hardened | ~78.8 us | ~41,900x | ~9.3x |
+| Sirus constant-time | ~209 us | ~111,200x | ~24.6x |
+| Sirus hardened constant-time | ~205 us | ~109,300x | ~24.2x |
+| Sirus balanced (`depth=1, budget=128, decoys=1`) | ~57.2 us | ~45,400x | ~6.7x |
+| Sirus minimal (`depth=0, budget=0, decoys=0`) | ~14.1 us | ~10,700x | ~1.7x |
 
 Sirus append size is about 30 KiB (0.7% of the benchmark binary); VMProtect demo
 packs the 4.4 MiB input to a 1.17 MiB output but pays a multi-second startup cost
@@ -465,9 +468,9 @@ bench vm_constant_loop   ... : max t = -1.57791    (loop)
 bench vm_constant_memory ... : max t = -0.97765    (private memory)
 ```
 
-All three `--constant-time` cases stayed below the conventional |t| = 5
-threshold; the worst was |t| = 2.821. The normal profile still leaks because it executes data-dependent
-control flow.
+All four `--constant-time` cases stayed below the conventional |t| = 5
+threshold; the worst was |t| = 2.821. The normal profile still leaks because it
+executes data-dependent control flow.
 
 ## 8h. Tools not executed or not applicable
 
@@ -497,7 +500,7 @@ function RVAs, and runs the native and two protected binaries under Wine 11.20.
 ```text
 PASS Windows/Wine PE32+ runtime (normal + constant-time)
 protected 2 function(s); ... VM segment 52736 bytes; ... (normal)
-protected 2 function(s); ... VM segment 49152 bytes; ... (constant-time)
+protected 2 function(s); ... VM segment 53248 bytes; ... (constant-time)
 ```
 
 The native and protected outputs match for both functions over the input matrix

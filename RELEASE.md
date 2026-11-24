@@ -121,7 +121,7 @@ Recorded evidence:
 - Payload entropy: 7.996 Shannon / 7.751 min-entropy bits/byte.
 - Per-call benchmark: native ~1.2-1.9 ns; Sirus default ~78.1 us; hardened
   ~78.8 us; constant-time ~209 us; hardened constant-time ~205 us; balanced
-  ~56.6 us; minimal ~13.5 us; VMProtect 3.11 demo virtualization ~8.5 us.
+  ~57.2 us; minimal ~14.1 us; VMProtect 3.11 demo virtualization ~8.5 us.
 - Cold startup: Sirus ~0.6 ms; VMProtect demo ~2.6 s (packed).
 - No obvious strings in `.sirus`.
 - Original bodies absent from protected file and live memory.

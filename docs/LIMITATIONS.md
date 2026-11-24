@@ -117,10 +117,12 @@ hypervisor detection remain unimplemented.
   loops return `LoopBound`. Private `Load`/`Store` uses a full-stack byte scan
   with masked selection, making the access pattern fixed but slow. The normal
   branchy profile remains data-dependent and leaks timing.
-- Per-call overhead is about 78.6 us for the default profile, 56.6 us for the
-  balanced profile, and 13.5 us for the minimal profile on the benchmark host.
-  The same function under VMProtect 3.11 demo virtualization is about 8.5 us.
-  Sirus has much lower startup cost because it does not pack the host image.
+- Per-call overhead is about 78.1 us for the default profile, 78.8 us for the
+  hardened profile, 209 us for the constant-time profile, 205 us for hardened
+  constant-time, 57.2 us for the balanced profile, and 14.1 us for the minimal
+  profile on the benchmark host. The same function under VMProtect 3.11 demo
+  virtualization is about 8.5 us. Sirus has much lower startup cost because it
+  does not pack the host image.
 - No whole decrypted bytecode is cached, and the static injected segment has no
   obvious strings.
 - Virtual registers and private stack bytes are XOR-masked at rest with

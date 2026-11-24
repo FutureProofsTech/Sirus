@@ -40,7 +40,7 @@ Verified locally:
 ```text
 PASS Windows/Wine PE32+ runtime (normal + constant-time + hardened)
 protected 2 function(s); ... VM segment 52736 bytes; ... (normal)
-protected 2 function(s); ... VM segment 49152 bytes; ... (constant-time)
+protected 2 function(s); ... VM segment 53248 bytes; ... (constant-time)
 ```
 
 The same victim's branch and loop outputs match the native PE under Wine in

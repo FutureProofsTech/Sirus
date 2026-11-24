@@ -41,9 +41,11 @@ function through its Lua API and uses `CompilationType.Virtualization`.
 | Native (Sirus benchmark build) | **~1.2-1.4 ns** | 1× | 0.0002× | — |
 | Native (VMProtect benchmark build) | **1.89 ns** | 1× | 0.0002× | — |
 | VMProtect 3.11 demo, virtualization | **8.48 µs** | ~4,490× | 1× | not exposed |
-| Sirus default (`depth=3, budget=512, decoys=2`) | **~78.6 µs** | ~66,000× | ~9.3× | 13,390 B payload |
-| Sirus balanced (`depth=1, budget=128, decoys=1`) | **~56.6 µs** | ~40,700× | ~6.7× | 8,396 B payload |
-| Sirus minimal (`depth=0, budget=0, decoys=0`) | **~13.5 µs** | ~10,400× | ~1.6× | 1,268 B payload |
+| Sirus default (`depth=3, budget=512, decoys=2`) | **~78.1 µs** | ~41,500× | ~9.2× | 13,390 B payload |
+| Sirus hardened | **~78.8 µs** | ~41,900× | ~9.3× | 13,390 B payload |
+| Sirus constant-time | **~209 µs** | ~111,200× | ~24.6× | 13,390 B payload |
+| Sirus balanced (`depth=1, budget=128, decoys=1`) | **~57.2 µs** | ~45,400× | ~6.7× | 8,396 B payload |
+| Sirus minimal (`depth=0, budget=0, decoys=0`) | **~14.1 µs** | ~10,700× | ~1.7× | 1,268 B payload |
 
 Representative startup, one call per process:
 
