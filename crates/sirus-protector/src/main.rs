@@ -46,17 +46,36 @@ use std::process::ExitCode;
 use error::{ProtectError, Result};
 
 fn main() -> ExitCode {
-    match run() {
-        Ok(()) => ExitCode::SUCCESS,
+    let worker = std::thread::Builder::new()
+        .name("sirus".to_owned())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(run);
+    let joined = match worker {
+        Ok(handle) => handle.join(),
         Err(error) => {
             let mut stderr = std::io::stderr().lock();
-            drop(writeln!(stderr, "sirus: {error}"));
-            if let ProtectError::Usage(_) = error {
-                ExitCode::from(2)
-            } else {
-                ExitCode::from(1)
-            }
+            drop(writeln!(stderr, "sirus: failed to start worker: {error}"));
+            return ExitCode::from(1);
         }
+    };
+    match joined {
+        Ok(Ok(())) => ExitCode::SUCCESS,
+        Ok(Err(error)) => report_error(&error),
+        Err(_) => {
+            let mut stderr = std::io::stderr().lock();
+            drop(writeln!(stderr, "sirus: worker thread panicked"));
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn report_error(error: &ProtectError) -> ExitCode {
+    let mut stderr = std::io::stderr().lock();
+    drop(writeln!(stderr, "sirus: {error}"));
+    if matches!(error, &ProtectError::Usage(_)) {
+        ExitCode::from(2)
+    } else {
+        ExitCode::from(1)
     }
 }
 

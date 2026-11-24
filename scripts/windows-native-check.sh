@@ -22,16 +22,18 @@ work="target/windows-native"
 rm -rf "$work"
 mkdir -p "$work"
 
+echo "== build protector =="
 cargo build --release -p sirus-protector >/dev/null
+echo "== harden-check =="
 ./target/release/sirus.exe harden-check | tee "$work/harden-check.out"
 grep -q 'debugger_present=false' "$work/harden-check.out"
 grep -q 'debug_registers=0x' "$work/harden-check.out"
-rustc --target x86_64-pc-windows-gnu --edition=2021 \
-    -C opt-level=2 -C panic=abort \
-    -C linker=x86_64-w64-mingw32-gcc \
-    crates/sirus-protector/tests/fixtures/windows_victim.rs \
+echo "== compile C victim =="
+x86_64-w64-mingw32-gcc -O2 \
+    crates/sirus-protector/tests/fixtures/windows_victim.c \
     -o "$work/victim.exe"
 
+echo "== protect normal =="
 ./target/release/sirus.exe protect \
     --input "$work/victim.exe" \
     --output "$work/protected.exe" \
@@ -40,6 +42,7 @@ rustc --target x86_64-pc-windows-gnu --edition=2021 \
     --seed 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff \
     >"$work/protect.out"
 
+echo "== protect constant-time =="
 ./target/release/sirus.exe protect \
     --input "$work/victim.exe" \
     --output "$work/constant.exe" \
@@ -50,6 +53,7 @@ rustc --target x86_64-pc-windows-gnu --edition=2021 \
     --constant-time-passes 256 \
     >"$work/protect-ct.out"
 
+echo "== protect hardened =="
 ./target/release/sirus.exe protect \
     --input "$work/victim.exe" \
     --output "$work/hardened.exe" \
@@ -59,6 +63,7 @@ rustc --target x86_64-pc-windows-gnu --edition=2021 \
     --hardened \
     >"$work/protect-hardened.out"
 
+echo "== run =="
 "$work/victim.exe" >"$work/native.out" 2>"$work/native.err"
 "$work/protected.exe" >"$work/protected.out" 2>"$work/protected.err"
 "$work/constant.exe" >"$work/constant.out" 2>"$work/constant.err"
