@@ -1,7 +1,7 @@
 # Sirus Positioning: Commercial and Open-Source Comparison
 
 **Status:** measured positioning report, not a marketing claim  
-**Sirus target:** `v1.2.0-safe`  
+**Sirus target:** `v1.3.0-safe`
 **Host:** Intel Core i5-14400F, 16 threads, Linux x86-64  
 **Date:** 2026-11-24
 
@@ -27,10 +27,10 @@ function by symbol. VMProtect selects the same `overhead::sirus_demo_check`
 function through its Lua API and uses `CompilationType.Virtualization`.
 
 - native and protected call overhead measured inside the process;
-- 1,000 protected calls per sample, 9 samples, median reported;
+- 1,000 protected calls per sample, 7 samples, median reported;
 - VMProtect 3.11.0 Linux demo, one function, default virtualization, project
   packing left enabled;
-- Sirus 1.2.0 release protector, deterministic seed;
+- Sirus 1.3.0 release protector, deterministic seed;
 - same source, same inputs, matching checksums (`bb8882a0420aed20`);
 - process startup measured separately (1 call, 7 samples).
 
@@ -38,18 +38,19 @@ function through its Lua API and uses `CompilationType.Virtualization`.
 
 | Build | Median per call | vs native | vs VMProtect | VM payload/body |
 |---|---:|---:|---:|---:|
-| Native | **2.1 ns** | 1× | 0.0002× | — |
-| VMProtect 3.11 demo, virtualization | **10.0 µs** | ~4,800× | 1× | not exposed |
-| Sirus default (`depth=3, budget=512, decoys=2`) | **~74 µs** | ~37,000× | ~7.4× | 13,390 B payload |
-| Sirus balanced (`depth=1, budget=128, decoys=1`) | **~55 µs** | ~26,000× | ~5.5× | 8,396 B payload |
-| Sirus minimal (`depth=0, budget=0, decoys=0`) | **~15 µs** | ~7,500× | ~1.5× | 1,268 B payload |
+| Native (Sirus benchmark build) | **1.45 ns** | 1× | 0.0002× | — |
+| Native (VMProtect benchmark build) | **1.89 ns** | 1× | 0.0002× | — |
+| VMProtect 3.11 demo, virtualization | **8.48 µs** | ~4,490× | 1× | not exposed |
+| Sirus default (`depth=3, budget=512, decoys=2`) | **~77.3 µs** | ~53,300× | ~9.1× | 13,390 B payload |
+| Sirus balanced (`depth=1, budget=128, decoys=1`) | **~58.0 µs** | ~39,700× | ~6.8× | 8,396 B payload |
+| Sirus minimal (`depth=0, budget=0, decoys=0`) | **~15.9 µs** | ~11,700× | ~1.9× | 1,268 B payload |
 
 Representative startup, one call per process:
 
 | Build | Startup median | Output size |
 |---|---:|---:|
-| Native | ~1.3 ms | 4,566,192 B |
-| Sirus default | ~1.2 ms | +29,912 B (0.6%) |
+| Native | ~0.65 ms | 4,566,192 B |
+| Sirus default | ~0.67 ms | +30,504 B (0.7%) |
 | VMProtect demo, packed | ~2.6 s | 1,166,840 B (25% of input) |
 
 ### How to reproduce Sirus
@@ -113,7 +114,7 @@ supported. Commercial columns summarize public vendor documentation.
 | Full x86/x64 ISA virtualization | N (subset) | Y | Y | Y | Y | via C source | via LLVM | via C source |
 | ARM64 virtualization | N | Y | Y | N | N | cross-compile | via LLVM | N |
 | Linux ELF runtime | Y | Y | Y | N | N (Windows games) | via compiled C | Y | via compiled C |
-| Windows PE runtime | N | Y | Y | Y | Y | via compiled C | Y | via compiled C |
+| Windows PE runtime | P (Wine-tested leaf subset with branches/loops) | Y | Y | Y | Y | via compiled C | via compiled C | via compiled C |
 | macOS/Mach-O | N | Y | Y | N | N | via compiled C | Y | N |
 | Native mutation / metamorphism | P (MBA, decoys, constant blinding) | Y | Y | Y | Y | Y | Y | N (mov-only) |
 | Control-flow flattening | Y | Y | Y | Y | Y | Y | Y | N/A |
@@ -188,7 +189,7 @@ interpreter. The next useful steps are:
 
 The commercial gap is not mainly the VM concept. It is:
 
-- Windows PE and Win64 ABI;
+- native Windows PE loader/CFG/exception validation (Wine runtime already passes);
 - anti-debug/anti-VM and native self-integrity (requires an opt-in hardened tier
   or unsafe/OS primitives);
 - packing, resource/import protection, licensing;
@@ -202,7 +203,7 @@ The commercial gap is not mainly the VM concept. It is:
 |---|---|
 | Open-source Linux VM-protector engineering | credible prototype |
 | Safe-Rust/no-unsafe property | unusually strong |
-| Per-call performance | within ~1.5× of commercial in minimal mode, ~7.4× in default mode |
+| Per-call performance | within ~2× of commercial in minimal mode, ~9× in default mode |
 | Cold-start performance | strong; no packer |
 | Static/symbolic resistance evidence | unusually well documented for a prototype |
 | Windows/production platform coverage | far behind commercial |

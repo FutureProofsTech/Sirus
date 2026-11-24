@@ -8,7 +8,10 @@ use std::path::Path;
 use sirus_binfmt::elf::{
     Elf64, Injection, PF_X, PT_LOAD, STT_OBJECT, inject, overwrite_vaddr, patch_relative_jump,
 };
-use sirus_binfmt::pe::Pe64;
+use sirus_binfmt::pe::{
+    IMAGE_SCN_MEM_EXECUTE, Pe64, append_executable_section as append_pe_section,
+    patch_relative_jump_rva,
+};
 use sirus_core::ir::MAX_FUNCTION_BYTES;
 use sirus_core::lifter::lift_function;
 use sirus_core::program::{ProgramStats, compile};
@@ -205,9 +208,7 @@ pub fn protect(arguments: &ProtectArgs) -> Result<ProtectReport> {
     let input = fs::read(&arguments.input)
         .map_err(|error| ProtectError::io("read input executable", &error))?;
     if input.starts_with(b"MZ") {
-        return Err(ProtectError::Format(
-            sirus_binfmt::FormatError::UnsupportedAction,
-        ));
+        return protect_pe(arguments, &input);
     }
     let elf = Elf64::parse(&input)?;
     if elf.find_section(".sirus").is_some() {
@@ -316,6 +317,192 @@ pub fn protect(arguments: &ProtectArgs) -> Result<ProtectReport> {
         payload_len: blob.payload_len,
         vm_len: blob.segment.len(),
         output_len,
+        stats: program.stats(),
+    })
+}
+
+fn resolve_pe_selector(pe: &Pe64<'_>, selector: &Selector) -> Result<Target> {
+    match selector {
+        Selector::Exact(name) => {
+            let function = pe.find_function(name)?;
+            Ok(Target {
+                name: function.name,
+                va: u64::from(function.rva),
+                size: u64::from(function.size),
+            })
+        }
+        Selector::Contains(needle) => {
+            let matches = pe.find_functions_containing(needle)?;
+            if matches.is_empty() {
+                return Err(ProtectError::Format(sirus_binfmt::FormatError::NotFound));
+            }
+            if matches.len() > 1 {
+                return Err(ProtectError::Format(sirus_binfmt::FormatError::Ambiguous));
+            }
+            let Some(function) = matches.first() else {
+                return Err(ProtectError::Format(sirus_binfmt::FormatError::NotFound));
+            };
+            Ok(Target {
+                name: function.name.clone(),
+                va: u64::from(function.rva),
+                size: u64::from(function.size),
+            })
+        }
+        Selector::Markers { begin, end } => {
+            let begin_offset = pe.find_pattern_unique(begin)?;
+            let end_offset = pe.find_pattern_unique(end)?;
+            let begin_rva = pe
+                .offset_to_rva(
+                    u32::try_from(begin_offset)
+                        .map_err(|_| ProtectError::internal("PE marker offset"))?,
+                )
+                .ok_or(ProtectError::Format(
+                    sirus_binfmt::FormatError::RangeOutsideExecutable,
+                ))?;
+            let end_rva = pe
+                .offset_to_rva(
+                    u32::try_from(end_offset)
+                        .map_err(|_| ProtectError::internal("PE marker offset"))?,
+                )
+                .ok_or(ProtectError::Format(
+                    sirus_binfmt::FormatError::RangeOutsideExecutable,
+                ))?;
+            if end_rva <= begin_rva {
+                return Err(ProtectError::usage(
+                    "marker end must follow marker begin in the file",
+                ));
+            }
+            Ok(Target {
+                name: format!("markers@{begin_rva:#x}"),
+                va: u64::from(begin_rva),
+                size: u64::from(end_rva - begin_rva),
+            })
+        }
+    }
+}
+
+fn scrub_pe_body(
+    image: &mut [u8],
+    pe: &Pe64<'_>,
+    target: &Target,
+    seed: &Seed,
+    index: usize,
+) -> Result<()> {
+    let rva = u32::try_from(target.va).map_err(|_| ProtectError::internal("PE scrub RVA"))?;
+    let size = u32::try_from(target.size).map_err(|_| ProtectError::internal("PE scrub size"))?;
+    let offset = pe.rva_to_offset(rva, size).ok_or(ProtectError::Format(
+        sirus_binfmt::FormatError::RangeOutsideExecutable,
+    ))?;
+    let start = usize::try_from(offset).map_err(|_| ProtectError::internal("PE scrub offset"))?;
+    let length = usize::try_from(size).map_err(|_| ProtectError::internal("PE scrub length"))?;
+    scrub_range(image, start, length, seed, index)
+}
+
+fn scrub_range(
+    image: &mut [u8],
+    start: usize,
+    length: usize,
+    seed: &Seed,
+    index: usize,
+) -> Result<()> {
+    let domain = 0x5343_5255_4245_0002_u64.wrapping_add(u64::try_from(index).unwrap_or(u64::MAX));
+    let bytes = junk(seed, domain, length);
+    let end = start
+        .checked_add(length)
+        .ok_or_else(|| ProtectError::internal("PE scrub end"))?;
+    let destination = image
+        .get_mut(start..end)
+        .ok_or_else(|| ProtectError::internal("PE scrub bounds"))?;
+    destination.copy_from_slice(&bytes);
+    Ok(())
+}
+
+#[allow(
+    clippy::large_stack_frames,
+    reason = "PE protection owns the bounded lifted-program state"
+)]
+fn protect_pe(arguments: &ProtectArgs, input: &[u8]) -> Result<ProtectReport> {
+    let pe = Pe64::parse(input)?;
+    if pe.find_section(".sirus").is_some() {
+        return Err(ProtectError::Format(
+            sirus_binfmt::FormatError::AlreadyProtected,
+        ));
+    }
+    let mut targets = Vec::with_capacity(arguments.selectors.len());
+    for selector in &arguments.selectors {
+        let target = resolve_pe_selector(&pe, selector)?;
+        let rva = u32::try_from(target.va).map_err(|_| ProtectError::internal("PE target RVA"))?;
+        let size =
+            u32::try_from(target.size).map_err(|_| ProtectError::internal("PE target size"))?;
+        let section = pe.section_for_rva(rva, size).ok_or(ProtectError::Format(
+            sirus_binfmt::FormatError::RangeOutsideExecutable,
+        ))?;
+        if section.characteristics & IMAGE_SCN_MEM_EXECUTE == 0 || size == 0 {
+            return Err(ProtectError::Format(
+                sirus_binfmt::FormatError::RangeOutsideExecutable,
+            ));
+        }
+        if pe.read_rva(rva, size).is_none() {
+            return Err(ProtectError::Format(sirus_binfmt::FormatError::Bounds));
+        }
+        for other in &targets {
+            let other_target: &Target = other;
+            if ranges_overlap(target.va, target.size, other_target.va, other_target.size) {
+                return Err(ProtectError::Format(sirus_binfmt::FormatError::Overlap));
+            }
+        }
+        targets.push(target);
+    }
+    let mut functions = Vec::with_capacity(targets.len());
+    for target in &targets {
+        let rva = u32::try_from(target.va).map_err(|_| ProtectError::internal("PE target RVA"))?;
+        let size =
+            u32::try_from(target.size).map_err(|_| ProtectError::internal("PE target size"))?;
+        let bytes = pe
+            .read_rva(rva, size)
+            .ok_or(ProtectError::Format(sirus_binfmt::FormatError::Bounds))?;
+        let base = pe
+            .optional_header()
+            .image_base
+            .checked_add(u64::from(rva))
+            .ok_or_else(|| ProtectError::internal("PE lift base"))?;
+        let function = lift_function(bytes, base)?;
+        functions.push(function);
+    }
+    let build_seed = match arguments.seed.as_deref() {
+        Some(text) => parse_seed(text)?,
+        None => seed(),
+    };
+    let program = compile(&functions, build_seed, arguments.options)?;
+    let windows = vmgen::build_windows_vm(&program, arguments.keep_temp)?;
+    let injection = append_pe_section(input, &windows.blob)?;
+    let mut image = injection.image;
+    if windows.entry_offsets.len() != targets.len() {
+        return Err(ProtectError::internal("Windows VM entry count"));
+    }
+    for (index, (target, offset)) in targets.iter().zip(&windows.entry_offsets).enumerate() {
+        if arguments.scrub {
+            scrub_pe_body(&mut image, &pe, target, &build_seed, index)?;
+        }
+        let entry_rva = injection
+            .section_rva
+            .checked_add(
+                u32::try_from(*offset).map_err(|_| ProtectError::internal("PE VM entry offset"))?,
+            )
+            .ok_or_else(|| ProtectError::internal("PE VM entry RVA"))?;
+        let from = u32::try_from(target.va).map_err(|_| ProtectError::internal("PE patch RVA"))?;
+        let _ = patch_relative_jump_rva(&mut image, from, entry_rva, false)?;
+    }
+    let metadata = fs::metadata(&arguments.input)
+        .map_err(|error| ProtectError::io("read input permissions", &error))?;
+    write_atomic(&arguments.output, &image, Some(metadata.permissions()))?;
+    Ok(ProtectReport {
+        functions: targets.len(),
+        seed: build_seed,
+        vm_vaddr: u64::from(injection.section_rva),
+        payload_len: program.payload().len(),
+        vm_len: windows.blob.len(),
+        output_len: image.len(),
         stats: program.stats(),
     })
 }
@@ -436,4 +623,23 @@ fn inspect_pe(bytes: &[u8], output: &mut impl Write) -> Result<()> {
         .map_err(|error| ProtectError::io("write PE inspection", &error))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scrub_range;
+
+    #[test]
+    fn scrub_range_overwrites_and_validates_bounds() {
+        let seed = [0x42_u8; 32];
+        let mut image = [0x90_u8; 16];
+        scrub_range(&mut image, 4, 8, &seed, 0).expect("scrub");
+        assert_eq!(image.first_chunk::<4>(), Some(&[0x90_u8; 4]));
+        assert_ne!(image.get(4..12), Some(&[0x90_u8; 8][..]));
+        let mut second = [0x90_u8; 16];
+        scrub_range(&mut second, 4, 8, &seed, 0).expect("deterministic");
+        assert_eq!(image, second);
+        assert!(scrub_range(&mut image, 15, 2, &seed, 0).is_err());
+        assert!(scrub_range(&mut image, usize::MAX, 1, &seed, 0).is_err());
+    }
 }

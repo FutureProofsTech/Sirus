@@ -118,6 +118,8 @@ pub enum CoreError {
     ToolFailure,
     /// Filesystem or process I/O failed.
     Io,
+    /// The function cannot be compiled under the constant-time policy.
+    ConstantTimeUnsupported,
     /// A feature is intentionally unsupported under the current ABI.
     UnsupportedAbi,
 }
@@ -195,6 +197,9 @@ impl fmt::Display for CoreError {
             Self::InvalidBlob => formatter.write_str("generated VM blob is invalid"),
             Self::ToolFailure => formatter.write_str("external tool failed"),
             Self::Io => formatter.write_str("I/O failure"),
+            Self::ConstantTimeUnsupported => formatter.write_str(
+                "constant-time mode rejects data-dependent branches and memory accesses",
+            ),
             Self::UnsupportedAbi => formatter.write_str("unsupported ABI"),
         }
     }

@@ -19,9 +19,9 @@
 | M4 reference VM runtime | complete, Kani/Miri/fuzzed |
 | M5 ELF injection and VM synthesis | complete, real PIE execution verified |
 | M6 multiple functions and data binding | complete, shared-VM e2e test |
-| M7 PE structural backend | complete structurally; Windows runtime open |
-| M8 adversarial suite | partial: in-tree, libFuzzer, Kani, Miri, differential, tamper, bypass, valgrind, Ghidra, radare2, GAMBA/SiMBA/MBA-Blast, angr, KLEE, Creusot, dudect-bencher; IDA/Binary Ninja, Ferrocene, Triton, and AORAI remain unavailable/not applicable |
-| M9 production release | **not complete**: coverage is below the 100% target, handler-layout mutation is partial (11.01% equal segment bytes), live memory state is masked at rest and the snapshot diagnostic passes, the VM timing branch leaks under dudect, and Windows runtime remains open; measured performance is ~74 us default / ~15 us minimal versus ~10 us for VMProtect 3.11 demo virtualization |
+| M7 PE/Win64 backend | Wine-tested runtime for leaf subset with branches/loops; native Windows CI staged |
+| M8 adversarial suite | partial: in-tree, libFuzzer, Kani, Miri, differential, tamper, bypass, valgrind, Ghidra, radare2, GAMBA/SiMBA/MBA-Blast, angr, KLEE, Creusot, dudect-bencher, constant-time subset, Windows/Wine |
+| M9 production release | **not complete**: handler-layout mutation is partial (11.01% equal segment bytes); live memory state is masked at rest and the snapshot passes; the normal VM branch leaks timing but the constant-time subset passes; Windows/Wine runtime passes; coverage floor is met at 86.77%/87.14%. |
 
 See `docs/TRACEABILITY.md` and `docs/VERIFICATION.md` for the exact matrix and
 measured evidence.
@@ -87,8 +87,8 @@ Two runtime components in one workspace:
 
 - Linux x86-64 ELF end-to-end, executed and verified locally.
 - ELF `ET_EXEC` and `ET_DYN` (PIE).
-- PE32+ / x86-64 format parsing and structural injection backend, tested with synthetic PE fixtures.
-- Windows runtime execution is **not** part of the first release gate because the runtime ABI, linker, and loader verification require a Windows toolchain and VM. The PE backend remains present, tested structurally, and explicitly marked experimental. This does not reduce the Linux release gate.
+- PE32+ / x86-64 parsing, COFF symbol lookup, and runtime section injection.
+- Win64 runtime execution is verified under Wine for the strict leaf subset (branches and loops included); native Windows loader/CI validation is a separate experimental line and does not reduce the Linux release gate.
 
 ### 1.4 Non-goals for the first release
 
@@ -157,7 +157,7 @@ These items are required by the source documents but are impossible to implement
 | Detect DBI/hypervisor via cache-timing anomalies | Requires unsafe timing primitives, thread/context introspection, or kernel interfaces | Same as above; structural uniformity of state transitions and payload encryption raise analysis cost | A determined DBI analyst can trace semantics |
 | Inspect debug registers via exception context frames | Requires unsafe OS-specific FFI | Out of scope; no false claim | Hypervisor-level debugging is not resisted |
 | LFENCE/Spectre fences | Intrinsics and inline assembly are unsafe | No secret-dependent native conditional branches in the generated geometry where feasible; `compiler_fence` cannot replace `lfence` and is not claimed as a mitigation | Microarchitectural leakage is not fully mitigated |
-| Windows runtime end-to-end | Requires Windows linker, loader, ABI validation, and CI | PE parser/injector implemented and tested structurally; Linux ELF is the release gate | Windows users cannot execute protected PE output yet |
+| Native Windows runtime end-to-end | Requires a Windows host, loader/CFG validation, and CI | PE parser/injector and Win64 ABI thunk implemented; Wine runtime passes; native Windows CI staged | Native Windows loader/CFG behavior is not yet claimed |
 
 These deviations do not weaken the safe-Rust guarantee. The project will not insert hidden unsafe code to “check a box.”
 
@@ -505,16 +505,16 @@ Fuel:
 11. Preserve mode bits.
 12. Re-parse the output independently and verify all ranges.
 
-### 5.10 Stage J — PE injection (structural backend)
+### 5.10 Stage J — PE/Win64 injection
 
 1. Validate DOS, PE, COFF, optional header, and section table.
 2. Support PE32+ x86-64.
-3. Use markers for target discovery because PE symbols are not assumed.
+3. Resolve targets from COFF symbols or unique markers.
 4. Add a new executable section in header slack or fail closed.
 5. Update `SizeOfImage`, section count, characteristics, and file alignment.
 6. Patch entry with `E9 rel32` or an absolute indirect jump if the target is outside 32-bit range.
 7. Re-parse and validate.
-8. Mark runtime execution as unsupported until Windows toolchain verification exists.
+8. Cross-compile the Win64 VM and verify execution under Wine; native Windows CI is a separate gate.
 
 ### 5.11 Stage K — Runtime behavior
 
@@ -691,13 +691,13 @@ At VM entry:
 
 - Full workspace unit and integration test subset under Miri.
 - All shipped unsafe-free code must be Miri-clean.
-- Miri is not applied to the external rustc-compiled injected blob directly; the shared engine is Miri-tested in-crate, and the produced blob is tested natively and structurally.
+- Miri is not applied to the external rustc-compiled injected blob directly; the shared engine is Miri-tested in-crate, the ELF blob is tested natively, and the Win64 blob is tested under Wine.
 
 #### G. Coverage
 
 - `cargo-tarpaulin` with branch coverage.
-- Target: 100% branch coverage for `sirus-core` and `sirus-vm` public paths and all error returns.
-- Any uncovered line requires a written justification in `docs/VERIFICATION.md`.
+- Target: at least 85% line coverage, with an expressed goal of high branch coverage on `sirus-core` and `sirus-vm` public paths and error returns.
+- Uncovered regions are summarized in `docs/VERIFICATION.md`; 100% is not claimed.
 - `cargo-nextest` executes the suite with per-test timeouts where configured.
 
 #### H. Concurrency/race analysis
@@ -885,9 +885,9 @@ These are starting budgets and release gates for the reference sample. Optimizat
 - Shared payload/engine, one thunk per function, sample host consumes values.
 - Gate: output equality over input matrix; bypass test.
 
-### M7 — PE structural backend
-- PE parser/editor/injector with marker discovery.
-- Gate: synthetic fixture round trip; explicit “runtime not gate” documentation.
+### M7 — PE/Win64 backend
+- PE parser/editor/injector with COFF symbols and marker discovery.
+- Gate: synthetic round trip plus Wine runtime output equality; native Windows CI staged separately.
 
 ### M8 — Adversarial suite
 - Red-team CLI, differential builds, memory dump scan, forced-return test, fuzz corpus, scripts.

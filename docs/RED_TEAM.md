@@ -204,14 +204,16 @@ bench crypto_same ... : max t = -1.01007
 bench vm          ... : max t = -745.81435
 ```
 
-The cipher path is below the conventional |t| = 5 leak threshold; the VM
-data-dependent branch is far above it. The in-tree Welch harness independently
-measured `crypto_t=-3.794` and `vm_t=-56.685`.
+The cipher path is below the conventional |t| = 5 leak threshold; the normal VM
+data-dependent branch is far above it. The `--constant-time` subset (branchless,
+no private memory) measured `max t = -0.87721`, below the threshold; it rejects
+branchy functions rather than pretending they are constant-time. The in-tree
+Welch harness measured `crypto_t=-3.794` and `vm_t=-56.685`.
 
-**Residual:** the VM is not constant-time. Safe Rust can avoid secret-dependent
-machine branches inside a cipher, but a general virtualizer must branch on
-virtual control flow. This is a real, measured limitation, not a claim of
-immunity.
+**Residual:** the normal branchy VM profile is not constant-time. Safe Rust can
+avoid secret-dependent machine branches inside a cipher, but a general
+virtualizer must branch on virtual control flow. The explicit subset is the
+measured constant-time boundary; no general immunity is claimed.
 
 ---
 
@@ -259,7 +261,7 @@ masked shifts, no division, checked memory, deterministic fuel, no panic path.
 
 - deterministic in-tree fuzz: 20,000 random payloads + 10,000 valid-payload
   mutations, no panic/hang;
-- libFuzzer: **348,151 final-tree runs in 21 s; 887,210 cumulative across sessions**, no crash;
+- libFuzzer: **985,477 final-tree runs in 61 s; 1,872,687 cumulative across sessions**, no crash;
 - Kani: 5 core + 2 VM bounds harnesses verified;
 - Miri: core and VM unit/full execution suites pass;
 - malformed-payload suite covers bad count/offset/length/opcode/register/trap/fuel.

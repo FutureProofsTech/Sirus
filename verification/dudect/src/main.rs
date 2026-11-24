@@ -89,4 +89,41 @@ fn vm(runner: &mut CtRunner, _rng: &mut BenchRng) {
     }
 }
 
-ctbench_main!(crypto, crypto_same, vm);
+fn vm_constant(runner: &mut CtRunner, _rng: &mut BenchRng) {
+    // Straight-line: imul rax, rsi; ret
+    let code = [0x48, 0x89, 0xf8, 0x48, 0x0f, 0xaf, 0xc6, 0xc3];
+    let function = lift_function(&code, 0x1000).expect("lift");
+    let mut options = CompileOptions::new();
+    options.constant_time = true;
+    let program = compile(&[function], [0x6d_u8; 32], options).expect("compile");
+    let run = |args: [u64; 6]| {
+        let result = execute(
+            VmInput::new(
+                program.payload(),
+                program.seed(),
+                program.expected_hash(),
+                program.base_a(),
+                program.base_b(),
+                program.entry_states(),
+                program.fuel(),
+            ),
+            0,
+            args,
+        );
+        assert_eq!(result.status, Status::Returned);
+        result.value
+    };
+    let mut random = XorShift(0x0f0e_0d0c_0b0a_0908);
+    for _ in 0..100_000 {
+        let left = random.next() & 1 == 0;
+        runner.run_one(if left { Class::Left } else { Class::Right }, || {
+            std::hint::black_box(run(if left {
+                [7, 3, 0, 0, 0, 0]
+            } else {
+                [3, 7, 0, 0, 0, 0]
+            }));
+        });
+    }
+}
+
+ctbench_main!(crypto, crypto_same, vm, vm_constant);

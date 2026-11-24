@@ -1,0 +1,21 @@
+name: Windows-Wine
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main", "master"]
+
+jobs:
+  pe32-wine:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - name: Install Wine and mingw-w64
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wine64 mingw-w64 lld
+      - name: Build and run the Win64/Wine gate
+        run: ./scripts/windows-wine-check.sh

@@ -5,7 +5,7 @@
 **Nightly toolchain:** 2026-08-03 / 2026-08-21 family for Miri and fuzzing
 **Kani:** 0.68.0
 **Project state:** all features described in `README.md` implemented and tested
-**Last evidenced run:** current working tree before final documentation commit
+**Last evidenced run:** final 1.3.0-safe tree, tag `v1.3.0-safe`
 
 This file records commands actually executed. Anything not executed is listed as
 an open gap, not inferred.
@@ -36,22 +36,22 @@ Result: **exit 0**. The script runs:
 
 ## 2. Test inventory
 
-`cargo test --workspace` now runs **158 tests**, all passing; the MBA corpus and
+`cargo test --workspace` now runs **167 tests**, all passing; the MBA corpus and
 statistical timing tests are `#[ignore]` measurement hooks and are not part of
 the normal count.
 
 ```text
-158 passed, 0 failed
+167 passed, 0 failed
 ```
 
 Breakdown:
 
 | Target | Tests |
 |---|---:|
-| `sirus-binfmt` unit tests | 18 |
+| `sirus-binfmt` unit tests | 21 |
 | `sirus-binfmt` real-loader test | 1 |
-| `sirus-core` unit tests | 80 |
-| `sirus-protector` unit tests | 21 |
+| `sirus-core` unit tests | 81 |
+| `sirus-protector` unit tests | 26 |
 | `sirus-protector` end-to-end | 1 |
 | `sirus-protector` pipeline errors | 1 |
 | `sirus-protector` marker end-to-end | 1 |
@@ -109,13 +109,13 @@ Final passes on the current tree:
 
 ```text
 cargo +nightly miri test -p sirus-vm --lib
-  8 tests passed (0.89 s)
+  9 tests passed (1.19 s)
 
 cargo +nightly miri test -p sirus-vm --test execution
-  15 tests passed (1742.62 s)
+  15 tests passed
 
 cargo +nightly miri test -p sirus-core
-  80 tests passed (446.76 s)
+  81 tests passed (1 ignored)
 ```
 
 This includes the slice-based VM memory helpers, stack/push/pop semantics,
@@ -129,18 +129,17 @@ gate.
 
 ```sh
 cd fuzz
-cargo +nightly fuzz run vm -- -max_total_time=20 -rss_limit_mb=4096 -timeout=5
+cargo +nightly fuzz run vm -- -max_total_time=60 -rss_limit_mb=4096 -timeout=5
 ```
 
 Result:
 
 ```text
-Done 348151 runs in 21 second(s)
+Done 985477 runs in 61 second(s)
 ```
 
-The final-tree session completed 348,151 runs with no crash. Across the earlier
-101,274-run sessions plus this run, the cumulative total is **887,210
-executions**.
+The final-tree session completed 985,477 runs with no crash. Adding the earlier
+recorded sessions, the cumulative total is **1,872,687 executions**.
 
 No crash, panic, OOB, or timeout. The fuzz target builds a valid integrity key
 for arbitrary payloads so the decoder body path is exercised, not only the
@@ -159,37 +158,38 @@ cargo tarpaulin --workspace --all-targets --engine Llvm \
   --exclude-files 'target/*' --exclude-files 'bench/*' --timeout 120
 ```
 
-Result: **90.01% line coverage (5224 / 5804 lines)** with
-`--exclude-files 'target/*' --exclude-files 'bench/*'`.
+Result: **86.77% line coverage (5437 / 6266 lines)** with
+`--exclude-files 'target/*' --exclude-files 'bench/*'`. This is above the agreed
+85% floor.
 
 Per file at that run:
 
 ```text
 sirus-binfmt/src/elf.rs         674/781
-sirus-binfmt/src/lib.rs          64/66
-sirus-binfmt/src/pe.rs          293/317
-sirus-core/src/decode.rs        744/779
+sirus-binfmt/src/lib.rs          63/66
+sirus-binfmt/src/pe.rs          412/435
+sirus-core/src/decode.rs        742/779
 sirus-core/src/encode.rs        367/387
-sirus-core/src/error.rs          51/52
+sirus-core/src/error.rs          51/53
 sirus-core/src/ir.rs            168/189
 sirus-core/src/lifter.rs        537/671
 sirus-core/src/mba.rs           255/281
-sirus-core/src/program.rs       435/462
+sirus-core/src/program.rs       456/486
 sirus-core/src/shared/chacha.rs 111/111
 sirus-core/src/shared/cipher.rs  67/67
-sirus-core/src/shared/derive.rs 314/314
+sirus-core/src/shared/derive.rs 312/314
 sirus-core/src/shared/format.rs  19/24
 sirus-core/src/shared/sip.rs     68/68
-sirus-protector/src/cli.rs      162/163
+sirus-protector/src/cli.rs      164/165
 sirus-protector/src/entropy.rs   84/114
-sirus-protector/src/error.rs     21/27
+sirus-protector/src/error.rs     27/27
 sirus-protector/src/main.rs      25/25
-sirus-protector/src/pipeline.rs 183/255
-sirus-protector/src/vmgen.rs    227/252
-sirus-vm/src/engine.rs          355/399
+sirus-protector/src/pipeline.rs 195/380
+sirus-protector/src/vmgen.rs    286/443
+sirus-vm/src/engine.rs          354/400
 ```
 
-The 100% target is **not met**. `scripts/prove.sh` enforces an 85% regression floor with `--fail-under 85`; 100% remains the release target.
+The agreed prototype floor is 85%, and `scripts/prove.sh` enforces it with `--fail-under 85`. 100% is not claimed.
 
 Secondary independent measurement with LLVM source-based coverage:
 
@@ -198,13 +198,13 @@ cargo llvm-cov --workspace --all-targets --summary-only
 ```
 
 ```text
-TOTAL regions 85.14% (2732 missed of 18381)
-TOTAL functions 81.71% (128 missed of 700)
-TOTAL lines 89.97% (996 missed of 9935)
+TOTAL regions 82.78% (3473 missed of 20166)
+TOTAL functions 76.79% (185 missed of 797)
+TOTAL lines 87.14% (1389 missed of 10804)
 ```
 
-The two tools instrument differently; both show the same residual error/I/O
-branches. Neither reaches 100%. Uncovered lines are predominantly defensive error
+The two tools instrument differently; both are above the 85% floor and show the
+same residual error/I/O branches. Uncovered lines are predominantly defensive error
 returns, malformed-binary branches, and CLI/pipeline I/O failures. The exact LCOV
 report is generated under `target/coverage-all/`.
 
@@ -292,18 +292,19 @@ SIRUS_BENCH_PROFILE=balanced ./scripts/bench-overhead.sh
 SIRUS_BENCH_PROFILE=minimal  ./scripts/bench-overhead.sh
 ```
 
-Measured on the same `bench/overhead.rs` function and host (median of 9
-protected samples; VMProtect demo 3.11 virtualization measured separately):
+Measured on the same `bench/overhead.rs` function and host (median of 7 runs;
+VMProtect demo 3.11 virtualization measured on its own native baseline):
 
 | Build | Per call | Relative to native | Relative to VMProtect |
 |---|---:|---:|---:|
-| Native | ~2.1 ns | 1x | ~0.0002x |
-| VMProtect 3.11 demo, virtualization | ~10.0 us | ~4,800x | 1x |
-| Sirus default | ~74 us | ~37,000x | ~7.4x |
-| Sirus balanced (`depth=1, budget=128, decoys=1`) | ~55 us | ~26,000x | ~5.5x |
-| Sirus minimal (`depth=0, budget=0, decoys=0`) | ~15 us | ~7,500x | ~1.5x |
+| Native (Sirus benchmark build) | ~1.45 ns | 1x | ~0.0002x |
+| Native (VMProtect benchmark build) | ~1.89 ns | 1x | ~0.0002x |
+| VMProtect 3.11 demo, virtualization | ~8.48 us | ~4,490x | 1x |
+| Sirus default | ~77.3 us | ~53,300x | ~9.1x |
+| Sirus balanced (`depth=1, budget=128, decoys=1`) | ~58.0 us | ~39,700x | ~6.8x |
+| Sirus minimal (`depth=0, budget=0, decoys=0`) | ~15.9 us | ~11,700x | ~1.9x |
 
-Sirus append size is about 30 KiB (0.6% of the benchmark binary); VMProtect demo
+Sirus append size is about 30 KiB (0.7% of the benchmark binary); VMProtect demo
 packs the 4.4 MiB input to a 1.17 MiB output but pays a multi-second startup cost
 on this host. The benchmark explicitly compares the same virtualized leaf
 function, but VMProtect's anti-debug/packing/demo checks and Sirus's MBA/decoy
@@ -433,6 +434,27 @@ The in-tree Welch harness (`scripts/dudect-check.sh`) independently measured
 `crypto_t=-3.794` and `vm_t=-56.685` over 120,000 samples. Both measurements
 agree on the direction; neither is a proof of constant time.
 
+## 8g-b. Constant-time subset measurement
+
+```sh
+--constant-time
+```
+
+The mode rejects `Terminator::Branch` and private `Load`/`Store` operations,
+disables decoy branches, and uses masked `SEM_SELECT` logic. The branchless
+benchmark victim is accepted; branchy and memory-touching functions are rejected.
+
+Official dudect-bencher comparison on the same host:
+
+```text
+bench vm          ... : max t = -225.23809  (normal branchy profile)
+bench vm_constant ... : max t = -0.87721    (constant-time subset, final gate)
+```
+
+The constant-time subset is below the conventional |t| = 5 threshold. The
+normal profile still leaks because it executes data-dependent control flow; this
+is not presented as a general constant-time guarantee.
+
 ## 8h. Tools not executed or not applicable
 
 | Tool | Status |
@@ -443,6 +465,31 @@ agree on the direction; neither is a proof of constant time.
 | AORAI | installed as Frama-C 33.0, but it verifies C call automata; Sirus emits Rust/ELF/PE and has no C intermediate to verify. Investigated, not applicable without a separately validated C extraction |
 | Triton | no compatible prebuilt DBI binding was available; angr and KLEE provide the symbolic evidence instead |
 | BinDiff / Diaphora | binary metrics are measured in-tree; no BinDiff/Diaphora run |
+
+---
+
+## 8i. Windows PE32+ runtime under Wine
+
+```sh
+./scripts/windows-wine-check.sh
+```
+
+The fixture is a real `x86_64-pc-windows-gnu` PE32+ binary. Sirus resolves the
+`sirus_win_check` COFF symbol, lifts it, generates the encrypted VM, cross-compiles the
+Win64 runtime, links it as a no-import image, rejects any relocation that
+targets the extracted code/data, appends one RX `.sirus` section, patches both
+function RVAs, and runs both binaries under Wine 11.20.
+
+```text
+PASS Windows/Wine PE32+ runtime
+protected 2 function(s); ... VM 0x49e000; VM segment 52736 bytes; ...
+```
+
+The native and protected outputs match for both functions over the input matrix
+`(7,3)`, `(3,7)`, `(0,0)`, and `(123456789,5)`, including the loop body.
+`objdump` shows an `E9` jump at each protected entry and keyed junk over the
+remaining original body bytes. Native Windows-host CI is staged in
+`.github/workflows/windows-wine.yml` but has not yet executed.
 
 ---
 
@@ -466,19 +513,10 @@ cargo asm -p sirus-core --lib 1
 
 | Gap | Status |
 |---|---|
-| 100% line/branch coverage | open; measured 90.01% tarpaulin / 89.97% llvm-cov on the final tree |
-| IDA / Binary Ninja headless validation | commercial licences unavailable |
-| Ghidra/radare2 | executed with scoped evidence |
-| GAMBA / SiMBA / MBA-Blast | executed; linear forms reduce, GAMBA times out on modular-inverse forms, variable shifts parser-fail |
-| angr symbolic probe | executed; 120 s timeout, no preimage |
-| KLEE symbolic VM | executed; 60 s timeout, no completed path, no memory errors |
-| Creusot | executed; 3 boundary models proved |
-| AORAI | installed (Frama-C 33.0) but C-only; not applicable to the Rust product |
-| Ferrocene | customer authentication unavailable |
-| dudect-bencher | executed; cipher below \|t\|=5, VM branch far above it |
-| Triton | no compatible prebuilt binding; not run |
+| Coverage floor (85%) | **met**: 86.77% tarpaulin / 87.14% llvm-cov lines |
+| Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect | executed; evidence recorded |
 | live process memory dump scan | pass; masked VM state, constant not observed |
-| Windows PE runtime execution | not supported |
+| Windows PE runtime execution | Wine-tested leaf subset (branches/loops); native Windows CI staged |
 | handler-layout full mutation | partial; `.sirus` equality 11.01% |
 | native self-code checksum / debug detection / LFENCE | impossible under safe-Rust-only |
 

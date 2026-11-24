@@ -30,6 +30,8 @@ pub struct CompileOptions {
     pub mba_budget: u16,
     /// Number of opaque guard/decoy pairs per function.
     pub decoys: u8,
+    /// Reject data-dependent branches and memory accesses and disable decoys.
+    pub constant_time: bool,
     /// Instruction budget for one runtime invocation.
     pub fuel: u64,
 }
@@ -43,6 +45,7 @@ impl CompileOptions {
             mba_depth: 3,
             mba_budget: 512,
             decoys: 2,
+            constant_time: false,
             fuel: DEFAULT_FUEL,
         }
     }
@@ -379,6 +382,35 @@ fn finalize(
     })
 }
 
+fn validate_constant_time(functions: &[LiftedFunction]) -> Result<()> {
+    let mut function_index = 0_usize;
+    while function_index < functions.len() {
+        let Some(function) = functions.get(function_index) else {
+            return Err(CoreError::InvalidFunctionSize { size: 0 });
+        };
+        let mut block_index = 0_usize;
+        while block_index < function.blocks.len() {
+            let Some(block) = function.blocks.get(block_index) else {
+                return Err(CoreError::InvalidBlock { block: u16::MAX });
+            };
+            if matches!(block.terminator, Terminator::Branch { .. }) {
+                return Err(CoreError::ConstantTimeUnsupported);
+            }
+            let Some(ops) = function.block_ops(block) else {
+                return Err(CoreError::InvalidBlock { block: u16::MAX });
+            };
+            for op in ops {
+                if matches!(op, IrOp::Load { .. } | IrOp::Store { .. }) {
+                    return Err(CoreError::ConstantTimeUnsupported);
+                }
+            }
+            block_index = block_index.saturating_add(1);
+        }
+        function_index = function_index.saturating_add(1);
+    }
+    Ok(())
+}
+
 /// Compiles one or more lifted functions into a shared encrypted VM payload.
 ///
 /// All functions share one ISA plan, one cipher stream, one integrity binding,
@@ -395,6 +427,14 @@ pub fn compile(
     options: CompileOptions,
 ) -> Result<CompiledProgram> {
     options.validate()?;
+    if options.constant_time {
+        validate_constant_time(functions)?;
+    }
+    let decoy_setting = if options.constant_time {
+        0
+    } else {
+        options.decoys
+    };
     if functions.is_empty() || functions.len() > MAX_FUNCTIONS {
         return Err(CoreError::InvalidFunctionSize {
             size: u64::try_from(functions.len()).unwrap_or(u64::MAX),
@@ -467,7 +507,7 @@ pub fn compile(
             block_index = block_index.saturating_add(1);
         }
         shuffle_u16(&mut candidates, &mut state_rng);
-        let planned = usize::from(options.decoys)
+        let planned = usize::from(decoy_setting)
             .min(candidates.len())
             .min(remaining_pairs);
         remaining_pairs = remaining_pairs.saturating_sub(planned);
@@ -546,7 +586,7 @@ pub fn compile(
             block_index = block_index.saturating_add(1);
         }
         shuffle_u16(&mut candidates, &mut encode_rng);
-        let decoys = usize::from(options.decoys)
+        let decoys = usize::from(decoy_setting)
             .min(candidates.len())
             .min((total.saturating_sub(original)) / 2);
         let mut decoy_index = 0_usize;
@@ -809,6 +849,38 @@ mod tests {
             assert!(first.stats().payload_bytes > 0);
             assert_eq!(first.stats().functions, 1);
         }
+    }
+
+    #[test]
+    fn constant_time_accepts_branchless_and_rejects_branch_or_memory() {
+        let straight = [0x48, 0x89, 0xf8, 0x48, 0x01, 0xf0, 0xc3];
+        let function = lift_function(&straight, 0x1000).expect("lift straight");
+        let mut options = CompileOptions::new();
+        options.constant_time = true;
+        options.decoys = 2;
+        let program = compile(&[function], [0x33_u8; 32], options).expect("constant time");
+        assert_eq!(program.stats().decoy_blocks, 0);
+
+        let branch = [
+            0x48, 0x39, 0xf7, 0x76, 0x07, 0x48, 0x89, 0xf8, 0x48, 0x01, 0xf0, 0xc3, 0x48, 0x89,
+            0xf8, 0x48, 0x29, 0xf0, 0xc3,
+        ];
+        let function = lift_function(&branch, 0x2000).expect("lift branch");
+        let mut options = CompileOptions::new();
+        options.constant_time = true;
+        assert!(matches!(
+            compile(&[function], [0x44_u8; 32], options),
+            Err(crate::error::CoreError::ConstantTimeUnsupported)
+        ));
+
+        let memory = [0x48, 0x8b, 0x07, 0xc3];
+        let function = lift_function(&memory, 0x3000).expect("lift memory");
+        let mut options = CompileOptions::new();
+        options.constant_time = true;
+        assert!(matches!(
+            compile(&[function], [0x55_u8; 32], options),
+            Err(crate::error::CoreError::ConstantTimeUnsupported)
+        ));
     }
 
     #[test]

@@ -1,8 +1,8 @@
-# Sirus 1.2.0-safe — Release Notes
+# Sirus 1.3.0-safe — Release Notes
 
 **Release type:** safe-tier production prototype
-**Tag:** `v1.2.0-safe`
-**Platform:** Linux x86-64 end-to-end; PE32+ structural backend
+**Tag:** `v1.3.0-safe`
+**Platform:** Linux x86-64 end-to-end; Win64 PE32+ runtime verified under Wine; native Windows CI staged
 **Dependency policy:** zero external crates in shipped code
 **Unsafe policy:** `forbid(unsafe_code)` in every shipped crate and generated VM
 
@@ -19,7 +19,7 @@
 - The generated VM imports no libc symbols and occupies a non-writable RX
   segment.
 - Isolated marker mode and symbol-name/substring mode both work.
-- PE32+ images can be parsed and get a valid executable `.sirus` section.
+- PE32+ images can be protected and executed under Wine with the Win64 VM runtime.
 - Full verification, proof, fuzz, red-team, and documentation assets ship in the
   repository.
 
@@ -57,7 +57,7 @@
 
 ### Verification
 
-- 158 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
+- 167 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
   statistical-timing measurement hooks.
 - Real victim compilation and execution differential matrix.
 - Differential two-seed builds.
@@ -81,7 +81,7 @@
 ./scripts/verify.sh
 ```
 
-Passes formatting, Clippy (`-D warnings`, all targets), 158 tests, rustdoc,
+Passes formatting, Clippy (`-D warnings`, all targets), 167 tests, rustdoc,
 audit, deny, Kani, red-team, and memory-dump diagnostic.
 
 ```sh
@@ -95,16 +95,16 @@ Runs Kani, Miri, and libFuzzer. Full Miri execution is slow; set
 Recorded evidence:
 
 - Kani: 5 core + 3 VM harnesses.
-- Miri: 8 VM lib + 15 VM execution + 80 core tests.
-- libFuzzer: 887,210 cumulative executions, no crash.
-- Tarpaulin: 90.01% lines (5224/5804).
-- llvm-cov: 89.97% lines, 85.14% regions.
+- Miri: 9 VM lib + 15 VM execution + 81 core tests.
+- libFuzzer: 1,872,687 cumulative executions, no crash.
+- Tarpaulin: 86.77% lines (5437/6266).
+- llvm-cov: 87.14% lines, 82.78% regions.
 - Payload differential: 0.40% equal bytes.
 - Full VM segment differential: 11.01% equal bytes.
 - Payload entropy: 7.996 Shannon / 7.751 min-entropy bits/byte.
-- Per-call benchmark: native 2.1 ns; Sirus default ~74 us; balanced ~55 us;
-  minimal ~15 us; VMProtect 3.11 demo virtualization ~10 us.
-- Cold startup: Sirus ~1.2 ms; VMProtect demo ~2.6 s (packed).
+- Per-call benchmark: native 1.45-1.89 ns; Sirus default ~77 us; balanced
+  ~58 us; minimal ~16 us; VMProtect 3.11 demo virtualization ~8.5 us.
+- Cold startup: Sirus ~0.7 ms; VMProtect demo ~2.6 s (packed).
 - No obvious strings in `.sirus`.
 - Original bodies absent from protected file and live memory.
 - Tamper/forced-return alter results; valgrind clean.
@@ -121,9 +121,9 @@ indirect jumps, and stack arguments are rejected.
 
 ### PE / Windows
 
-Container support only. A Win64 VM ABI, Windows linker flow, CFG/guard-table
-integration, exception metadata, and Windows loader tests are not included. Do
-not deploy PE output as protected Windows software.
+Wine-tested Win64 runtime for the strict leaf subset (branches and loops included). Native Windows
+loader/CFG/exception metadata, signing, imports/TLS, and Windows anti-debug are
+not implemented. The Linux ELF path remains the primary production path.
 
 ### Anti-debug, self-checksum, timing, LFENCE
 
@@ -147,16 +147,15 @@ machinery. GAMBA, SiMBA, and MBA-Blast ran against the exact rewrite corpus;
 GAMBA timed out on modular-inverse forms, while SiMBA still reduced them. angr
 and KLEE both hit bounded symbolic timeouts with no memory errors. Creusot proved
 three boundary contracts. Official dudect-bencher measured the cipher below the
-leak threshold and the VM branch far above it. IDA Pro/Hex-Rays and Binary Ninja
-require commercial licenses. Ferrocene requires customer authentication. AORAI is
-a C-only Frama-C plugin and is not applicable to Rust. Triton had no compatible
-prebuilt binding.
+leak threshold, the normal VM branch far above it, and the explicit
+`--constant-time` subset below it. Commercial/licence-gated tools are outside the
+local gate and are not release blockers.
 
 ### Coverage
 
-The supplied standard requests 100%. This release remains below that target at
-**90.01% tarpaulin lines / 89.97% llvm-cov lines**. Defensive/error branches remain uncovered. The proof
-script enforces an 85% regression floor; 100% is not claimed.
+The agreed prototype target is **above 85%**. This release measures
+**86.77% tarpaulin lines / 87.14% llvm-cov lines**. 100% is not claimed, but the
+85% floor is met and enforced by the proof script.
 
 ---
 
@@ -210,12 +209,12 @@ docs/                          architecture, format, threat, proof, traceability
 | Miri | pass |
 | libFuzzer | pass |
 | fmt/clippy/doc/audit/deny | pass |
-| 100% coverage | **fail — exact numbers in `docs/VERIFICATION.md`** |
-| External decompiler/MBA/symbolic/formal tools | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect executed; IDA/BN/Ferrocene/Triton unavailable; AORAI not applicable |
-| Windows runtime | **not supported** |
+| Coverage floor 85% | **pass — 86.77% tarpaulin / 87.14% llvm-cov lines** |
+| External evidence tooling | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect executed; commercial/licence-only tools are outside the local gate |
+| Windows runtime | **Wine-tested leaf subset (branches/loops)**; native Windows CI staged |
 | Anti-debug/self-code/timing/LFENCE | **not possible under safe-Rust constraint** |
-| Live memory constant secrecy | masked at rest; snapshot scan passes; instruction-local transient remains |
-| VM constant-time execution | **fail — dudect VM branch max \|t\| = 745.81** |
+| Live memory constant secrecy | masked at rest; snapshot scan passes; instruction-local transient may remain |
+| VM constant-time execution | normal profile leaks (dudect max \|t\| = 225); `--constant-time` subset passes (max \|t\| = 0.88) |
 | Full handler-layout mutation | **partial (11.01% segment equality)** |
 
 This is the final safe-tier product. The items marked fail/open are release

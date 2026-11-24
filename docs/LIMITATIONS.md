@@ -85,10 +85,15 @@ of these controls.
 
 ### Windows PE
 
-- PE32+ AMD64 parsing and `.sirus` section injection are implemented.
-- A Win64 VM blob, Windows ABI thunk generation, loader validation, CFG/guard
-  table integration, and exception metadata are **not** implemented.
-- Do not claim Windows runtime protection.
+- PE32+ AMD64 parsing, COFF symbol lookup, encrypted VM section injection,
+  Win64 thunk generation, checksum updates, RVA patching, and default body
+  scrubbing are implemented.
+- The leaf subset with branches and loops is verified under Wine 11.20 via
+  `scripts/windows-wine-check.sh`.
+- Native Windows loader validation, CFG/guard-table integration, exception
+  metadata, signing, imports/TLS, and Windows anti-debug remain out of scope.
+- Native Windows CI is staged in `.github/workflows/windows-wine.yml`; it has not
+  been executed on a Windows host.
 
 ---
 
@@ -102,13 +107,15 @@ of these controls.
   asymmetry, not a proof of MBA irreducibility.
 - The body stream is a keyed ARX obfuscation stream, not a cryptographic cipher.
   SipHash-2-4 remains the manifest/integrity/key primitive.
-- The VM is not constant-time. Official dudect-bencher measured the cipher path at
-  max |t| = 3.38 and the data-dependent VM branch at max |t| = 745.81 in the
-  pre-optimization run; the current-tree rerun is recorded in
-  `docs/VERIFICATION.md`.
-- Per-call overhead is about 74 us for the default profile, 55 us for the balanced
-  profile, and 15 us for the minimal profile on the benchmark host. The same
-  function under VMProtect 3.11 demo virtualization is about 10 us. Sirus has
+- `--constant-time` provides a constant-time **subset**: it rejects
+  data-dependent branches and memory accesses, disables decoys, and measures
+  below the dudect threshold on a branchless victim. The normal profile remains
+  data-dependent and leaks timing. A complete branchy/looping constant-time VM
+  requires executing both sides of every branch and an oblivious memory model;
+  it is not claimed.
+- Per-call overhead is about 77 us for the default profile, 58 us for the balanced
+  profile, and 16 us for the minimal profile on the benchmark host. The same
+  function under VMProtect 3.11 demo virtualization is about 8.5 us. Sirus has
   much lower startup cost because it does not pack the host image.
 - No whole decrypted bytecode is cached, and the static injected segment has no
   obvious strings.
@@ -129,23 +136,19 @@ of these controls.
 
 ## 6. Verification gaps
 
-- Measured line coverage with all targets is reported in
-  `docs/VERIFICATION.md`; the 100% target is not met. The proof script enforces
-  an 85% regression floor.
+- The agreed prototype floor is 85% line coverage. The current measured coverage
+  is 86.77% tarpaulin / 87.14% llvm-cov and the proof script enforces the 85%
+  regression floor. 100% is not claimed.
 - Kani proofs cover bounded primitives and memory bounds; the full decoder is too
   large for CBMC and is covered by tests/fuzzing instead.
-- Miri covers core and VM unit/execution suites; it is very slow.
-- IDA Pro/Hex-Rays and Binary Ninja are commercial/licensed and were not run.
-- Ghidra 12.2 and radare2 5.9.8 static decompiler smoke tests were run; scoped
-  protected functions show only jump stubs / VM machinery.
-- angr 10.0.7 timed out after 120 s on a symbolic preimage; KLEE 3.3 timed out
-  after 60 s with no completed path and no memory errors. These are bounded
-  searches, not proofs.
-- Creusot proved three VM boundary models. AORAI is a C-only Frama-C plugin and
-  cannot consume Rust/ELF/PE directly; Ferrocene requires customer authentication;
-  Triton had no compatible prebuilt binding.
-- The official dudect-bencher run is complete; its VM branch result is a measured
-  timing leak, not a pass.
+- Miri covers core units plus 9 VM library and 15 VM execution tests; it is very slow.
+- Ghidra/radare2, GAMBA/SiMBA/MBA-Blast, angr, KLEE, Creusot, and dudect-bencher
+  were executed locally; results are in `docs/VERIFICATION.md`.
+- IDA/Binary Ninja, Ferrocene, and Triton are commercial/licence/auth-gated and
+  are outside the local release gate. AORAI is a C-only Frama-C plugin and is not
+  applicable to the Rust product.
+- The official dudect-bencher run is complete; the normal VM branch result is a
+  measured timing leak, while the explicit `--constant-time` subset passes.
 - cargo-show-asm was installed after the main build evidence; assembly inspection
   currently uses objdump/readelf scripts.
 

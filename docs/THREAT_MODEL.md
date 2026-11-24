@@ -100,12 +100,12 @@ protected data in ways that fail downstream if incorrect.
 4. **Handler layout reuse.** Payload/ISA/state geometry mutates per build, but the
    interpreter's semantic skeleton is shared. Full `.sirus` equality is 11.01% in
    the current differential sample.
-5. **Coverage and tool gaps.** Coverage remains below the 100% target. Ghidra,
+5. **Coverage and tool notes.** Coverage is 86.77%/87.14%, above the agreed 85% floor; 100% is not the target. Ghidra,
    radare2, GAMBA/SiMBA/MBA-Blast, angr, KLEE, Creusot, and dudect-bencher have
    been run; IDA/Binary Ninja, Ferrocene, and Triton were unavailable, and AORAI
    is not applicable to Rust. The VM's data-dependent branch leaks timing under
    dudect-bencher.
-6. **Windows runtime.** PE container support is implemented structurally only.
+6. **Windows runtime.** The strict leaf Win64 runtime (branches and loops included) passes under Wine; native Windows loader/CFG/CI validation is pending and remains an experimental line.
 7. **Symbol metadata.** Protected output retains the host symbol table; the
    injected `.sirus` segment itself contains no obvious strings.
 8. **Local attacker.** A process owner can instrument memory/CPU and eventually

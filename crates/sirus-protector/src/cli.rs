@@ -201,6 +201,7 @@ fn parse_protect(arguments: &[OsString]) -> Result<Action> {
             "--mba-depth" => options.mba_depth = number_value(arguments, &mut index, flag)?,
             "--mba-budget" => options.mba_budget = number_value(arguments, &mut index, flag)?,
             "--decoys" => options.decoys = number_value(arguments, &mut index, flag)?,
+            "--constant-time" => options.constant_time = true,
             "--vm-base" => vm_base = Some(hex_value(arguments, &mut index, flag)?),
             "--emit-source" => {
                 emit_source = Some(PathBuf::from(next_value(arguments, &mut index, flag)?));
@@ -288,6 +289,7 @@ pub const fn help_text() -> &'static str {
      \x20 --mba-depth <n>          MBA rewrite depth (0..=8, default 3)\n\
      \x20 --mba-budget <n>         MBA node budget (default 512)\n\
      \x20 --decoys <n>             opaque decoy pairs per function (0..=8, default 2)\n\
+     \x20 --constant-time         reject data-dependent branches/memory; no decoys\n\
      \x20 --vm-base <hex>          override VM virtual address\n\
      \x20 --emit-source <path>     write generated VM source for audit\n\
      \x20 --keep-temp              keep compiler temporary files\n\
@@ -526,6 +528,25 @@ mod tests {
         assert_eq!(parsed.options.mba_depth, 3);
         assert_eq!(parsed.options.mba_budget, 512);
         assert_eq!(parsed.options.decoys, 2);
+    }
+
+    #[test]
+    fn parses_constant_time_flag() {
+        let action = parse_from(arguments(&[
+            "protect",
+            "--input",
+            "in",
+            "--output",
+            "out",
+            "--function",
+            "demo",
+            "--constant-time",
+        ]))
+        .expect("constant time");
+        let Action::Protect(parsed) = action else {
+            panic!("expected protect");
+        };
+        assert!(parsed.options.constant_time);
     }
 
     #[test]

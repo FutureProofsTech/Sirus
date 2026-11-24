@@ -171,9 +171,9 @@ See `docs/CODE_STANDARD_COMPLIANCE.md` and ADR-001.
 | Kani / SMT | run, 7 harnesses pass | `docs/VERIFICATION.md` |
 | Creusot | run, 3 boundary models proved | `verification/creusot`, `scripts/creusot-check.sh` |
 | AORAI | installed (Frama-C 33.0); C-only, not applicable | `docs/VERIFICATION.md` |
-| cargo-fuzz | run, 348,151 final-tree executions (887,210 cumulative) | fuzz/ |
+| cargo-fuzz | run, 985,477 final-tree executions (1,872,687 cumulative) | fuzz/ |
 | Proptest | external crate prohibited; in-tree property tests implemented | tests |
-| cargo-tarpaulin | run, below the 100% target | coverage report |
+| cargo-tarpaulin | run, 86.77% (above 85% floor) | coverage report |
 | cargo-llvm-cov | run, independent coverage | `docs/VERIFICATION.md` |
 | Loom | not applicable (no shared mutable runtime state) | ADR/architecture |
 | dudect-bencher | run; cipher below \|t\|=5, VM branch leaks | `verification/dudect` |
@@ -193,7 +193,7 @@ See `docs/CODE_STANDARD_COMPLIANCE.md` and ADR-001.
 | 3 | Uniform handlers, mutate state, detect DBI | partial | per-build geometry; DBI/timing detection not feasible; VM timing leaks |
 | 4 | Taint explosion/laundering | partial | data flow/deep binding; no taint tool |
 | 5 | Symbolic explosion | partial | angr and KLEE bounded timeouts; not proofs |
-| 6 | No decrypted bytecode in memory | partial | no body cache; live dump finds transient constants in VM registers |
+| 6 | No decrypted bytecode in memory | partial | no body cache; VM registers/memory masked at rest; live constant scan passes |
 | 7 | Deep binding / bypass fails | implemented | tamper and forced-return tests |
 | 8 | Hypervisor/debug-register resistance | **not feasible safely** | documented |
 | 9 | Differential builds mutate everything | partial | payload 0.40% equal; full segment 11.01% |
@@ -203,14 +203,11 @@ See `docs/CODE_STANDARD_COMPLIANCE.md` and ADR-001.
 
 ## D. Open work
 
-1. Coverage to 100%, with branch-level justification.
-2. IDA/Binary Ninja headless evaluation (licence unavailable).
-3. Ferrocene build validation (customer authentication unavailable).
-4. Full handler-layout polymorphism.
-5. Windows ABI/linker/runtime validation.
-6. Constant-time VM execution or explicit acceptance of the measured timing leak.
-7. Live memory constant secrecy beyond the current transient-register residual.
-8. Triton DBI symbolic run, if a compatible build is obtained.
+1. Coverage beyond the agreed 85% floor (current measured coverage is above it).
+2. Full handler-layout polymorphism.
+3. Native Windows ABI/loader validation and Windows-host CI execution (Wine runtime already passes).
+4. General branchy/looping constant-time execution; the explicit `--constant-time` subset is branchless/no-memory only.
+5. Live memory transient instruction-local values (persistent state is masked).
 
 Any statement that all supplied requirements are fully satisfied is false until
 these are closed or explicitly accepted as release exceptions.

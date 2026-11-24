@@ -113,6 +113,9 @@ ranges must correspond to valid machine code; ambiguous markers fail the build.
 
 ## ADR-009 — PE backend is structural-only
 
+**Status:** Superseded for runtime execution by ADR-018; the parser, section
+append, checksum, and RVA patching remain the container layer.
+
 **Decision:** Implement PE32+ parsing, section append, checksum, and RVA jump
 patching; do not claim Windows execution.
 
@@ -172,7 +175,10 @@ through `scripts/prove.sh` environment flags and their outputs are recorded in
 
 ## ADR-013 — Accept the measured VM timing leak
 
-**Decision:** Do not claim constant-time VM execution. Keep the cipher path
+**Status:** Applies to the default branchy profile; the explicit constant-time
+subset is added in ADR-017.
+
+**Decision:** Do not claim constant-time VM execution for the default profile. Keep the cipher path
 dudect-clean and document the data-dependent VM branch as a measured leak.
 
 **Reason:** A general-purpose virtualizer must branch on secret-dependent control
@@ -180,8 +186,9 @@ flow and keep virtual registers in memory. Safe Rust cannot add RDTSC, debug
 register, or speculative barriers, and a constant-time interpreter would require
 executing both sides of every branch and a fully oblivious memory model.
 
-**Residual:** Official dudect-bencher measured the VM branch at max |t| = 745.81,
-far above the conventional threshold of 5.
+**Residual:** Official dudect-bencher measured the default VM branch far above the
+conventional threshold of 5 (745.81 in the initial run, 225.24 after the later
+optimizations). The explicit branchless subset measures max |t| = 0.88.
 
 ---
 
@@ -229,3 +236,40 @@ exposure without unsafe code or heap allocation.
 **Trade-off:** Every register/memory access pays a keyed XOR. A decoded local can
 still exist transiently inside one instruction. This is not constant-time
 execution and does not defeat an instruction-level tracer.
+
+---
+
+## ADR-017 — Constant-time subset mode
+
+**Decision:** Add `--constant-time`: reject data-dependent conditional branches
+and private memory accesses, disable decoy branches, and compile the remaining
+straight-line/unconditional-flow program. `SEM_SELECT` uses a mask-select rather
+than a conditional branch.
+
+**Reason:** A general VM that executes arbitrary loops and branches cannot be
+constant-time without executing both sides and making all memory accesses
+oblivious. A build-time subset is honest and measurable: dudect-bencher measured
+the branchless profile below the conventional |t| = 5 threshold.
+
+**Limitation:** Branchy or memory-touching protected functions are rejected in
+this mode. The default virtualization profile remains performance-oriented and
+data-dependent.
+
+---
+
+## ADR-018 — Win64 PE32+ runtime as a separate experimental line
+
+**Decision:** Add a Win64 runtime for PE32+ AMD64 using the existing encrypted VM
+payload and strict leaf-function subset. Cross-compile the generated runtime with
+`x86_64-pc-windows-gnu`, link it with `lld-link` and a local no-op
+`___chkstk_ms` shim, extract `.text`/`.rdata`, append one RX `.sirus` section, and
+patch the selected function RVA. Validate native/protected output equality under
+Wine.
+
+**Reason:** The Linux toolchain can produce and execute a real PE32+ prototype
+without weakening the safe-Rust runtime. Wine provides a repeatable local
+execution gate while native Windows CI is staged.
+
+**Boundary:** Native Windows loader/CFG/exception validation, signing, imports/TLS,
+and Windows anti-debug are not claimed. This line does not change the primary
+Linux ELF release gate.

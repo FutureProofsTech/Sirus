@@ -2,6 +2,38 @@
 
 All notable changes to Sirus.
 
+## [1.3.0-safe] — 2026-11-24
+
+### Added
+
+- `--constant-time` subset mode:
+  - rejects data-dependent conditional branches;
+  - rejects private `Load`/`Store` operations;
+  - disables decoy branches;
+  - uses branchless mask-select semantics.
+- Constant-time dudect control: branchless VM profile measured
+  `max t = -0.87721`; normal branchy profile measured `max t = -225`.
+- Masked virtual registers and private stack bytes at rest.
+- Encrypted per-build decode-table image.
+- `max`, `balanced`, and `minimal` performance profiles.
+- Win64 PE32+ runtime injection verified under Wine 11.20; native Windows CI
+  workflow staged but not yet run.
+
+### Changed
+
+- Branchless `SEM_SELECT` implementation in the reference VM.
+- Common data-dependent select path no longer emits a conditional branch.
+- Documentation and traceability distinguish the constant-time subset from the
+  normal virtualization profile.
+
+### Known limitations
+
+- The constant-time mode is a **subset**, not a general branchy/looping
+  constant-time VM. Branchy and memory-touching functions are rejected.
+- The normal virtualization profile remains data-dependent and leaks timing.
+- Windows native loader/CFG/exception validation and Windows-host CI are pending;
+  the Wine leaf runtime (branches and loops) passes.
+- 100% coverage is not claimed; exact coverage is in `docs/VERIFICATION.md`.
 ## [1.2.0-safe] — 2026-11-24
 
 ### Added
@@ -26,7 +58,7 @@ All notable changes to Sirus.
   masked at rest.
 - Full `.sirus` segment equality is 10.95% between two seeds; payload equality is
   0.40%; entropy is 7.996 Shannon / 7.751 min-entropy.
-- Coverage on the final tree: 90.01% tarpaulin lines (5224/5804); exact llvm-cov number in `docs/VERIFICATION.md`.
+- Coverage on the final tree: 86.77% tarpaulin lines (5437/6266); llvm-cov 87.14% lines.
 
 ### Known limitations
 

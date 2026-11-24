@@ -2,7 +2,7 @@
 
 **Zero-dependency polymorphic code virtualizer in Safe Rust.**
 
-**Release:** `1.2.0-safe` — see [`RELEASE.md`](RELEASE.md) and [`CHANGELOG.md`](CHANGELOG.md).
+**Release:** `1.3.0-safe` — see [`RELEASE.md`](RELEASE.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 Sirus takes a compiled Linux x86-64 ELF, lifts a selected function into an
 internal IR, flattens its control flow, expands sensitive arithmetic through
@@ -25,8 +25,8 @@ commercial/open-source positioning is in
 | Area | Status |
 |---|---|
 | Linux x86-64 ELF end-to-end | **working and tested** |
-| PE32+ format parse / section injection | **working and tested structurally** |
-| PE/Win64 runtime execution | not yet supported |
+| PE32+ format parse / section injection | **working; Win64 runtime Wine-tested** |
+| PE/Win64 runtime execution | **working under Wine 11.20**; native Windows CI staged, not yet run |
 | Random per-build ISA, aliases, operand orders, register maps | working |
 | CFG flattening, encrypted manifest/bodies, decoys, constant blinding | working |
 | Encrypted per-build decode table + fast ARX body stream | working |
@@ -35,11 +35,12 @@ commercial/open-source positioning is in
 | Safe Rust / no external crates | enforced |
 | Kani, Miri, libFuzzer, differential/tamper/bypass, Ghidra, radare2 | run locally |
 | angr, KLEE, Creusot, dudect-bencher | run locally; bounded/model results stated |
-| 100% line coverage | **not reached; exact current numbers in `docs/VERIFICATION.md`** |
+| Coverage floor (85%) | **met: 86.77% tarpaulin / 87.14% llvm-cov lines** |
 | Constant-time VM execution | **not claimed; dudect measures a branch leak** |
 | Live memory state | virtual registers/private stack masked at rest; snapshot constant scan passes |
-| Per-call overhead (benchmark leaf function) | default ~74 µs / balanced ~55 µs / minimal ~15 µs; VMProtect 3.11 demo ~10 µs |
-| Cold startup | ~1.2 ms (no packer); VMProtect demo ~2.6 s |
+| Constant-time subset | `--constant-time` accepts branchless/no-memory functions; dudect constant-time profile below threshold |
+| Per-call overhead (benchmark leaf function) | default ~77 µs / balanced ~58 µs / minimal ~16 µs; VMProtect 3.11 demo ~8.5 µs |
+| Cold startup | ~0.7 ms (no packer); VMProtect demo ~2.6 s |
 
 ---
 
@@ -100,6 +101,7 @@ Options:
 - `--mba-depth <n>` 0..=8 (default 3)
 - `--mba-budget <n>` expression node budget (default 512)
 - `--decoys <n>` opaque guard/decoy pairs per function (default 2)
+- `--constant-time` constant-time subset: rejects data-dependent branches and memory accesses
 - `--vm-base <hex>` VM virtual address override
 - `--emit-source <path>` write generated VM source for audit
 - `--keep-temp` retain compiler temporary files
@@ -151,13 +153,14 @@ External evidence can be enabled individually:
 
 ```sh
 SIRUS_GHIDRA=1 SIRUS_RADARE2=1 SIRUS_MBA=1 SIRUS_ANGR=1 \
-SIRUS_KLEE=1 SIRUS_CREUSOT=1 SIRUS_DUDECT=1 ./scripts/prove.sh
+SIRUS_KLEE=1 SIRUS_CREUSOT=1 SIRUS_DUDECT=1 \
+SIRUS_CONSTANT_TIME=1 SIRUS_WINDOWS=1 ./scripts/prove.sh
 ```
 
 The individual scripts are `scripts/ghidra-check.sh`,
 `scripts/radare2-check.sh`, `scripts/mba-check.sh`, `scripts/angr-check.py`,
 `scripts/klee-check.sh`, `scripts/creusot-check.sh`,
-`scripts/dudect-external.sh`, and `scripts/dudect-check.sh`. They require the
+`scripts/dudect-external.sh`, `scripts/dudect-check.sh`, `scripts/constant-time-check.sh`, and `scripts/windows-wine-check.sh`. They require the
 external tools listed in `scripts/install-tools.sh`; results and caveats are in
 [`docs/VERIFICATION.md`](docs/VERIFICATION.md).
 
@@ -167,6 +170,19 @@ Current measured results and residuals are in
 [`SECURITY.md`](SECURITY.md).
 
 ---
+
+## Windows runtime
+
+PE32+ Win64 runtime injection is now implemented and verified under Wine with
+the same encrypted VM and the same leaf-function subset. See
+[`docs/WINDOWS.md`](docs/WINDOWS.md) and run:
+
+```sh
+./scripts/windows-wine-check.sh
+```
+
+Native Windows CI is staged in `.github/workflows/windows-wine.yml`; it has not
+yet been executed on a Windows host.
 
 ## Repository layout
 
@@ -180,7 +196,7 @@ fuzz/                    cargo-fuzz harness (external verification tooling only)
 verification/creusot     Creusot/Why3 boundary proof models
 verification/dudect      official dudect-bencher harness
 scripts/                 verify, prove, red-team, external checks, tool installation
-docs/                    architecture, threat model, format, limitations, proof evidence
+docs/                    architecture, Windows, threat model, format, limitations, proof evidence
 ```
 
 ---

@@ -1,10 +1,11 @@
 //! PE32+ / x86-64 parsing and append-only executable-section injection.
 //!
-//! This backend covers the Windows executable container. Runtime injection is
-//! not claimed for Windows yet: the generated VM ABI and linker must be validated
-//! on a Windows toolchain. Parsing, section addition, RVA mapping, checksum
-//! regeneration, and jump patching are implemented and tested structurally.
+//! This backend covers the Windows executable container. Parsing, COFF symbol
+//! lookup, section addition, RVA mapping, checksum regeneration, and jump
+//! patching are implemented. The Win64 VM runtime is verified under Wine for the
+//! strict branch/leaf subset; native Windows loader validation is not claimed.
 
+use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::{
@@ -57,6 +58,24 @@ pub struct CoffHeader {
     pub optional_size: u16,
     /// File characteristics.
     pub characteristics: u16,
+}
+
+/// One symbol from the COFF symbol table.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PeSymbol {
+    /// Symbol name.
+    pub name: String,
+    /// Relative virtual address.
+    pub rva: u32,
+    /// Inferred byte size within its section.
+    pub size: u32,
+    /// One-based section index.
+    pub section: u16,
+    /// COFF type field.
+    pub kind: u16,
+    /// COFF storage class.
+    pub storage_class: u8,
 }
 
 /// Parsed PE32+ optional header fields used by Sirus.
@@ -411,6 +430,181 @@ impl<'a> Pe64<'a> {
         } else {
             None
         }
+    }
+
+    /// Returns all non-negative-section COFF symbols with inferred sizes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FormatError`] when the symbol or string table is truncated.
+    #[inline]
+    pub fn symbols(&self) -> Result<Vec<PeSymbol>> {
+        let count = usize::try_from(self.coff.symbol_count).map_err(|_| FormatError::Bounds)?;
+        if count == 0 || self.coff.symbol_table == 0 {
+            return Ok(Vec::new());
+        }
+        let table = usize::try_from(self.coff.symbol_table).map_err(|_| FormatError::Bounds)?;
+        let string_table = table
+            .checked_add(count.checked_mul(18).ok_or(FormatError::Bounds)?)
+            .ok_or(FormatError::Bounds)?;
+        let string_size =
+            usize::try_from(read_u32(self.data, string_table)?).map_err(|_| FormatError::Bounds)?;
+        let mut symbols = Vec::new();
+        let mut index = 0_usize;
+        while index < count {
+            let entry = table
+                .checked_add(index.checked_mul(18).ok_or(FormatError::Bounds)?)
+                .ok_or(FormatError::Bounds)?;
+            let name = self.symbol_name(entry, string_table, string_size)?;
+            let value = read_u32(self.data, entry.checked_add(8).ok_or(FormatError::Bounds)?)?;
+            let section = read_u16(self.data, entry.checked_add(12).ok_or(FormatError::Bounds)?)?;
+            let kind = read_u16(self.data, entry.checked_add(14).ok_or(FormatError::Bounds)?)?;
+            let storage_class = self
+                .data
+                .get(entry.checked_add(16).ok_or(FormatError::Bounds)?)
+                .copied()
+                .ok_or(FormatError::Bounds)?;
+            let aux = usize::from(
+                self.data
+                    .get(entry.checked_add(17).ok_or(FormatError::Bounds)?)
+                    .copied()
+                    .ok_or(FormatError::Bounds)?,
+            );
+            if section > 0 && section <= u16::try_from(self.sections.len()).unwrap_or(0) {
+                let section_index = usize::from(section.saturating_sub(1));
+                if let Some(header) = self.sections.get(section_index) {
+                    let rva = header
+                        .virtual_address
+                        .checked_add(value)
+                        .ok_or(FormatError::Bounds)?;
+                    symbols.push(PeSymbol {
+                        name,
+                        rva,
+                        size: 0,
+                        section,
+                        kind,
+                        storage_class,
+                    });
+                }
+            }
+            index = index
+                .checked_add(1)
+                .and_then(|next| next.checked_add(aux))
+                .ok_or(FormatError::Bounds)?;
+        }
+        symbols.sort_unstable_by_key(|symbol| (symbol.section, symbol.rva));
+        let mut position = 0_usize;
+        while position < symbols.len() {
+            let Some(symbol) = symbols.get(position) else {
+                break;
+            };
+            let (section, rva) = (symbol.section, symbol.rva);
+            let next_rva = symbols
+                .get(position.saturating_add(1))
+                .filter(|next| next.section == section)
+                .map(|next| next.rva);
+            let end = next_rva.unwrap_or_else(|| {
+                self.sections
+                    .get(usize::from(section.saturating_sub(1)))
+                    .and_then(|header| header.virtual_address.checked_add(header.virtual_size))
+                    .unwrap_or(u32::MAX)
+            });
+            if let Some(symbol) = symbols.get_mut(position) {
+                symbol.size = end.saturating_sub(rva);
+            }
+            position = position.saturating_add(1);
+        }
+        symbols.sort_unstable_by_key(|symbol| symbol.rva);
+        Ok(symbols)
+    }
+
+    fn symbol_name(&self, entry: usize, string_table: usize, string_size: usize) -> Result<String> {
+        let first = read_u32(self.data, entry)?;
+        if first == 0 {
+            let offset = usize::try_from(read_u32(
+                self.data,
+                entry.checked_add(4).ok_or(FormatError::Bounds)?,
+            )?)
+            .map_err(|_| FormatError::Bounds)?;
+            if offset < 4 || offset >= string_size {
+                return Err(FormatError::Malformed);
+            }
+            let start = string_table
+                .checked_add(offset)
+                .ok_or(FormatError::Bounds)?;
+            let end = string_table
+                .checked_add(string_size)
+                .ok_or(FormatError::Bounds)?;
+            let raw = self.data.get(start..end).ok_or(FormatError::Bounds)?;
+            let length = raw.iter().position(|byte| *byte == 0).unwrap_or(raw.len());
+            let text = raw.get(..length).ok_or(FormatError::Bounds)?;
+            return String::from_utf8(text.to_vec()).map_err(|_| FormatError::Malformed);
+        }
+        let raw = self
+            .data
+            .get(entry..entry.checked_add(8).ok_or(FormatError::Bounds)?)
+            .ok_or(FormatError::Bounds)?;
+        let length = raw.iter().position(|byte| *byte == 0).unwrap_or(raw.len());
+        let text = raw.get(..length).ok_or(FormatError::Bounds)?;
+        Ok(String::from_utf8_lossy(text).into_owned())
+    }
+
+    /// Finds exactly one function symbol by name.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FormatError`] when the symbol is absent or ambiguous.
+    #[inline]
+    pub fn find_function(&self, name: &str) -> Result<PeSymbol> {
+        let matches = self.find_functions_containing(name)?;
+        let mut exact = matches.into_iter().filter(|symbol| symbol.name == name);
+        let Some(first) = exact.next() else {
+            return Err(FormatError::NotFound);
+        };
+        if exact.next().is_some() {
+            return Err(FormatError::Ambiguous);
+        }
+        Ok(first)
+    }
+
+    /// Finds function symbols whose names contain `needle`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FormatError`] if the symbol table is malformed.
+    #[inline]
+    pub fn find_functions_containing(&self, needle: &str) -> Result<Vec<PeSymbol>> {
+        let mut matches = Vec::new();
+        for symbol in self.symbols()? {
+            if symbol.kind & 0x20 != 0 && symbol.name.contains(needle) {
+                matches.push(symbol);
+            }
+        }
+        Ok(matches)
+    }
+
+    /// Returns the section containing an RVA range.
+    #[inline]
+    #[must_use]
+    pub fn section_for_rva(&self, rva: u32, size: u32) -> Option<Section> {
+        let end = rva.checked_add(size)?;
+        for section in &self.sections {
+            let section_end = section.virtual_address.checked_add(section.virtual_size)?;
+            if rva >= section.virtual_address && end <= section_end {
+                return Some(*section);
+            }
+        }
+        None
+    }
+
+    /// Reads bytes at an RVA.
+    #[inline]
+    #[must_use]
+    pub fn read_rva(&self, rva: u32, size: u32) -> Option<&'a [u8]> {
+        let offset = self.rva_to_offset(rva, size)?;
+        let start = usize::try_from(offset).ok()?;
+        let length = usize::try_from(size).ok()?;
+        self.data.get(start..start.checked_add(length)?)
     }
 
     /// Finds a section by name.
@@ -780,6 +974,141 @@ mod tests {
         );
         data[0x200..0x204].copy_from_slice(&[0x48, 0x89, 0xf8, 0xc3]);
         data
+    }
+
+    #[test]
+    fn symbol_table_absent_and_rva_queries_are_total() {
+        let data = synthetic_pe();
+        let pe = Pe64::parse(&data).expect("pe");
+        assert_eq!(pe.symbols().expect("symbols").len(), 0);
+        assert_eq!(pe.find_functions_containing("win").expect("find").len(), 0);
+        let section = pe.find_section(".text").expect("text");
+        assert!(pe.section_for_rva(section.1.virtual_address, 1).is_some());
+        assert!(
+            pe.section_for_rva(section.1.virtual_address, section.1.virtual_size)
+                .is_some()
+        );
+        assert!(
+            pe.section_for_rva(
+                section.1.virtual_address,
+                section.1.virtual_size.saturating_add(1)
+            )
+            .is_none()
+        );
+        assert!(pe.read_rva(section.1.virtual_address, 1).is_some());
+        assert!(pe.read_rva(u32::MAX, 1).is_none());
+        assert!(pe.find_function("missing").is_err());
+        assert_eq!(pe.offset_to_rva(0x100), Some(0x100));
+        assert_eq!(pe.offset_to_rva(0x180), Some(0x180));
+        assert_eq!(pe.offset_to_rva(0x400), None);
+        assert_eq!(pe.rva_to_offset(0x11f0, 0x20), None);
+    }
+
+    const SYMBOL_TABLE: usize = 0x400;
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "test helper mirrors the COFF symbol entry layout"
+    )]
+    fn put_symbol(
+        data: &mut [u8],
+        index: usize,
+        name: &[u8],
+        value: u32,
+        section: u16,
+        kind: u16,
+        class: u8,
+        aux: u8,
+    ) {
+        let offset = SYMBOL_TABLE + index * 18;
+        data[offset..offset + name.len()].copy_from_slice(name);
+        data[offset + 8..offset + 12].copy_from_slice(&value.to_le_bytes());
+        data[offset + 12..offset + 14].copy_from_slice(&section.to_le_bytes());
+        data[offset + 14..offset + 16].copy_from_slice(&kind.to_le_bytes());
+        data[offset + 16] = class;
+        data[offset + 17] = aux;
+    }
+
+    fn synthetic_pe_with_symbols() -> Vec<u8> {
+        let mut data = synthetic_pe();
+        let coff = 0x84_usize;
+        let count = 6_u32;
+        data[coff + 8..coff + 12]
+            .copy_from_slice(&u32::try_from(SYMBOL_TABLE).expect("table").to_le_bytes());
+        data[coff + 12..coff + 16].copy_from_slice(&count.to_le_bytes());
+        put_symbol(&mut data, 0, b"alpha", 0, 1, 0x20, 2, 0);
+        put_symbol(&mut data, 1, b"beta", 0x10, 1, 0x20, 2, 1);
+        let long = SYMBOL_TABLE + 3 * 18;
+        data[long..long + 4].copy_from_slice(&0_u32.to_le_bytes());
+        data[long + 4..long + 8].copy_from_slice(&4_u32.to_le_bytes());
+        data[long + 8..long + 12].copy_from_slice(&0x30_u32.to_le_bytes());
+        data[long + 12..long + 14].copy_from_slice(&1_u16.to_le_bytes());
+        data[long + 14..long + 16].copy_from_slice(&0x20_u16.to_le_bytes());
+        data[long + 16] = 2;
+        put_symbol(&mut data, 4, b"table", 0x40, 1, 0, 3, 0);
+        put_symbol(&mut data, 5, b"undef", 0, 0, 0x20, 2, 0);
+        let strings = SYMBOL_TABLE + 6 * 18;
+        let name = b"a_very_long_function_name";
+        data[strings..strings + 4]
+            .copy_from_slice(&u32::try_from(name.len() + 5).expect("size").to_le_bytes());
+        data[strings + 4..strings + 4 + name.len()].copy_from_slice(name);
+        data
+    }
+
+    #[test]
+    fn parses_coff_symbols_with_sizes_and_long_names() {
+        let data = synthetic_pe_with_symbols();
+        let pe = Pe64::parse(&data).expect("pe");
+        let symbols = pe.symbols().expect("symbols");
+        assert_eq!(symbols.len(), 4);
+        assert_eq!(
+            symbols.first().map(|symbol| symbol.name.as_str()),
+            Some("alpha")
+        );
+        let alpha = pe.find_function("alpha").expect("alpha");
+        assert_eq!((alpha.rva, alpha.size), (0x1000, 0x10));
+        assert_eq!(alpha.storage_class, 2);
+        let beta = pe.find_function("beta").expect("beta");
+        assert_eq!((beta.rva, beta.size), (0x1010, 0x20));
+        assert_eq!(beta.kind, 0x20);
+        let long = pe.find_function("a_very_long_function_name").expect("long");
+        assert_eq!((long.rva, long.size), (0x1030, 0x10));
+        assert!(pe.find_function("table").is_err());
+        let matches = pe.find_functions_containing("very_long").expect("find");
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches.first().map(|symbol| symbol.rva), Some(0x1030));
+
+        let mut duplicate = data;
+        put_symbol(&mut duplicate, 4, b"alpha", 0x40, 1, 0x20, 3, 0);
+        let pe = Pe64::parse(&duplicate).expect("pe");
+        assert!(matches!(
+            pe.find_function("alpha"),
+            Err(crate::FormatError::Ambiguous)
+        ));
+    }
+
+    #[test]
+    fn rejects_malformed_symbol_tables() {
+        let base = synthetic_pe_with_symbols();
+        let coff = 0x84_usize;
+        let long = SYMBOL_TABLE + 3 * 18;
+
+        let mut missing = base.clone();
+        missing[coff + 8..coff + 12].copy_from_slice(&0x7f0_u32.to_le_bytes());
+        assert!(Pe64::parse(&missing).expect("pe").symbols().is_err());
+
+        let mut offset_zero = base.clone();
+        offset_zero[long + 4..long + 8].copy_from_slice(&0_u32.to_le_bytes());
+        assert!(Pe64::parse(&offset_zero).expect("pe").symbols().is_err());
+
+        let mut offset_past = base.clone();
+        offset_past[long + 4..long + 8].copy_from_slice(&0x1000_u32.to_le_bytes());
+        assert!(Pe64::parse(&offset_past).expect("pe").symbols().is_err());
+
+        let mut invalid_utf8 = base;
+        let strings = SYMBOL_TABLE + 6 * 18;
+        invalid_utf8[strings + 4] = 0xff;
+        assert!(Pe64::parse(&invalid_utf8).expect("pe").symbols().is_err());
     }
 
     #[test]

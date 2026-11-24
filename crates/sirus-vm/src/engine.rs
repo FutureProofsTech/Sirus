@@ -508,11 +508,10 @@ fn execute_semantic_inner(
         }
         SEM_SELECT_RRRR => {
             let condition = reg_value(registers, masks, values, 1)?;
-            let selected = if condition != 0 {
-                reg_value(registers, masks, values, 2)?
-            } else {
-                reg_value(registers, masks, values, 3)?
-            };
+            let when_true = reg_value(registers, masks, values, 2)?;
+            let when_false = reg_value(registers, masks, values, 3)?;
+            let mask = 0_u64.wrapping_sub(u64::from(condition != 0));
+            let selected = (when_true & mask) | (when_false & !mask);
             set_reg_value(registers, masks, values, 0, selected)?;
             Some(Flow::Continue)
         }
