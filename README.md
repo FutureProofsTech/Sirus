@@ -39,7 +39,7 @@ commercial/open-source positioning is in
 | Constant-time VM execution | `--constant-time` oblivious branch/loop mode below dudect threshold; normal profile leaks |
 | Live memory state | virtual registers/private stack masked at rest; snapshot constant scan passes |
 | Constant-time scope | private memory rejected; fixed pass budget; branches and loops supported |
-| Per-call overhead (benchmark leaf function) | default ~78.6 µs / balanced ~56.6 µs / minimal ~13.5 µs; VMProtect 3.11 demo ~8.5 µs |
+| Per-call overhead (benchmark leaf function) | default ~78.1 µs / hardened ~78.8 µs / constant-time ~209 µs / hardened CT ~205 µs / balanced ~56.6 µs / minimal ~13.5 µs; VMProtect 3.11 demo ~8.5 µs |
 | Cold startup | ~0.6 ms (no packer); VMProtect demo ~2.6 s |
 | Hardened tier | opt-in `--hardened`: anti-debug, RDTSC/LFENCE, Windows DR report |
 

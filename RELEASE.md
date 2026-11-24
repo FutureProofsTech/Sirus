@@ -109,14 +109,18 @@ Recorded evidence:
 
 - Kani: 5 core + 4 VM harnesses.
 - Miri: 10 VM lib + 20 VM execution + 82 core tests.
-- libFuzzer: 2,929,049 cumulative executions, no crash.
+- libFuzzer VM: 2,929,049 cumulative executions, no crash.
+- libFuzzer formats: 17,482,146 PE and 15,055,973 ELF runs, no crash.
+- Reproducible output: identical normal, hardened, and constant-time binaries
+  for a fixed input and seed.
 - Tarpaulin: 85.35% lines (5913/6928).
 - llvm-cov: 86.40% lines, 82.11% regions.
 - Payload differential: 0.40% equal bytes.
 - Handler arms are permuted per build; full VM segment differential remains
   2.21% equal bytes (a metric, not a uniqueness proof).
 - Payload entropy: 7.996 Shannon / 7.751 min-entropy bits/byte.
-- Per-call benchmark: native ~1.2-1.9 ns; Sirus default ~78.6 us; balanced
+- Per-call benchmark: native ~1.2-1.9 ns; Sirus default ~78.1 us; hardened
+  ~78.8 us; constant-time ~209 us; hardened constant-time ~205 us; balanced
   ~56.6 us; minimal ~13.5 us; VMProtect 3.11 demo virtualization ~8.5 us.
 - Cold startup: Sirus ~0.6 ms; VMProtect demo ~2.6 s (packed).
 - No obvious strings in `.sirus`.

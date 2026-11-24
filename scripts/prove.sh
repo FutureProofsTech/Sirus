@@ -71,6 +71,17 @@ if [[ -d fuzz ]]; then
     (cd fuzz && cargo +nightly fuzz run vm -- -max_total_time="${SIRUS_FUZZ_SECONDS:-20}" -rss_limit_mb=4096 -timeout=5)
 fi
 
+if [[ "${SIRUS_REPRODUCIBLE:-0}" == "1" ]]; then
+    echo "== reproducible output =="
+    ./scripts/reproducible-check.sh
+fi
+
+if [[ "${SIRUS_FUZZ_FORMATS:-0}" == "1" ]]; then
+    echo "== format fuzzing =="
+    (cd fuzz && cargo +nightly fuzz run pe -- -max_total_time="${SIRUS_FUZZ_SECONDS:-20}" -rss_limit_mb=4096 -timeout=5)
+    (cd fuzz && cargo +nightly fuzz run elf -- -max_total_time="${SIRUS_FUZZ_SECONDS:-20}" -rss_limit_mb=4096 -timeout=5)
+fi
+
 if [[ "${SIRUS_COVERAGE:-0}" == "1" ]]; then
     echo "== coverage =="
     cargo tarpaulin --workspace --all-targets --engine Llvm --out Xml --out Lcov \

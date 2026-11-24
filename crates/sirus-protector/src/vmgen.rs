@@ -864,7 +864,7 @@ pub fn build_windows_vm(program: &CompiledProgram, keep_temp: bool) -> Result<Wi
         .map_err(|error| ProtectError::io("write Windows VM source", &error))?;
     fs::write(
         &stub_path,
-        ".text\n.globl ___chkstk_ms\n.def ___chkstk_ms; .scl 2; .type 32; .endef\n___chkstk_ms:\n    ret\n",
+        ".text\n.globl ___chkstk_ms\n.def ___chkstk_ms; .scl 2; .type 32; .endef\n___chkstk_ms:\n    movq %rsp, %r10\n    subq %rax, %r10\n    andq $-4096, %r10\n1:\n    orq $0, (%r10)\n    addq $4096, %r10\n    cmpq %rsp, %r10\n    jb 1b\n    ret\n",
     )
     .map_err(|error| ProtectError::io("write Windows stack-probe stub", &error))?;
     let assembler = Command::new("x86_64-w64-mingw32-gcc")

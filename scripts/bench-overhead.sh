@@ -12,6 +12,14 @@ rustc --edition=2021 -C opt-level=2 -C panic=abort -C debuginfo=0 \
     bench/overhead.rs -o "$work/native"
 
 profile="${SIRUS_BENCH_PROFILE:-default}"
+mode="${SIRUS_BENCH_MODE:-normal}"
+case "$mode" in
+    normal) mode_args=() ;;
+    hardened) mode_args=(--hardened) ;;
+    constant-time) mode_args=(--constant-time --constant-time-passes 64) ;;
+    hardened-constant-time) mode_args=(--hardened --constant-time --constant-time-passes 64) ;;
+    *) echo "unknown SIRUS_BENCH_MODE: $mode" >&2; exit 2 ;;
+esac
 case "$profile" in
     default) protect_args=(--profile max) ;;
     balanced) protect_args=(--profile balanced) ;;
@@ -25,6 +33,7 @@ esac
     --function-contains sirus_demo_check \
     --seed 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff \
     "${protect_args[@]}" \
+    "${mode_args[@]}" \
     >"$work/protect.out"
 chmod +x "$work/protected"
 
@@ -80,7 +89,7 @@ print(f"added_size_bytes={protected_size - native_size}")
 print(f"checksum={native_checksum}")
 PY
 
-printf '%s\n' "== profile=$profile =="
+printf '%s\n' "== profile=$profile mode=$mode =="
 printf '%s\n' "== protector report =="
 cat "$work/protect.out"
 printf '%s\n' "== size =="

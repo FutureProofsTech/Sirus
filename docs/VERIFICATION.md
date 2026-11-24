@@ -151,6 +151,23 @@ integrity rejection path.
 In-tree deterministic fuzz additionally runs 20,000 random payloads and 10,000
 mutations of a valid payload.
 
+Separate format fuzz targets:
+
+```text
+PE:  17,482,146 runs in 31 s, no crash
+ELF: 15,055,973 runs in 31 s, no crash
+```
+
+Reproducible output:
+
+```sh
+./scripts/reproducible-check.sh
+```
+
+```text
+PASS reproducible protected output (normal, hardened, constant-time)
+```
+
 ---
 
 ## 6. Coverage

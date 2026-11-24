@@ -14,7 +14,7 @@
 - The same encrypted VM payload builder used by the ELF path.
 - Win64 code generation and linking:
   - `rustc --target x86_64-pc-windows-gnu`
-  - `lld-link` with no imports, `/opt:noref`, and a no-op `___chkstk_ms` shim
+  - `lld-link` with no imports, `/opt:noref`, and a real x64 `___chkstk_ms` stack probe
   - extraction of `.text` and `.rdata` into one RX section; Windows-only builds
     omit function-pointer keep-statements so the extracted bytes stay
     relocation-free
@@ -63,9 +63,9 @@ runtime:
 - no exception/unwind metadata in the injected VM;
 - no Windows CFG guard-table integration.
 
-The stack-probe symbol is a local no-op shim because the freestanding VM uses a
-small fixed stack and does not call Windows libraries. This is part of the
-prototype boundary.
+The stack-probe symbol is a real probe-only x64 helper: it touches pages below
+the current stack pointer without adjusting `RSP`, matching LLVM's
+`___chkstk_ms` calling convention. It does not call Windows libraries.
 
 ---
 

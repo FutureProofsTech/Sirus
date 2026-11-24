@@ -9,10 +9,23 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+sirus-binfmt = { path = "../crates/sirus-binfmt" }
 sirus-vm = { path = "../crates/sirus-vm" }
 
 [[bin]]
 name = "vm"
 path = "fuzz_targets/vm.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "pe"
+path = "fuzz_targets/pe.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "elf"
+path = "fuzz_targets/elf.rs"
 test = false
 doc = false
