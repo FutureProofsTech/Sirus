@@ -143,7 +143,7 @@ hypervisor detection remain unimplemented.
 ## 6. Verification gaps
 
 - The agreed prototype floor is 85% line coverage. The current measured coverage
-  is 85.44% tarpaulin / 86.47% llvm-cov and the proof script enforces the 85%
+  is 86.17% tarpaulin / 87.05% llvm-cov and the proof script enforces the 85%
   regression floor. 100% is not claimed.
 - Kani proofs cover bounded primitives and memory bounds; the full decoder is too
   large for CBMC and is covered by tests/fuzzing instead.

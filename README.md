@@ -35,7 +35,7 @@ commercial/open-source positioning is in
 | Safe Rust / no external crates | safe tier enforced; `sirus-hardened` is opt-in unsafe |
 | Kani, Miri, libFuzzer, differential/tamper/bypass, Ghidra, radare2 | run locally |
 | angr, KLEE, Creusot, dudect-bencher | run locally; bounded/model results stated |
-| Coverage floor (85%) | **met: 85.44% tarpaulin / 86.47% llvm-cov lines** |
+| Coverage floor (85%) | **met: 86.17% tarpaulin / 87.05% llvm-cov lines** |
 | Constant-time VM execution | `--constant-time` oblivious branch/loop/memory mode below dudect threshold; normal profile leaks |
 | Live memory state | virtual registers/private stack masked at rest; snapshot constant scan passes |
 | Constant-time scope | fixed pass budget; branches, loops, and oblivious private-memory scan supported |

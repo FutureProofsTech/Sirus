@@ -100,7 +100,7 @@ protected data in ways that fail downstream if incorrect.
 4. **Handler layout reuse.** Payload/ISA/state geometry and semantic-arm order
    mutate per build, but the interpreter's semantic skeleton is shared. Full
    `.sirus` equality is 2.21% in the current differential sample.
-5. **Coverage and tool notes.** Coverage is 85.44%/86.47%, above the agreed 85%
+5. **Coverage and tool notes.** Coverage is 86.17%/87.05%, above the agreed 85%
    floor; 100% is not the target. Ghidra, radare2, GAMBA/SiMBA/MBA-Blast, angr,
    KLEE, Creusot, and dudect-bencher were executed. IDA/Binary Ninja, Ferrocene,
    and Triton are commercial/licence-gated and outside the local gate; AORAI is

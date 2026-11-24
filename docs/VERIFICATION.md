@@ -178,7 +178,7 @@ cargo tarpaulin --workspace --all-targets --engine Llvm \
   --exclude-files 'target/*' --exclude-files 'bench/*' --timeout 120
 ```
 
-Result: **85.44% line coverage (5946 / 6959 lines)** with
+Result: **86.17% line coverage (6001 / 6964 lines)** with
 `--exclude-files 'target/*' --exclude-files 'bench/*'`. This is above the agreed
 85% floor.
 
@@ -203,9 +203,9 @@ cargo llvm-cov --workspace --all-targets --summary-only
 ```
 
 ```text
-TOTAL regions 82.14% (3955 missed of 22150)
-TOTAL functions 74.72% (222 missed of 878)
-TOTAL lines 86.47% (1607 missed of 11877)
+TOTAL regions 82.74% (3835 missed of 22223)
+TOTAL functions 75.23% (218 missed of 880)
+TOTAL lines 87.05% (1542 missed of 11909)
 ```
 
 The two tools instrument differently; both are above the 85% floor and show the
@@ -563,7 +563,7 @@ cargo asm -p sirus-core --lib 1
 
 | Item | Status |
 |---|---|
-| Coverage floor (85%) | **met**: 85.44% tarpaulin / 86.47% llvm-cov lines |
+| Coverage floor (85%) | **met**: 86.17% tarpaulin / 87.05% llvm-cov lines |
 | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect | executed; evidence recorded |
 | live process memory dump scan | pass; masked VM state, constant not observed |
 | Windows PE runtime execution | Wine-tested leaf subset (branches/loops), normal and constant-time; native `pe32-native` CI passed |
