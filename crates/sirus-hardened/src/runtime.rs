@@ -50,6 +50,21 @@ pub fn debugger_present() -> bool {
     }
 }
 
+/// Returns whether CPUID reports a hypervisor present bit.
+#[inline]
+#[must_use]
+pub fn hypervisor_present() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        let leaf = core::arch::x86_64::__cpuid(1);
+        leaf.ecx & (1 << 31) != 0
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        false
+    }
+}
+
 /// Returns true when the elapsed cycle count is within `maximum`.
 ///
 /// The caller must pass a start value from [`rdtsc`] and should call
@@ -203,11 +218,12 @@ fn windows_debugger_present() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{debugger_present, lfence, rdtsc, timing_ok};
+    use super::{debugger_present, hypervisor_present, lfence, rdtsc, timing_ok};
 
     #[test]
     fn runtime_checks_are_callable() {
         let _ = debugger_present();
+        let _ = hypervisor_present();
         lfence();
         let start = rdtsc();
         let _ = rdtsc();

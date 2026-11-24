@@ -39,3 +39,37 @@ jobs:
       - name: Build and run native Win64 gate
         shell: bash
         run: ./scripts/windows-native-check.sh
+
+  pe32-msvc-cfg:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-lld
+      - name: Add mingw tools to PATH
+        shell: pwsh
+        run: echo "C:\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Build protector and CFG victim
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release -p sirus-protector
+          mkdir -p target/cfg
+          cmd //c "cl /nologo /O2 /guard:cf crates\\sirus-protector\\tests\\fixtures\\windows_victim.c /Fe:target\\cfg\\victim.exe"
+          ./target/release/sirus.exe protect \
+            --input target/cfg/victim.exe \
+            --output target/cfg/protected.exe \
+            --function sirus_win_check \
+            --function sirus_win_mix \
+            --seed 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
+          target/cfg/victim.exe > target/cfg/native.out
+          target/cfg/protected.exe > target/cfg/protected.out
+          cmp target/cfg/native.out target/cfg/protected.out
+          echo "PASS CFG-enabled native Windows PE"

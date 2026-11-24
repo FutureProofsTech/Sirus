@@ -36,12 +36,12 @@ Result: **exit 0**. The script runs:
 
 ## 2. Test inventory
 
-`cargo test --workspace` now runs **182 tests**, all passing; the MBA corpus and
+`cargo test --workspace` now runs **183 tests**, all passing; the MBA corpus and
 statistical timing tests are `#[ignore]` measurement hooks and are not part of
 the normal count.
 
 ```text
-182 passed, 0 failed
+183 passed, 0 failed
 ```
 
 Breakdown:
@@ -51,7 +51,7 @@ Breakdown:
 | `sirus-binfmt` unit tests | 21 |
 | `sirus-binfmt` real-loader test | 1 |
 | `sirus-core` unit tests | 82 |
-| `sirus-protector` unit tests | 33 |
+| `sirus-protector` unit tests | 34 |
 | `sirus-hardened` runtime checks | 1 |
 | `sirus-protector` end-to-end | 1 |
 | `sirus-protector` pipeline errors | 1 |
@@ -522,6 +522,7 @@ the latest run passed.
 
 ```text
 debugger_present=false
+hypervisor_present=false
 tsc_delta=40
 timing_ok=true
 debug_registers=unsupported

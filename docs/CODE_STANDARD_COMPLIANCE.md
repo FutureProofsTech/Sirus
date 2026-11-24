@@ -197,7 +197,7 @@ Implemented exactly in the root `Cargo.toml`:
 | `cargo doc` | stable | executed with `-D warnings`, passing |
 | `cargo-audit` | installed | executed; 0 vulnerabilities |
 | `cargo-deny` | installed | executed; advisories/bans/licenses/sources pass |
-| `cargo-nextest` | installed | executed; 182 tests passing |
+| `cargo-nextest` | installed | executed; 183 tests passing |
 | `cargo-tarpaulin` | installed | executed; 85.44% lines (5946/6959), above 85% floor |
 | `cargo-llvm-cov` | installed | executed; 86.47% lines / 82.14% regions |
 | `cargo-fuzz` | installed | 2,929,049 cumulative runs, no crash |

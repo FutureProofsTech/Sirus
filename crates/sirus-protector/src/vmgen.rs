@@ -1162,7 +1162,7 @@ pub fn ensure_readable(path: &Path) -> Result<()> {
 mod tests {
     use super::{
         ENGINE_SOURCE, ensure_readable, permute_handler_layout, read_le_u16, read_le_u32,
-        source_for_audit, validate_blob, validate_relocation_ranges,
+        source_for_audit, validate_blob, validate_relocation_ranges, windows_entry_symbol,
     };
     use sirus_core::lifter::lift_function;
     use sirus_core::program::{CompileOptions, CompiledProgram, compile};
@@ -1282,6 +1282,36 @@ mod tests {
         assert!(source.contains("debugger_present()"));
         assert!(source.contains("hardened::timing_ok"));
         assert!(source.contains("0x000000000000002a"));
+    }
+
+    #[test]
+    fn coff_object_entry_symbol_is_parsed_without_nm() {
+        let name = "sirus_entry_deadbeef_0";
+        let symbol_table = 20_usize + 40;
+        let strings = symbol_table + 18;
+        let mut object = vec![0_u8; strings + 4 + name.len() + 1];
+        object[0..2].copy_from_slice(&0x8664_u16.to_le_bytes());
+        object[2..4].copy_from_slice(&1_u16.to_le_bytes());
+        object[8..12].copy_from_slice(
+            &u32::try_from(symbol_table)
+                .expect("symbol table")
+                .to_le_bytes(),
+        );
+        object[12..16].copy_from_slice(&1_u32.to_le_bytes());
+        let entry = symbol_table;
+        object[entry + 4..entry + 8].copy_from_slice(&4_u32.to_le_bytes());
+        object[entry + 12..entry + 14].copy_from_slice(&1_u16.to_le_bytes());
+        object[entry + 14..entry + 16].copy_from_slice(&0x20_u16.to_le_bytes());
+        object[entry + 16] = 2;
+        object[strings..strings + 4].copy_from_slice(
+            &u32::try_from(4 + name.len() + 1)
+                .expect("string size")
+                .to_le_bytes(),
+        );
+        object[strings + 4..strings + 4 + name.len()].copy_from_slice(name.as_bytes());
+        let symbol = windows_entry_symbol(&object, "deadbeef", 0).expect("symbol");
+        assert_eq!(symbol, name);
+        assert!(windows_entry_symbol(&object, "deadbeef", 1).is_err());
     }
 
     #[test]

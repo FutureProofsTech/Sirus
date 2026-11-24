@@ -70,7 +70,7 @@
 
 ### Verification
 
-- 182 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
+- 183 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
   statistical-timing measurement hooks.
 - Real victim compilation and execution differential matrix.
 - Differential two-seed builds.
@@ -94,7 +94,7 @@
 ./scripts/verify.sh
 ```
 
-Passes formatting, Clippy (`-D warnings`, all targets), 182 tests, rustdoc,
+Passes formatting, Clippy (`-D warnings`, all targets), 183 tests, rustdoc,
 audit, deny, Kani, red-team, and memory-dump diagnostic.
 
 ```sh

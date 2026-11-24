@@ -549,7 +549,8 @@ pub fn harden_check(output: &mut impl Write) -> Result<()> {
     let end = sirus_hardened::rdtsc();
     writeln!(
         output,
-        "debugger_present={debugger}\ntsc_delta={}\ntiming_ok={}",
+        "debugger_present={debugger}\nhypervisor_present={}\ntsc_delta={}\ntiming_ok={}",
+        sirus_hardened::hypervisor_present(),
         end.wrapping_sub(start),
         sirus_hardened::timing_ok(start, u64::MAX)
     )

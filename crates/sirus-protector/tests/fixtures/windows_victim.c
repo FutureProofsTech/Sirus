@@ -1,14 +1,20 @@
 #include <stdint.h>
 #include <stdio.h>
 
-__attribute__((noinline)) uint64_t sirus_win_check(uint64_t a, uint64_t b) {
+#ifdef _MSC_VER
+#define SIRUS_NOINLINE __declspec(noinline)
+#else
+#define SIRUS_NOINLINE __attribute__((noinline))
+#endif
+
+SIRUS_NOINLINE uint64_t sirus_win_check(uint64_t a, uint64_t b) {
     if (a > b) {
         return ((a * 3u) + b) ^ 0xa5a55a5a12345678ull;
     }
     return (b ^ a) + 0x123456789abcdef0ull;
 }
 
-__attribute__((noinline)) uint64_t sirus_win_mix(uint64_t a, uint64_t b) {
+SIRUS_NOINLINE uint64_t sirus_win_mix(uint64_t a, uint64_t b) {
     uint64_t accumulator = 0;
     uint64_t index = 0;
     while (index < (a & 7u)) {
