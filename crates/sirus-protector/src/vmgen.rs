@@ -756,6 +756,8 @@ pub fn build_windows_vm(program: &CompiledProgram, keep_temp: bool) -> Result<Wi
     let map_path = directory.join("vm.map");
     let stub_path = directory.join("chkstk.s");
     let stub_object = directory.join("chkstk.o");
+    let shim_path = directory.join("shim.s");
+    let shim_object = directory.join("shim.o");
     fs::write(&source_path, source)
         .map_err(|error| ProtectError::io("write Windows VM source", &error))?;
     fs::write(
@@ -805,6 +807,53 @@ pub fn build_windows_vm(program: &CompiledProgram, keep_temp: bool) -> Result<Wi
             "windows rustc failed:\n{stderr}"
         )));
     }
+    let nm = Command::new("x86_64-w64-mingw32-nm")
+        .arg(&object_path)
+        .output()
+        .map_err(|error| ProtectError::io("execute Windows nm", &error))?;
+    if !nm.status.success() {
+        let stderr = String::from_utf8_lossy(&nm.stderr);
+        if !keep_temp {
+            drop(fs::remove_dir_all(&directory));
+        }
+        return Err(ProtectError::tool(format!("windows nm failed:\n{stderr}")));
+    }
+    let nm_text = String::from_utf8_lossy(&nm.stdout);
+    let mut entry_symbols = Vec::with_capacity(program.entry_states().len());
+    for index in 0..program.entry_states().len() {
+        let needle = format!("sirus_entry_{id}_{index}");
+        let symbol = nm_text
+            .lines()
+            .find(|line| line.contains(&needle) && line.contains(" T "))
+            .and_then(|line| line.split_whitespace().last())
+            .ok_or_else(|| ProtectError::internal("Windows entry symbol missing"))?;
+        entry_symbols.push(symbol.to_owned());
+    }
+    let mut shim_source = String::from(".text\n");
+    for (index, symbol) in entry_symbols.iter().enumerate() {
+        let shim = format!(
+            ".globl sirus_shim_{id}_{index}\n.def sirus_shim_{id}_{index}; .scl 2; .type 32; .endef\nsirus_shim_{id}_{index}:\n    pushq %rcx\n    pushq %rdx\n    pushq %r8\n    pushq %r9\n    pushq %r10\n    pushq %r11\n    subq $136, %rsp\n    movdqu %xmm0, 32(%rsp)\n    movdqu %xmm1, 48(%rsp)\n    movdqu %xmm2, 64(%rsp)\n    movdqu %xmm3, 80(%rsp)\n    movdqu %xmm4, 96(%rsp)\n    movdqu %xmm5, 112(%rsp)\n    call {symbol}\n    movdqu 32(%rsp), %xmm0\n    movdqu 48(%rsp), %xmm1\n    movdqu 64(%rsp), %xmm2\n    movdqu 80(%rsp), %xmm3\n    movdqu 96(%rsp), %xmm4\n    movdqu 112(%rsp), %xmm5\n    addq $136, %rsp\n    popq %r11\n    popq %r10\n    popq %r9\n    popq %r8\n    popq %rdx\n    popq %rcx\n    ret\n"
+        );
+        shim_source.push_str(&shim);
+    }
+    fs::write(&shim_path, shim_source)
+        .map_err(|error| ProtectError::io("write Windows ABI shim", &error))?;
+    let shim_assembler = Command::new("x86_64-w64-mingw32-gcc")
+        .arg("-c")
+        .arg(&shim_path)
+        .arg("-o")
+        .arg(&shim_object)
+        .output()
+        .map_err(|error| ProtectError::io("execute Windows ABI assembler", &error))?;
+    if !shim_assembler.status.success() {
+        let stderr = String::from_utf8_lossy(&shim_assembler.stderr);
+        if !keep_temp {
+            drop(fs::remove_dir_all(&directory));
+        }
+        return Err(ProtectError::tool(format!(
+            "windows ABI assembler failed:\n{stderr}"
+        )));
+    }
     let map_argument = format!("/map:{}", map_path.display());
     let output_argument = format!("/out:{}", dll_path.display());
     let link = Command::new("lld-link")
@@ -816,6 +865,7 @@ pub fn build_windows_vm(program: &CompiledProgram, keep_temp: bool) -> Result<Wi
         .arg(map_argument)
         .arg(&object_path)
         .arg(&stub_object)
+        .arg(&shim_object)
         .output()
         .map_err(|error| ProtectError::io("execute lld-link", &error))?;
     if !link.status.success() {
@@ -881,7 +931,7 @@ pub fn build_windows_vm(program: &CompiledProgram, keep_temp: bool) -> Result<Wi
     let image_base = pe.optional_header().image_base;
     let mut entry_offsets = Vec::with_capacity(program.entry_states().len());
     for index in 0..program.entry_states().len() {
-        let needle = format!("sirus_entry_{id}_{index}");
+        let needle = format!("sirus_shim_{id}_{index}");
         let entry_address = map_text
             .lines()
             .find(|line| line.contains(&needle))

@@ -499,10 +499,18 @@ impl<'a> Pe64<'a> {
                 break;
             };
             let (section, rva) = (symbol.section, symbol.rva);
-            let next_rva = symbols
-                .get(position.saturating_add(1))
-                .filter(|next| next.section == section)
-                .map(|next| next.rva);
+            let mut cursor = position.saturating_add(1);
+            let mut next_rva = None;
+            while let Some(next) = symbols.get(cursor) {
+                if next.section != section {
+                    break;
+                }
+                if next.rva > rva {
+                    next_rva = Some(next.rva);
+                    break;
+                }
+                cursor = cursor.saturating_add(1);
+            }
             let end = next_rva.unwrap_or_else(|| {
                 self.sections
                     .get(usize::from(section.saturating_sub(1)))
@@ -1077,6 +1085,12 @@ mod tests {
         let matches = pe.find_functions_containing("very_long").expect("find");
         assert_eq!(matches.len(), 1);
         assert_eq!(matches.first().map(|symbol| symbol.rva), Some(0x1030));
+
+        let mut section_alias = data.clone();
+        put_symbol(&mut section_alias, 5, b".text", 0, 1, 0, 3, 0);
+        let pe = Pe64::parse(&section_alias).expect("pe");
+        let alpha = pe.find_function("alpha").expect("alpha");
+        assert_eq!((alpha.rva, alpha.size), (0x1000, 0x10));
 
         let mut duplicate = data;
         put_symbol(&mut duplicate, 4, b"alpha", 0x40, 1, 0x20, 3, 0);
