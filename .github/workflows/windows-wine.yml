@@ -64,7 +64,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p target/cfg
-          cmd //c "cl /nologo /O2 /guard:cf crates\\sirus-protector\\tests\\fixtures\\windows_victim.c /Fe:target\\cfg\\victim.exe"
+          cmd //c "cl /nologo /O2 /Zi /DEBUG /guard:cf /MAP:target\\cfg\\victim.map crates\\sirus-protector\\tests\\fixtures\\windows_victim.c /Fe:target\\cfg\\victim.exe"
           ./target/release/sirus.exe protect \
             --input target/cfg/victim.exe \
             --output target/cfg/protected.exe \
