@@ -94,7 +94,8 @@ overwrites them. Flag knowledge resets at every basic-block boundary, so
 cross-block flag liveness fails closed.
 
 Memory operands resolve through base, index, scale, and displacement into a
-private byte-addressable stack. RIP-relative and absolute addressing are
+private byte-addressable stack. RIP-relative reads of read-only data are
+resolved into a private data blob; writable RIP-relative and absolute addressing are
 rejected. The six register arguments are initialized in the virtual System V
 registers; result comes from virtual `RAX`.
 
@@ -144,7 +145,7 @@ guard never changes live architectural state.
 Per build, a 256-bit seed derives:
 
 - 256-byte shuffled opcode pool;
-- four aliases per semantic operation (176 opcodes total);
+- four aliases per semantic operation (180 opcodes total);
 - per-alias operand order;
 - per-alias register-map variant;
 - per-alias immediate endianness;

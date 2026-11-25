@@ -5,7 +5,7 @@
 **Nightly toolchain:** 2026-08-03 / 2026-08-21 family for Miri and fuzzing
 **Kani:** 0.68.0
 **Project state:** all features described in `README.md` implemented and tested
-**Last evidenced run:** final 1.5.6-hardened tree, tag `v1.5.6-hardened`
+**Last evidenced run:** final 1.5.7-hardened tree, tag `v1.5.7-hardened`
 
 This file records commands actually executed. Anything not executed is listed as
 an external evidence gap or a documented boundary, never inferred.
@@ -36,12 +36,12 @@ Result: **exit 0**. The script runs:
 
 ## 2. Test inventory
 
-`cargo test --workspace` now runs **202 tests**, all passing; the MBA corpus and
+`cargo test --workspace` now runs **211 tests**, all passing; the MBA corpus and
 statistical timing tests are `#[ignore]` measurement hooks and are not part of
 the normal count.
 
 ```text
-202 passed, 0 failed
+211 passed, 0 failed
 ```
 
 Breakdown:
@@ -50,12 +50,17 @@ Breakdown:
 |---|---:|
 | `sirus-binfmt` unit tests | 26 |
 | `sirus-binfmt` real-loader test | 1 |
-| `sirus-core` unit tests | 83 |
+| `sirus-core` unit tests | 87 |
 | `sirus-protector` unit tests | 43 |
 | `sirus-hardened` runtime checks | 3 |
 | `sirus-protector` end-to-end | 1 |
 | `sirus-protector` pipeline errors | 1 |
 | `sirus-protector` marker end-to-end | 1 |
+| `sirus-protector` RIP-relative data | 1 |
+| `sirus-protector` stack arguments | 1 |
+| `sirus-protector` SSE2 moves | 1 |
+| `sirus-protector` SSE2 arithmetic | 1 |
+| `sirus-protector` direct protected calls | 1 |
 | `sirus-vm` unit tests | 11 |
 | `sirus-vm` execution | 21 |
 | `sirus-vm` deterministic fuzz | 2 |
@@ -64,6 +69,21 @@ Breakdown:
 The end-to-end tests compile a real victim, protect it in normal and
 `--constant-time` modes, compare outputs, check body scrubbing, compare two
 seeds, tamper payload, forced-return bypass, and run the real protected binary.
+
+The feature fixtures compile real C victims and execute protected binaries:
+
+- a read-only table loaded through `lea` plus an indexed RIP-relative load;
+- an 8-argument leaf using System V stack arguments 7 and 8;
+- `movdqu`/`pxor`/`paddq` and `paddd`/`psubd`/`pmuludq`/`punpcklqdq` forms;
+- a selected caller and callee connected by a direct `call rel32`.
+
+The RIP-relative, stack-argument, and SSE2 fixtures run in normal and
+constant-time modes. The direct-call fixture runs in normal mode; the protector
+rejects calls in constant-time mode.
+
+Windows/Wine adds a native C 8-argument fixture (5th-8th stack arguments,
+normal and constant-time) and a two-function direct-call fixture (normal;
+constant-time rejected).
 
 ### Release profile build
 
@@ -189,7 +209,7 @@ cargo tarpaulin --workspace --all-targets --engine Llvm \
   --exclude-files 'target/*' --exclude-files 'bench/*' --timeout 120
 ```
 
-Result: **90.25% line coverage (6812 / 7548 lines)** with
+Result: **87.57% line coverage (7340 / 8382 lines)** with
 `--exclude-files 'target/*' --exclude-files 'bench/*'`. This is above the agreed
 85% floor.
 
@@ -214,9 +234,9 @@ cargo llvm-cov --workspace --all-targets --summary-only
 ```
 
 ```text
-TOTAL regions 86.51% (3380 missed of 25051)
-TOTAL functions 74.65% (253 missed of 998)
-TOTAL lines 90.97% (1212 missed of 13423)
+TOTAL regions 84.96% (4051 missed of 26939)
+TOTAL functions 74.36% (271 missed of 1057)
+TOTAL lines 89.07% (1599 missed of 14628)
 ```
 
 The two tools instrument differently; both are above the 85% floor and show the
@@ -321,7 +341,7 @@ VMProtect demo 3.11 virtualization measured on its own native baseline):
 | Sirus constant-time | ~234 us | ~101,500x | ~25.2x |
 | Sirus hardened constant-time | ~235 us | ~111,300x | ~25.5x |
 | Sirus balanced (`depth=1, budget=128, decoys=1`) | ~53.9 us | ~30,000x | ~6.7x |
-| Sirus minimal/fast (`depth=0, budget=0, decoys=0`) | ~14.4 us | ~6,100x | ~1.7x |
+| Sirus minimal/fast (`depth=0, budget=0, decoys=0`) | ~14.5 us | ~6,100x | ~1.7x |
 
 Sirus append size is about 30 KiB (0.7% of the benchmark binary); VMProtect demo
 packs the 4.4 MiB input to a 1.17 MiB output but pays a multi-second startup cost
@@ -680,7 +700,7 @@ cargo asm -p sirus-core --lib 1
 
 | Item | Status |
 |---|---|
-| Coverage floor (85%) | **met**: 90.25% tarpaulin / 90.97% llvm-cov lines |
+| Coverage floor (85%) | **met**: 87.57% tarpaulin / 89.07% llvm-cov lines |
 | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect | executed; evidence recorded |
 | live process memory dump scan | pass; masked VM state, constant not observed |
 | Windows PE runtime execution | Wine and native Windows; normal, constant-time, hardened; `/guard:cf`, ABI matrix, unwind lookup, and text-checksum tamper tests pass |

@@ -15,18 +15,30 @@ Common integer operations on registers and the private stack, including `mov`,
 `leave`, `cdqe`, `jmp`, `jcc`, `ret`, `cmovcc`, `setcc`, and 8/16/32/64-bit
 memory widths.
 
+Also supported:
+
+- RIP-relative reads of read-only data (the referenced bytes are copied into
+  private VM memory at build time);
+- direct `call rel32` between functions selected in the same protection run,
+  with a bounded guest call stack;
+- SSE2 `movdqu`/`movdqa`, `pxor`/`pand`/`por`, `paddq`/`psubq`,
+  `paddd`/`psubd`, `pmuludq`, `punpcklqdq`/`punpckhqdq`,
+  `psrldq`/`pslldq`, and `movq`/`movd` forms;
+- System V stack arguments 7 through 12 and Win64 stack arguments 5 through 10.
+
 ### Rejected
 
-- calls and indirect calls/jumps;
-- RIP-relative data and absolute memory;
+- external calls, indirect calls, and indirect jumps;
+- calls to a function outside the selected protection set;
+- writable RIP-relative globals and absolute memory;
 - jump tables and computed jump targets;
-- SSE/AVX, x87, MMX, floating point;
+- AVX/AVX2, x87, MMX, floating point;
 - syscalls, `rdtsc`, `cpuid`, privileged or IO instructions;
 - atomics and fences;
 - segment overrides, address-size override, lock prefix;
 - VEX/EVEX encodings;
 - host pointer dereferences;
-- 7th and later stack arguments;
+- more than 12 System V arguments or more than 10 Win64 arguments;
 - cross-block flag liveness that cannot be proven;
 - functions larger than 16 KiB or programs exceeding fixed capacities.
 
@@ -38,14 +50,16 @@ compact leaf logic instead.
 
 ## 2. ABI limits
 
-- Working backend: System V AMD64 (Linux).
-- Up to six integer arguments.
+- Working backends: System V AMD64 (Linux) and Win64 (PE32+).
+- Up to six integer register arguments plus up to six stack arguments on
+  System V; up to four register arguments plus up to six stack arguments on
+  Win64.
 - One integer result.
 - No floating-point arguments/results.
-- No stack arguments.
-- Protected code cannot call external functions.
-- The VM uses a private 4 KiB byte stack; functions with deeper frames or larger
-  locals can fail or halt.
+- Protected code can call another function selected in the same protection run.
+  Calls to external functions fail closed.
+- The VM uses a private 4 KiB byte stack and up to 2 KiB of read-only data;
+  functions with deeper frames or larger locals can fail or halt.
 
 The VM return value is `0` on any fail-closed condition. Host code must consume
 protected results as data so a wrong value causes a downstream failure.
@@ -122,7 +136,7 @@ code and are not mixed into the default runtime. Both Linux and Windows hardened
   branchy profile remains data-dependent and leaks timing.
 - Per-call overhead is about 75.0 us for the default profile, 78.5 us for the
   hardened profile, 234 us for the constant-time profile, 235 us for hardened
-  constant-time, 53.9 us for the balanced profile, and 15.5 us for the minimal
+  constant-time, 53.9 us for the balanced profile, and 14.5 us for the fast/minimal
   profile on the benchmark host. The same function under VMProtect 3.11 demo
   virtualization is about 8.5 us. Sirus has much lower startup cost because it
   does not pack the host image.

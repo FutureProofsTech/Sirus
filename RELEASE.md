@@ -1,7 +1,7 @@
-# Sirus 1.5.6-hardened — Release Notes
+# Sirus 1.5.7-hardened — Release Notes
 
 **Release type:** safe-tier prototype plus optional hardened tier
-**Tag:** `v1.5.6-hardened`
+**Tag:** `v1.5.7-hardened`
 **Platform:** Linux x86-64 end-to-end; Win64 PE32+ runtime verified under Wine in normal, constant-time, and hardened modes; native Windows CI passed
 **Dependency policy:** zero external crates in shipped code
 **Unsafe policy:** `forbid(unsafe_code)` in the safe tier; the opt-in `sirus-hardened` crate and `--hardened` generated entries allow unsafe code
@@ -32,6 +32,15 @@
   calls; an optimized C caller regression is executed.
 - Branchy, looping, and private-memory functions can run in fixed-pass oblivious constant-time
   mode; private memory uses an oblivious full-stack scan and longer loops report `LoopBound`.
+- RIP-relative reads of read-only data are resolved into a private data blob and
+  execute in normal and constant-time modes.
+- System V stack arguments 7-12 and Win64 stack arguments 5-10 execute through
+  the ABI shims.
+- A practical SSE2 integer subset executes: `movdqu`/`movdqa`, bitwise ops,
+  32/64-bit add/subtract, `pmuludq`, unpack, byte shifts, and `movq`/`movd`.
+- Direct `call rel32` between functions selected in the same protection run
+  executes on a bounded guest call stack. External calls and constant-time
+  calls fail closed.
 - Optional `--hardened` entries add Linux `/proc` debugger detection, Windows
   PEB debugger detection, serialized RDTSC timing checks, LFENCE, and a
   self-code checksum over linked VM text on Linux and Windows.
@@ -84,7 +93,7 @@
 
 ### Verification
 
-- 202 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
+- 211 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
   statistical-timing measurement hooks.
 - Real victim compilation and execution differential matrix.
 - Differential two-seed builds.
@@ -108,7 +117,7 @@
 ./scripts/verify.sh
 ```
 
-Passes formatting, Clippy (`-D warnings`, all targets), 202 tests, rustdoc,
+Passes formatting, Clippy (`-D warnings`, all targets), 211 tests, rustdoc,
 audit, deny, Kani, red-team, and memory-dump diagnostic.
 
 ```sh
@@ -132,15 +141,15 @@ Recorded evidence:
   deterministic source archive, SHA-256 manifest, CycloneDX SBOM, and optional
   GPG signature when `SIRUS_SIGNING_KEY` is set.
 - `rust-toolchain.toml` pins stable Rust 1.99.0 and the Windows GNU target.
-- Tarpaulin: 90.25% lines (6812/7548).
-- llvm-cov: 90.97% lines, 86.51% regions.
+- Tarpaulin: 87.57% lines (7340/8382).
+- llvm-cov: pending final summary.
 - Payload differential: 0.40% equal bytes.
 - Handler arms are permuted per build; full VM segment differential remains
   2.21% equal bytes (a metric, not a uniqueness proof).
 - Payload entropy: 7.996 Shannon / 7.751 min-entropy bits/byte.
 - Per-call benchmark: native ~1.2-1.9 ns; Sirus default ~75.0 us; hardened
   ~78.5 us; constant-time ~234 us; hardened constant-time ~235 us; balanced
-  ~53.9 us; fast/minimal ~14.4 us; VMProtect 3.11 demo virtualization ~8.5 us.
+  ~53.9 us; fast/minimal ~14.5 us; VMProtect 3.11 demo virtualization ~8.5 us.
 - Cold startup: Sirus ~0.6 ms; VMProtect demo ~2.6 s (packed).
 - Constant-time Cachegrind: two inputs produce identical I/D refs, D1/LLd
   misses, branches, and mispredicts for the branch-only protected leaf.
@@ -157,17 +166,21 @@ Recorded evidence:
 ### Linux ELF
 
 Production-supported. Target function must fit the documented x86-64 subset and
-System V integer ABI. Calls, host pointers, SSE/AVX, x87, RIP-relative data,
-indirect jumps, and stack arguments are rejected.
+System V integer ABI. RIP-relative reads of read-only data, stack arguments
+7-12, the documented SSE2 subset, and direct calls to other selected protected
+functions are supported. External calls, host pointers, AVX/x87, writable
+RIP-relative globals, indirect jumps, and jump tables are rejected.
 
 ### PE / Windows
 
 Wine-tested and native Windows-tested Win64 runtime for the strict leaf subset
-(branches and loops included), normal, constant-time, and hardened. Linked
-unwind metadata is injected; a `/guard:cf` fixture and the ABI matrix pass.
-Windows self-code checksum, runtime exception propagation through a protected
-leaf, signing, imports/TLS, and kernel anti-debug are not implemented. The Linux
-ELF path remains the primary production path.
+(branches and loops included), normal, constant-time, and hardened. Stack
+arguments 5-10, RIP-relative read-only data, the documented SSE2 subset, and
+direct calls between selected protected functions are supported. Linked unwind
+metadata is injected; a `/guard:cf` fixture, ABI matrix, stack-argument
+fixture, and direct-call fixture pass. Runtime exception propagation, arbitrary
+external calls, signing, imports/TLS edge cases, and kernel anti-debug remain
+out of scope. The Linux ELF path remains the primary production path.
 
 ### Anti-debug, self-checksum, timing, LFENCE
 
@@ -209,7 +222,7 @@ constant-time modes.
 ### Coverage
 
 The agreed prototype target is **above 85%**. This release measures
-**90.25% tarpaulin lines / 90.97% llvm-cov lines**. 100% is not claimed, but the
+**87.57% tarpaulin lines / 89.07% llvm-cov lines**. 100% is not claimed, but the
 85% floor is met and enforced by the proof script.
 
 ---
@@ -269,7 +282,7 @@ docs/                          architecture, format, threat, proof, traceability
 | Miri | pass |
 | libFuzzer | pass |
 | fmt/clippy/doc/audit/deny | pass |
-| Coverage floor 85% | **pass — 90.25% tarpaulin / 90.97% llvm-cov lines** |
+| Coverage floor 85% | **pass — 87.57% tarpaulin / 89.07% llvm-cov lines** |
 | External evidence tooling | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect executed; commercial/licence-only tools are outside the local gate |
 | Windows runtime | **Wine + native Windows leaf subset (branches/loops), normal + constant-time + hardened; MSVC `/guard:cf` and ABI matrix pass** |
 | Windows unwind metadata | **linked `.pdata` merged; `.seh` shim records; `RtlLookupFunctionEntry` runtime probe; handlers/chained fail closed** |

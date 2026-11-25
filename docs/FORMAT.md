@@ -73,6 +73,7 @@ No host memory is addressable.
 | 41 | JCC | cond, true, false, mix | conditional state transition |
 | 42 | RET | value | return |
 | 43 | TRAP | — | clean halt |
+| 44 | CALL | — | push guest return state and enter callee entry state |
 
 Bounds violations, invalid shifts (after masking), invalid registers, invalid
 opcodes, and address overflow halt with `BadPayload`.
@@ -265,7 +266,8 @@ validated for Windows.
 - Up to six integer arguments in `RDI`, `RSI`, `RDX`, `RCX`, `R8`, `R9`.
 - One integer result in `RAX`.
 - No floating-point arguments or results.
-- No stack arguments.
-- No calls, no host pointers, no host memory.
+- System V stack arguments 7-12 and Win64 stack arguments 5-10 are supported.
+- Direct calls between selected protected functions are supported; external
+  calls, host pointers, and host memory are rejected.
 - The patched target is entered by a normal host call; the `jmp` preserves the
   host return address, and the VM thunk returns normally.

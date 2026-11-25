@@ -2,7 +2,7 @@
 
 **Zero-dependency polymorphic code virtualizer in Safe Rust.**
 
-**Release:** `1.5.6-hardened` — see [`RELEASE.md`](RELEASE.md) and [`CHANGELOG.md`](CHANGELOG.md).
+**Release:** `1.5.7-hardened` — see [`RELEASE.md`](RELEASE.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 Sirus takes a compiled Linux x86-64 ELF, lifts a selected function into an
 internal IR, flattens its control flow, expands sensitive arithmetic through
@@ -29,18 +29,22 @@ commercial/open-source positioning is in
 | PE/Win64 runtime execution | **working under Wine 11.20 and native Windows**, normal, constant-time, and hardened; MSVC `/guard:cf` and ABI matrix pass |
 | Random per-build ISA, aliases, operand orders, register maps | working |
 | CFG flattening, encrypted manifest/bodies, decoys, constant blinding | working |
+| RIP-relative read-only data | **working; writable RIP-relative targets fail closed** |
+| Stack arguments | **System V 7th-12th; Win64 5th-10th** |
+| SSE2 integer subset | **working: moves, bitwise, add/sub, multiply, unpack, byte shifts** |
+| Direct protected calls | **working between selected functions; external calls fail closed** |
 | Encrypted per-build decode table + fast ARX body stream | working |
 | Linear + non-linear MBA (variable shifts, modular inverse) | working; GAMBA times out, SiMBA reduces |
 | Shared VM for multiple protected functions | working |
 | Safe Rust / no external crates | safe tier enforced; `sirus-hardened` is opt-in unsafe |
 | Kani, Miri, libFuzzer, differential/tamper/bypass, Ghidra, radare2 | run locally |
 | angr, KLEE, Creusot, dudect-bencher | run locally; bounded/model results stated |
-| Coverage floor (85%) | **met: 90.25% tarpaulin / 90.97% llvm-cov lines** |
+| Coverage floor (85%) | **met: 87.57% tarpaulin / 89.07% llvm-cov lines** |
 | Constant-time VM execution | `--constant-time` oblivious branch/loop/memory mode below dudect threshold; normal profile leaks |
 | Live memory state | virtual registers/private stack masked at rest; snapshot constant scan passes |
 | Linux caller-saved ABI | entry shim preserves GPRs + XMM0–XMM15; optimized C caller regression passes |
 | Constant-time scope | fixed pass budget; branches, loops, and oblivious private-memory scan supported |
-| Per-call overhead (benchmark leaf function) | default ~75.0 µs / hardened ~78.5 µs / constant-time ~234 µs / hardened CT ~235 µs / balanced ~53.9 µs / fast/minimal ~14.4 µs; VMProtect 3.11 demo ~8.5 µs |
+| Per-call overhead (benchmark leaf function) | default ~75.0 µs / hardened ~78.5 µs / constant-time ~234 µs / hardened CT ~235 µs / balanced ~53.9 µs / fast/minimal ~14.5 µs; VMProtect 3.11 demo ~8.5 µs |
 | Cold startup | ~0.6 ms (no packer); VMProtect demo ~2.6 s |
 | Hardened tier | opt-in `--hardened`: anti-debug, RDTSC/LFENCE, Windows DR report, Linux/Windows self-code checksum |
 
@@ -103,7 +107,7 @@ sirus version
 Options:
 
 - `--seed <64-hex>` deterministic build seed
-- `--profile <max|balanced|minimal>` security/performance preset
+- `--profile <max|balanced|minimal|fast>` security/performance preset
 - `--fuel <n>` runtime instruction budget (default 2,000,000)
 - `--mba-depth <n>` 0..=8 (default 3)
 - `--mba-budget <n>` expression node budget (default 512)
@@ -124,10 +128,12 @@ Supported instruction subset includes common integer `mov`, `movzx`, `movsx`,
 `neg`, `not`, `imul`, shifts, rotates, `push`, `pop`, `leave`, `cdqe`, `jmp`,
 `jcc`, `ret`, `cmovcc`, `setcc`, and stack-frame addressing.
 
-Not virtualizable (fail closed): calls, indirect jumps, RIP-relative data,
-floating point/SSE/AVX, x87, syscalls, atomics, privilege/segment instructions,
-jump tables, host pointer dereference, stack arguments beyond the sixth, and
-functions with cross-block flag liveness that cannot be proven.
+Not virtualizable (fail closed): external calls, indirect calls/jumps,
+writable RIP-relative globals, floating point/AVX/x87, syscalls, atomics,
+privilege/segment instructions, jump tables, host pointer dereference,
+arguments beyond 12 (System V) or 10 (Win64), and functions with cross-block
+flag liveness that cannot be proven. Direct calls to another selected protected
+function and SSE2 integer operations are supported.
 
 The ABI is System V AMD64 with up to six integer arguments and one integer
 result. Virtualized code operates on a private 4 KiB stack and cannot access host
@@ -243,8 +249,8 @@ protection. An attacker with unlimited local time, instrumentation, and CPU
 control can eventually recover behavior. The default runtime contains no unsafe
 code. The opt-in `--hardened` tier adds RDTSC/LFENCE timing checks, debugger
 detection, debug-register reports, and a Linux self-code checksum; Windows
-self-code checksum and kernel-level anti-debug remain unimplemented. Those gaps
-are documented rather than faked.
+self-code checksum is implemented for Windows; kernel-level anti-debug remains
+unimplemented. Those gaps are documented rather than faked.
 
 Use Sirus for license checks, protocol/key derivation, or proprietary integer
 logic where deep data binding and per-build mutation matter. Do not use it to

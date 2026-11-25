@@ -54,7 +54,7 @@ Sirus raises cost; it does not prove impossibility.
 - Preventing patch-to-return attacks on callers outside the protected function.
 - Formal cryptographic proof of the custom cipher construction.
 - Whole-program virtualization.
-- Protecting functions requiring calls, host memory, floating point, or
+- Protecting functions requiring external calls, host memory, floating point, or
   unsupported instructions.
 
 ---
@@ -106,7 +106,7 @@ protected data in ways that fail downstream if incorrect.
    and Triton are commercial/licence-gated and outside the local gate; AORAI is
    not applicable to Rust. The default branchy VM leaks timing; the explicit
    `--constant-time` mode passes straight-line, branch, and loop dudect cases.
-6. **Windows runtime.** The strict leaf Win64 runtime (branches and loops included) passes under Wine and native Windows, including a `/guard:cf` fixture with indirect callers, linked unwind metadata, and the shared ABI matrix. Runtime exception propagation through a protected leaf is not tested because the lifter rejects calls.
+6. **Windows runtime.** The strict leaf Win64 runtime (branches and loops included) passes under Wine and native Windows, including a `/guard:cf` fixture with indirect callers, linked unwind metadata, and the shared ABI matrix. Direct calls between selected protected functions execute on a guest call stack; external calls still fail closed, and language exception propagation remains out of scope.
 7. **Symbol metadata.** Protected output retains the host symbol table; the
    injected `.sirus` segment itself contains no obvious strings.
 8. **Local attacker.** A process owner can instrument memory/CPU and eventually

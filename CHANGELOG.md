@@ -2,6 +2,29 @@
 
 All notable changes to Sirus.
 
+## [1.5.7-hardened] — 2026-11-25
+
+### Functionality
+
+- Lift RIP-relative reads of read-only data by embedding the referenced bytes
+  into a private VM data blob; writable RIP-relative targets still fail closed.
+- Carry System V stack arguments 7-12 and Win64 stack arguments 5-10 through
+  the ABI shims into the private VM stack.
+- Add an SSE2 integer subset: `movdqu`/`movdqa`, `pxor`/`pand`/`por`,
+  `paddq`/`psubq`, `paddd`/`psubd`, `pmuludq`,
+  `punpcklqdq`/`punpckhqdq`, `psrldq`/`pslldq`, and `movq`/`movd`.
+- Support direct `call rel32` between functions selected in the same run with a
+  bounded guest call stack. External calls and constant-time calls fail closed.
+- Expand the VM register file to 96 registers to hold 16 XMM pairs.
+
+### Evidence
+
+- 211 tests; new real C fixtures for RIP-relative data, stack arguments, SSE2,
+  and direct protected calls in normal and constant-time modes.
+- Windows/Wine fixtures for 5th-8th stack arguments and cross-function direct
+  calls pass.
+- Coverage: 87.57% tarpaulin lines (7340/8382); 89.07% llvm-cov lines.
+
 ## [1.5.6-hardened] — 2026-11-25
 
 ### Performance
@@ -14,8 +37,9 @@ All notable changes to Sirus.
 
 ### Evidence
 
-- 201 tests; fast profile measured `~14.4 µs` (7,665× native).
-- Default max remains ~75 µs; the gap is the intentional MBA/decoy workload.
+- 202 tests; 90.25% tarpaulin / 90.97% llvm-cov lines.
+- Fast profile measured `~14.4 µs` (7,665× native); default max remains ~75 µs.
+  The gap is the intentional MBA/decoy workload.
 
 ## [1.5.5-hardened] — 2026-11-25
 
@@ -34,7 +58,7 @@ All notable changes to Sirus.
 
 ### Evidence
 
-- 202 tests; 90.25% tarpaulin / 90.97% llvm-cov lines.
+- 201 tests; 90.08% tarpaulin / 90.79% llvm-cov lines.
 
 ## [1.5.4-hardened] — 2026-11-25
 

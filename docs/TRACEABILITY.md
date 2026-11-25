@@ -205,7 +205,8 @@ See `docs/CODE_STANDARD_COMPLIANCE.md` and ADR-001.
 
 1. Native Windows runtime, `/guard:cf`, PDB/map targeting, and ABI-matrix CI
    execution are covered. Runtime exception propagation through a protected leaf
-   remains untested because calls are outside the lifted subset.
+   remains out of scope; direct calls between selected protected functions are
+   now guest-state transitions and are tested, while external calls fail closed.
 2. Byte-level VM-segment indistinguishability beyond the current 2.21% equality;
    handler/engine/entry layout order is already permuted per build.
 3. Optional hardened-tier controls (RDTSC, debug registers, native self-checks,

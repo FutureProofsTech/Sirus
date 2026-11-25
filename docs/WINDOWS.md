@@ -38,6 +38,11 @@
   ABI shims carry `.seh_proc` unwind directives, and the target exception
   directory is merged and its checksum refreshed. Unwind records with exception
   handlers or chained info are rejected until their RVAs are rebased.
+- Stack arguments 5-10 are carried through the shim and execute in normal and
+  constant-time modes; a Wine fixture covers an 8-argument leaf.
+- Direct `call rel32` between two selected protected functions executes through
+  the guest call stack; constant-time calls fail closed.
+- RIP-relative read-only data and the documented SSE2 subset work on Win64.
 - The fixture resolves the patched entry's `RUNTIME_FUNCTION` through
   `RtlLookupFunctionEntry` at runtime in normal and protected binaries.
 - Hardened Windows builds verify the linked `.text` hash on every entry, with
@@ -54,6 +59,8 @@ Verified locally:
 ```text
 PASS Windows/Wine PE32+ runtime (normal + constant-time + hardened)
 PASS Windows/Wine C ABI matrix (XMM6-15, indirect, large frame)
+PASS Windows/Wine stack arguments (5th-8th, normal + constant-time)
+PASS Windows/Wine direct protected calls (normal; constant-time rejected)
 PASS Windows/Wine hardened self-code checksum
 ```
 
@@ -68,12 +75,15 @@ The same fixture runs in the native Windows and MSVC `/guard:cf` jobs.
 The Windows runtime follows the same strict leaf-function subset as the Linux
 runtime:
 
-- up to four integer arguments in `RCX`, `RDX`, `R8`, `R9`;
-- no stack arguments inside the protected leaf;
+- up to four integer register arguments in `RCX`, `RDX`, `R8`, `R9`, plus up
+  to six stack arguments (5th-10th);
 - one integer result in `RAX`;
 - conditional branches and loops inside the lifted function are supported;
-- no calls, indirect control flow, SSE/AVX/x87, RIP-relative data, or host
-  pointer dereference inside the protected function;
+- RIP-relative reads of read-only data and the documented SSE2 integer subset
+  are supported;
+- direct calls to another function selected in the same protection run are
+  supported; external calls, indirect control flow, AVX/x87, writable
+  RIP-relative globals, and host pointer dereference are rejected;
 - exception/unwind metadata is emitted for the injected VM and the ABI shims;
 - MSVC CFG-enabled callers and indirect calls are tested. Protected entries are
   reached through a direct `rel32` jump, which CFG does not instrument; an
@@ -117,9 +127,10 @@ the native output. The CFG job also exercises the indirect caller path under
 ## 4. What is still not claimed
 
 - Windows anti-debug/anti-tamper beyond the existing PEB/debug-register reports.
-- Runtime exception propagation through a protected leaf: the lifter does not
-  support calls, so no test can throw from inside the lifted function. The
-  fixture instead validates the patched entry's runtime-function lookup.
+- Runtime exception propagation through a protected leaf: protected calls are
+  guest-state transitions, not native unwind frames, so a language exception
+  cannot unwind through them. The fixture validates the patched entry's
+  runtime-function lookup instead.
 - Unwind records with exception handlers or chained info; these fail closed.
 - Production signing and full import/TLS edge-case coverage beyond the fixtures.
 - Full x86-64 or ARM64 Windows instruction coverage.
