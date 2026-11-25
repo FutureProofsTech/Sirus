@@ -131,9 +131,9 @@ Runs Kani, Miri, and libFuzzer. Full Miri execution is slow; set
 Recorded evidence:
 
 - Kani: 5 core + 4 VM harnesses.
-- Miri: 10 VM lib + 20 VM execution (1 ignored under Miri) + 82 core tests.
-- libFuzzer VM: 3,271,319 cumulative executions, no crash.
-- libFuzzer lifter/compiler: 112,332 runs, no crash.
+- Miri: 11 VM lib + 20 VM execution (1 ignored under Miri) + core tests.
+- libFuzzer VM: 3,696,143 cumulative executions, no crash.
+- libFuzzer lifter/compiler: 197,859 cumulative runs, no crash.
 - libFuzzer formats: 28,971,774 PE and 20,071,488 ELF cumulative runs, no crash.
 - Reproducible output: identical normal, hardened, and constant-time binaries
   for a fixed input and seed.

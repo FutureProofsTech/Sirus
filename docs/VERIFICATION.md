@@ -132,7 +132,7 @@ Final passes on the current tree:
 
 ```text
 cargo +nightly miri test -p sirus-vm --lib
-  10 tests passed (1.19 s)
+  11 tests passed (1.17 s)
 
 cargo +nightly miri test -p sirus-vm --test execution
   19 passed, 1 ignored
@@ -162,8 +162,9 @@ Done 1056362 runs in 61 second(s)
 ```
 
 The final-tree session completed 1,056,362 runs with no crash. A fresh
-1.5.1 session completed another 342,270 runs; adding all recorded sessions, the
-cumulative total is **3,271,319 executions**.
+1.5.1 session completed another 342,270 runs, and the 1.5.7 session completed
+424,824 runs; adding all recorded sessions, the cumulative total is
+**3,696,143 executions**.
 
 No crash, panic, OOB, or timeout. The fuzz target builds a valid integrity key
 for arbitrary payloads so the decoder body path is exercised, not only the
@@ -173,10 +174,12 @@ The 1.5.2 session also added a lifter/compiler target:
 
 ```text
 Done 112332 runs in 21 second(s)
+Done 85527 runs in 31 second(s)  (1.5.7 session)
 ```
 
 It lifts arbitrary byte strings and compiles every successfully lifted function
-in normal and (input-selected) constant-time modes.
+in normal and (input-selected) constant-time modes. The cumulative lifter total
+is **197,859 executions**.
 
 In-tree deterministic fuzz additionally runs 20,000 random payloads and 10,000
 mutations of a valid payload.
