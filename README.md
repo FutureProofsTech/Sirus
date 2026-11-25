@@ -60,6 +60,7 @@ commercial/open-source positioning is in
   dependency.
 - Linux VM linking uses `cc` with LLD plus `objcopy`; Windows uses
   `x86_64-w64-mingw32-gcc` and `lld-link`.
+- `rust-toolchain.toml` pins stable Rust 1.99.0 and the Windows GNU target.
 
 The build-time CLI uses `std` only at the filesystem/process boundary. The
 compiler core and runtime are fully `no_std`.

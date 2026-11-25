@@ -16,6 +16,10 @@ All notable changes to Sirus.
 - Added a Windows DLL export fixture and host load test to the Wine/native gates.
 - Added TLS-callback and resource preservation fixtures.
 
+### Changed
+
+- Pin stable Rust 1.99.0 and the Windows GNU target in `rust-toolchain.toml`.
+
 ### Evidence
 
 - 201 tests; 90.13% tarpaulin / 90.61% llvm-cov lines.

@@ -131,6 +131,7 @@ Recorded evidence:
 - Release artifacts: `scripts/release-artifacts.sh` emits a binary copy,
   deterministic source archive, SHA-256 manifest, CycloneDX SBOM, and optional
   GPG signature when `SIRUS_SIGNING_KEY` is set.
+- `rust-toolchain.toml` pins stable Rust 1.99.0 and the Windows GNU target.
 - Tarpaulin: 90.13% lines (6778/7520).
 - llvm-cov: 90.61% lines, 86.16% regions.
 - Payload differential: 0.40% equal bytes.

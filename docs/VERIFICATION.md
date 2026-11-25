@@ -1,7 +1,7 @@
 # Verification Record
 
 **Host:** Linux x86-64, Fedora-class environment
-**Stable toolchain:** rustc 1.99.0 (2026-09-28)
+**Stable toolchain:** rustc 1.99.0 (2026-09-28), pinned by `rust-toolchain.toml`
 **Nightly toolchain:** 2026-08-03 / 2026-08-21 family for Miri and fuzzing
 **Kani:** 0.68.0
 **Project state:** all features described in `README.md` implemented and tested
