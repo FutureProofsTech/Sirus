@@ -117,8 +117,8 @@ Recorded evidence:
 
 - Kani: 5 core + 4 VM harnesses.
 - Miri: 10 VM lib + 20 VM execution (1 ignored under Miri) + 82 core tests.
-- libFuzzer VM: 2,929,049 cumulative executions, no crash.
-- libFuzzer formats: 17,482,146 PE and 15,055,973 ELF runs, no crash.
+- libFuzzer VM: 3,271,319 cumulative executions, no crash.
+- libFuzzer formats: 28,971,774 PE and 20,071,488 ELF cumulative runs, no crash.
 - Reproducible output: identical normal, hardened, and constant-time binaries
   for a fixed input and seed.
 - Tarpaulin: 85.05% lines (6212/7304).

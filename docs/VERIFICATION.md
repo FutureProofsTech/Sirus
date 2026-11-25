@@ -141,8 +141,9 @@ Result:
 Done 1056362 runs in 61 second(s)
 ```
 
-The final-tree session completed 1,056,362 runs with no crash. Adding the earlier
-recorded sessions, the cumulative total is **2,929,049 executions**.
+The final-tree session completed 1,056,362 runs with no crash. A fresh
+1.5.1 session completed another 342,270 runs; adding all recorded sessions, the
+cumulative total is **3,271,319 executions**.
 
 No crash, panic, OOB, or timeout. The fuzz target builds a valid integrity key
 for arbitrary payloads so the decoder body path is exercised, not only the
@@ -154,8 +155,9 @@ mutations of a valid payload.
 Separate format fuzz targets:
 
 ```text
-PE:  17,482,146 runs in 31 s, no crash
-ELF: 15,055,973 runs in 31 s, no crash
+PE:  11,489,628 runs in 21 s, no crash (1.5.1 session)
+ELF:  5,015,515 runs in 21 s, no crash (1.5.1 session)
+Cumulative: 28,971,774 PE / 20,071,488 ELF runs.
 ```
 
 Reproducible output:
