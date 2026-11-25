@@ -57,6 +57,7 @@ echo "== protect constant-time =="
     --seed 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff \
     --constant-time \
     --constant-time-passes 256 \
+    --fuel 50000000 \
     >"$work/protect-ct.out"
 
 echo "== protect constant-time with two original functions =="
@@ -80,6 +81,7 @@ echo "== protect constant-time with 1024 passes =="
     --seed 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff \
     --constant-time \
     --constant-time-passes 1024 \
+    --fuel 50000000 \
     >"$work/protect-ct-1024.out"
 
 echo "== protect constant-time ABI-only and main-only diagnostics =="

@@ -147,6 +147,8 @@ def map_rvas(path):
 
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(newline="\n")
     if len(sys.argv) not in (3, 4):
         raise SystemExit(
             "usage: msvc-cfg-symbols.py <object> <map> [pdb]"

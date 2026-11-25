@@ -87,6 +87,7 @@ jobs:
             | tee target/cfg/ranges.txt
           args=()
           while IFS='=' read -r name range; do
+            range="${range%$'\r'}"
             args+=(--range "$range")
           done < target/cfg/ranges.txt
           ./target/release/sirus.exe protect \
