@@ -20,10 +20,12 @@ enforced fully in core/VM, partially in binfmt, and explicitly waived in the CLI
 ## ADR-002 — `forbid(unsafe_code)` everywhere
 
 **Decision:** Every shipped crate and the generated VM source use
-`#![forbid(unsafe_code)]`.
+`#![forbid(unsafe_code)]` except the opt-in `sirus-hardened` crate and
+`--hardened` generated VMs, which explicitly allow unsafe code.
 
-**Consequence:** No `no_mangle`, `link_section`, raw pointers, inline asm, RDTSC,
-debug-register access, or native self-code checksum.
+**Consequence:** The safe tier has no `no_mangle`, `link_section`, raw pointers,
+inline asm, RDTSC, debug-register access, or native self-code checksum. The
+hardened tier opts into those controls and is never part of the default build.
 
 **Compensation:** Generated entry thunks are located through their mangled symbol
 names; safe `#[used]` function-pointer statics retain them at link time. Payload
@@ -72,6 +74,10 @@ primary constraint.
 **Mitigation:** Encrypted payload integrity is arithmetically mixed into the
 rolling key; fuel bounds execution; malformed state halts; no unsafe memory path
 exists. Residual risk is documented.
+
+**Superseded for the hardened tier:** ADR-021 adds LFENCE/RDTSC, debugger
+detection, and a Linux self-code checksum behind the opt-in `--hardened` flag.
+The safe tier keeps the original decision.
 
 ---
 
@@ -265,18 +271,19 @@ performance-oriented and data-dependent.
 
 **Decision:** Add a Win64 runtime for PE32+ AMD64 using the existing encrypted VM
 payload and strict leaf-function subset. Cross-compile the generated runtime with
-`x86_64-pc-windows-gnu`, link it with `lld-link` and a local no-op
-`___chkstk_ms` shim, extract `.text`/`.rdata`, append one RX `.sirus` section, and
+`x86_64-pc-windows-gnu`, link it with `lld-link` and a local guard-page-safe
+`___chkstk_ms` probe, extract `.text`/`.rdata`, append one RX `.sirus` section, and
 patch the selected function RVA. Validate native/protected output equality under
 Wine.
 
 **Reason:** The Linux toolchain can produce and execute a real PE32+ prototype
 without weakening the safe-Rust runtime. Wine provides a repeatable local
-execution gate while native Windows CI is staged.
+execution gate alongside the native Windows CI that now executes this path.
 
-**Boundary:** Native Windows loader/CFG/exception validation, signing, imports/TLS,
-and Windows anti-debug are not claimed. This line does not change the primary
-Linux ELF release gate.
+**Boundary:** Windows loader/CFG execution, linked unwind metadata, and an ABI
+matrix are now covered by native CI. Windows self-code checksum, signing,
+imports/TLS, and kernel-level anti-debug are not claimed. This line does not
+change the primary Linux ELF release gate.
 
 ---
 
@@ -327,5 +334,6 @@ while providing the requested controls.
 
 **Boundary:** Linux user mode cannot read debug registers without a ptrace
 relationship; `harden-check` reports `unsupported`. Windows debug registers are
-reported through `GetThreadContext`. No self-code checksum, DBI/hypervisor
-detection, or formal Spectre guarantee is added.
+reported through `GetThreadContext`. Linux hardened builds add a linker-marked
+text checksum; Windows builds do not yet. No DBI/kernel anti-debug or formal
+Spectre guarantee is added.

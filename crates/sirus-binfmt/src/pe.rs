@@ -1585,6 +1585,79 @@ mod tests {
     }
 
     #[test]
+    fn exception_table_rejects_malformed_entries() {
+        let base = synthetic_pe_with_exception();
+        let pe = Pe64::parse(&base).expect("pe");
+        let mut blob = Vec::new();
+        assert_eq!(
+            append_exception_table(&mut blob, &pe, 0x2000, &[]).expect("empty"),
+            None
+        );
+        assert_eq!(
+            append_exception_table(
+                &mut blob,
+                &pe,
+                0x2000,
+                &[UnwindFunction::new(0x10, 0x10, unwind(0))],
+            )
+            .err(),
+            Some(crate::FormatError::Malformed)
+        );
+        assert_eq!(
+            append_exception_table(
+                &mut blob,
+                &pe,
+                0x2000,
+                &[UnwindFunction::new(0x10, 0x20, vec![1, 0, 0])],
+            )
+            .err(),
+            Some(crate::FormatError::Malformed)
+        );
+        let mut short = unwind(1);
+        short.truncate(4);
+        assert_eq!(
+            append_exception_table(
+                &mut blob,
+                &pe,
+                0x2000,
+                &[UnwindFunction::new(0x10, 0x20, short)],
+            )
+            .err(),
+            Some(crate::FormatError::Malformed)
+        );
+
+        let optional = 0x98_usize;
+        let mut bad_size = base.clone();
+        bad_size[optional + 112 + 28..optional + 112 + 32].copy_from_slice(&13_u32.to_le_bytes());
+        let bad_pe = Pe64::parse(&bad_size).expect("bad size");
+        assert_eq!(
+            append_exception_table(
+                &mut blob,
+                &bad_pe,
+                0x2000,
+                &[UnwindFunction::new(0x10, 0x20, unwind(0))],
+            )
+            .err(),
+            Some(crate::FormatError::Malformed)
+        );
+
+        let mut bad_range = base.clone();
+        bad_range[0x270..0x274].copy_from_slice(&0x1050_u32.to_le_bytes());
+        bad_range[0x274..0x278].copy_from_slice(&0x1040_u32.to_le_bytes());
+        let bad_pe = Pe64::parse(&bad_range).expect("bad range");
+        assert_eq!(
+            append_exception_table(
+                &mut blob,
+                &bad_pe,
+                0x2000,
+                &[UnwindFunction::new(0x10, 0x20, unwind(0))],
+            )
+            .err(),
+            Some(crate::FormatError::Malformed)
+        );
+    }
+
+    #[test]
     fn directory_updates_refresh_the_checksum() {
         let mut image = synthetic_pe_with_exception();
         let source = image.clone();

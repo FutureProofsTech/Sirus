@@ -2,7 +2,7 @@
 
 **Zero-dependency polymorphic code virtualizer in Safe Rust.**
 
-**Release:** `1.5.0-hardened` — see [`RELEASE.md`](RELEASE.md) and [`CHANGELOG.md`](CHANGELOG.md).
+**Release:** `1.5.1-hardened` — see [`RELEASE.md`](RELEASE.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 Sirus takes a compiled Linux x86-64 ELF, lifts a selected function into an
 internal IR, flattens its control flow, expands sensitive arithmetic through
@@ -26,7 +26,7 @@ commercial/open-source positioning is in
 |---|---|
 | Linux x86-64 ELF end-to-end | **working and tested** |
 | PE32+ format parse / section injection | **working; Win64 runtime Wine-tested** |
-| PE/Win64 runtime execution | **working under Wine 11.20**, normal and `--constant-time`; native Windows CI passed |
+| PE/Win64 runtime execution | **working under Wine 11.20 and native Windows**, normal, constant-time, and hardened; MSVC `/guard:cf` and ABI matrix pass |
 | Random per-build ISA, aliases, operand orders, register maps | working |
 | CFG flattening, encrypted manifest/bodies, decoys, constant blinding | working |
 | Encrypted per-build decode table + fast ARX body stream | working |
@@ -35,13 +35,13 @@ commercial/open-source positioning is in
 | Safe Rust / no external crates | safe tier enforced; `sirus-hardened` is opt-in unsafe |
 | Kani, Miri, libFuzzer, differential/tamper/bypass, Ghidra, radare2 | run locally |
 | angr, KLEE, Creusot, dudect-bencher | run locally; bounded/model results stated |
-| Coverage floor (85%) | **met: 86.08% tarpaulin / 86.96% llvm-cov lines** |
+| Coverage floor (85%) | **met: 85.05% tarpaulin / 86.14% llvm-cov lines** |
 | Constant-time VM execution | `--constant-time` oblivious branch/loop/memory mode below dudect threshold; normal profile leaks |
 | Live memory state | virtual registers/private stack masked at rest; snapshot constant scan passes |
 | Constant-time scope | fixed pass budget; branches, loops, and oblivious private-memory scan supported |
-| Per-call overhead (benchmark leaf function) | default ~78.1 µs / hardened ~78.8 µs / constant-time ~209 µs / hardened CT ~205 µs / balanced ~57.2 µs / minimal ~14.1 µs; VMProtect 3.11 demo ~8.5 µs |
+| Per-call overhead (benchmark leaf function) | default ~78.7 µs / hardened ~76.7 µs / constant-time ~214 µs / hardened CT ~217 µs / balanced ~56.6 µs / minimal ~14.7 µs; VMProtect 3.11 demo ~8.5 µs |
 | Cold startup | ~0.6 ms (no packer); VMProtect demo ~2.6 s |
-| Hardened tier | opt-in `--hardened`: anti-debug, RDTSC/LFENCE, Windows DR report |
+| Hardened tier | opt-in `--hardened`: anti-debug, RDTSC/LFENCE, Windows DR report, Linux self-code checksum |
 
 ---
 
@@ -235,10 +235,11 @@ docs/                    architecture, Windows, threat model, format, limitation
 
 Sirus is designed for asymmetric reverse-engineering cost, not absolute
 protection. An attacker with unlimited local time, instrumentation, and CPU
-control can eventually recover behavior. The runtime deliberately contains no
-unsafe code, which means native self-code checksumming, RDTSC timing detection,
-debug-register inspection, and LFENCE-based speculative controls are not
-implemented. Those gaps are documented rather than faked.
+control can eventually recover behavior. The default runtime contains no unsafe
+code. The opt-in `--hardened` tier adds RDTSC/LFENCE timing checks, debugger
+detection, debug-register reports, and a Linux self-code checksum; Windows
+self-code checksum and kernel-level anti-debug remain unimplemented. Those gaps
+are documented rather than faked.
 
 Use Sirus for license checks, protocol/key derivation, or proprietary integer
 logic where deep data binding and per-build mutation matter. Do not use it to

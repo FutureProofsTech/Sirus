@@ -99,10 +99,10 @@ under the safe-Rust/no-unsafe constraint.
 
 | Requirement | Status | Evidence |
 |---|---|---|
-| Self-checksumming machine code | **not feasible safely** | documented in limitations |
+| Self-checksumming machine code | implemented for Linux hardened builds; Windows pending | linker-marked text hash + tamper test |
 | Hash mixed into rolling key | implemented for payload | effective-key binding |
 | Software breakpoint corruption | partial | payload tamper changes key; code breakpoints not detected |
-| Timing drift detection | **not feasible safely** | no RDTSC |
+| Timing drift detection | hardened tier only | LFENCE/RDTSC budget; dudect evidence |
 | Silent wrong behavior rather than obvious branch | implemented | tamper returns wrong results, no branch |
 | Fuel limit | implemented | deterministic exhaustion |
 
@@ -173,7 +173,7 @@ See `docs/CODE_STANDARD_COMPLIANCE.md` and ADR-001.
 | AORAI | installed (Frama-C 33.0); C-only, not applicable | `docs/VERIFICATION.md` |
 | cargo-fuzz | run, 1,056,362 final-tree executions (2,929,049 cumulative) | fuzz/ |
 | Proptest | external crate prohibited; in-tree property tests implemented | tests |
-| cargo-tarpaulin | run, 86.08% (above 85% floor) | coverage report |
+| cargo-tarpaulin | run, 85.05% (above 85% floor) | coverage report |
 | cargo-llvm-cov | run, independent coverage | `docs/VERIFICATION.md` |
 | Loom | not applicable (no shared mutable runtime state) | ADR/architecture |
 | dudect-bencher | run; cipher below \|t\|=5, VM branch leaks | `verification/dudect` |
@@ -203,15 +203,15 @@ See `docs/CODE_STANDARD_COMPLIANCE.md` and ADR-001.
 
 ## D. External evidence and accepted boundaries
 
-1. Native Windows-host loader/CFG/exception validation and CI execution. The
-   Linux-hosted Wine gate passes; native Windows is an external evidence gap, not
-   a Linux release gate.
+1. Native Windows runtime, `/guard:cf`, PDB/map targeting, and ABI-matrix CI
+   execution are covered. Runtime exception propagation through a protected leaf
+   remains untested because calls are outside the lifted subset.
 2. Byte-level VM-segment indistinguishability beyond the current 2.21% equality;
    handler/engine/entry layout order is already permuted per build.
 3. Optional hardened-tier controls (RDTSC, debug registers, native self-checks,
    LFENCE) are permanently out of scope for the safe tier under ADR-020.
 
 The safe-tier prototype is complete for the documented Linux ELF path, the
-Wine-tested Win64 path, and the fixed-pass constant-time mode. Any statement that
-the external native Windows-host gate has been executed is false until it is
-actually run.
+Wine-tested and native Windows-tested Win64 path, and the fixed-pass
+constant-time mode. Native Windows and `/guard:cf` gates were executed in
+GitHub Actions.

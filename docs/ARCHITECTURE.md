@@ -263,12 +263,16 @@ recomputes the PE checksum, patches one RVA-relative jump per protected
 function, and overwrites the original body with keyed junk.
 
 The Win64 runtime is generated with `rustc --target x86_64-pc-windows-gnu`, linked
-with `lld-link` and a local stack-probe shim, then its `.text`/`.rdata` bytes are
-embedded as one RX section. Function arguments are translated from the Windows
-x64 ABI to the VM's internal array at the entry thunk. The strict leaf subset,
-including branches and loops, is verified under Wine. Native Windows loader/CFG
-validation, exception metadata, signing, imports/TLS, and Windows anti-debug are
-not yet implemented or claimed.
+with `lld-link` and a guard-page-safe stack-probe shim, then its `.text`/`.rdata`
+bytes are embedded as one RX section. Function arguments are translated from the
+Windows x64 ABI to the VM's internal array at the entry thunk; an assembly shim
+preserves volatile GPRs and `XMM0`–`XMM5`, and the ABI matrix covers `XMM6`–`XMM15`,
+indirect callers, and a 32 KiB stack frame. Linked `.pdata` entries are rebased
+into the section and merged into the target exception directory; handler-bearing
+or chained unwind records fail closed. The strict leaf subset, including
+branches and loops, is verified under Wine, native Windows, and MSVC `/guard:cf`.
+Windows self-code checksum, signing, imports/TLS, and kernel anti-debug are not
+claimed.
 
 ### 11.1 Constant-time oblivious execution
 

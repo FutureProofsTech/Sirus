@@ -5,7 +5,7 @@
 **Nightly toolchain:** 2026-08-03 / 2026-08-21 family for Miri and fuzzing
 **Kani:** 0.68.0
 **Project state:** all features described in `README.md` implemented and tested
-**Last evidenced run:** final 1.5.0-hardened tree, tag `v1.5.0-hardened`
+**Last evidenced run:** final 1.5.1-hardened tree, tag `v1.5.1-hardened`
 
 This file records commands actually executed. Anything not executed is listed as
 an external evidence gap or a documented boundary, never inferred.
@@ -36,28 +36,28 @@ Result: **exit 0**. The script runs:
 
 ## 2. Test inventory
 
-`cargo test --workspace` now runs **184 tests**, all passing; the MBA corpus and
+`cargo test --workspace` now runs **191 tests**, all passing; the MBA corpus and
 statistical timing tests are `#[ignore]` measurement hooks and are not part of
 the normal count.
 
 ```text
-184 passed, 0 failed
+191 passed, 0 failed
 ```
 
 Breakdown:
 
 | Target | Tests |
 |---|---:|
-| `sirus-binfmt` unit tests | 21 |
+| `sirus-binfmt` unit tests | 25 |
 | `sirus-binfmt` real-loader test | 1 |
 | `sirus-core` unit tests | 82 |
-| `sirus-protector` unit tests | 35 |
-| `sirus-hardened` runtime checks | 1 |
+| `sirus-protector` unit tests | 36 |
+| `sirus-hardened` runtime checks | 2 |
 | `sirus-protector` end-to-end | 1 |
 | `sirus-protector` pipeline errors | 1 |
 | `sirus-protector` marker end-to-end | 1 |
 | `sirus-vm` unit tests | 10 |
-| `sirus-vm` execution | 20 |
+| `sirus-vm` execution | 21 |
 | `sirus-vm` deterministic fuzz | 2 |
 | `sirus-vm` malformed payloads | 9 |
 
@@ -178,7 +178,7 @@ cargo tarpaulin --workspace --all-targets --engine Llvm \
   --exclude-files 'target/*' --exclude-files 'bench/*' --timeout 120
 ```
 
-Result: **86.08% line coverage (6017 / 6990 lines)** with
+Result: **85.05% line coverage (6212 / 7304 lines)** with
 `--exclude-files 'target/*' --exclude-files 'bench/*'`. This is above the agreed
 85% floor.
 
@@ -203,9 +203,9 @@ cargo llvm-cov --workspace --all-targets --summary-only
 ```
 
 ```text
-TOTAL regions 82.70% (3855 missed of 22285)
-TOTAL functions 74.92% (222 missed of 885)
-TOTAL lines 86.96% (1559 missed of 11960)
+TOTAL regions 81.98% (4220 missed of 23423)
+TOTAL functions 73.30% (248 missed of 929)
+TOTAL lines 86.14% (1738 missed of 12538)
 ```
 
 The two tools instrument differently; both are above the 85% floor and show the
@@ -305,12 +305,12 @@ VMProtect demo 3.11 virtualization measured on its own native baseline):
 | Native (Sirus benchmark build) | ~1.2-1.4 ns | 1x | ~0.0002x |
 | Native (VMProtect benchmark build) | ~1.89 ns | 1x | ~0.0002x |
 | VMProtect 3.11 demo, virtualization | ~8.48 us | ~4,490x | 1x |
-| Sirus default | ~78.1 us | ~41,500x | ~9.2x |
-| Sirus hardened | ~78.8 us | ~41,900x | ~9.3x |
-| Sirus constant-time | ~209 us | ~111,200x | ~24.6x |
-| Sirus hardened constant-time | ~205 us | ~109,300x | ~24.2x |
-| Sirus balanced (`depth=1, budget=128, decoys=1`) | ~57.2 us | ~45,400x | ~6.7x |
-| Sirus minimal (`depth=0, budget=0, decoys=0`) | ~14.1 us | ~10,700x | ~1.7x |
+| Sirus default | ~78.7 us | ~49,800x | ~9.3x |
+| Sirus hardened | ~76.7 us | ~40,600x | ~9.0x |
+| Sirus constant-time | ~214 us | ~101,500x | ~25.2x |
+| Sirus hardened constant-time | ~217 us | ~111,300x | ~25.5x |
+| Sirus balanced (`depth=1, budget=128, decoys=1`) | ~56.6 us | ~30,000x | ~6.7x |
+| Sirus minimal (`depth=0, budget=0, decoys=0`) | ~14.7 us | ~6,100x | ~1.7x |
 
 Sirus append size is about 30 KiB (0.7% of the benchmark binary); VMProtect demo
 packs the 4.4 MiB input to a 1.17 MiB output but pays a multi-second startup cost
@@ -492,25 +492,64 @@ executes data-dependent control flow.
 ```
 
 The fixture is a real `x86_64-pc-windows-gnu` PE32+ binary. Sirus resolves the
-`sirus_win_check` and `sirus_win_mix` COFF symbols, lifts both, generates the encrypted VM, cross-compiles the
-Win64 runtime, links it as a no-import image, rejects any relocation that
-targets the extracted code/data, appends one RX `.sirus` section, patches both
-function RVAs, and runs the native and two protected binaries under Wine 11.20.
+`sirus_win_check`, `sirus_win_mix`, and `sirus_abi_target` COFF symbols, lifts
+all three, generates the encrypted VM, cross-compiles the Win64 runtime, links
+it as a no-import image, rejects any relocation that targets the extracted
+code/data, appends one RX `.sirus` section, merges linked `.pdata` entries into
+the exception directory, patches all three function RVAs, and runs the native
+and protected binaries under Wine 11.20.
 
 ```text
-PASS Windows/Wine PE32+ runtime (normal + constant-time)
-protected 2 function(s); ... VM segment 52736 bytes; ... (normal)
-protected 2 function(s); ... VM segment 53248 bytes; ... (constant-time)
+PASS Windows/Wine PE32+ runtime (normal + constant-time + hardened)
+PASS Windows/Wine C ABI matrix (XMM6-15, indirect, large frame)
 ```
 
-The native and protected outputs match for both functions over the input matrix
-`(7,3)`, `(3,7)`, `(0,0)`, and `(123456789,5)`, including the loop body.
-`objdump` shows an `E9` jump at each protected entry and keyed junk over the
-remaining original body bytes. The second protection run uses
-`--constant-time --constant-time-passes 256` and matches the same native output.
-Native Windows-host CI is executed by the `pe32-native` job in
-`.github/workflows/windows-wine.yml` through `scripts/windows-native-check.sh`;
-the latest run passed.
+The native and protected outputs match for the branch/loop matrix
+`(7,3)`, `(3,7)`, `(0,0)`, and `(123456789,5)`, plus the ABI line
+`abi 48 48 0 3`. The ABI fixture checks `XMM6`–`XMM15` preservation, direct and
+indirect callers, and a 32 KiB stack-probed caller. `objdump` shows an `E9`
+jump at each protected entry and keyed junk over the remaining original body
+bytes. Constant-time, hardened, and hardened+constant-time variants match.
+
+Native Windows CI is executed by the `pe32-native` job through
+`scripts/windows-native-check.sh`, and the `pe32-msvc-cfg` job builds the same
+fixture with MSVC `/guard:cf`, resolves function sizes from the PDB plus linker
+map, protects it with explicit `--range` selectors, and compares outputs. Both
+jobs pass. The CFG binary also exercises the indirect call path under
+`/GUARD:CF`.
+
+---
+
+## 8i-b. Hardened self-code checksum
+
+Linux `--hardened` builds place linker markers around `.text`, hash the marked
+range with word-wise FNV-1a, and patch the expected value into `.rodata` after
+linking. Every entry thunk verifies the text before decoding the payload.
+`./scripts/red-team.sh` protects the fixture with `--hardened`, confirms normal
+behavior, flips one byte inside `.sirus`, and requires the modified binary to
+produce a different result.
+
+```text
+PASS hardened self-code checksum rejects modified VM text
+```
+
+The hash slot is outside the hashed range, so patching it does not create a
+fixed-point problem. Handler-bearing Windows builds do not have this check yet.
+
+### Windows stack and constant-time fixes
+
+The Win64 probe now walks downward one page at a time from the current `RSP`,
+touching the guard page before lower uncommitted pages. The previous upward walk
+worked only when the frame fit in already committed stack and faulted when a
+multi-page VM frame was entered from a deep caller. The ABI matrix's 32 KiB
+caller is the regression test for this path.
+
+Constant-time protection now raises the effective fuel to
+`passes * (encoded body bytes + manifest blocks) + manifest blocks`, a safe
+upper bound on the fixed-pass work. Before this, a three-function CT build could
+exhaust the normal two-million-step budget and return `0` for every entry. The
+`constant_time_raises_fuel_for_multiple_entries` test runs three entries with an
+explicit fuel of `1` and requires all three to return.
 
 ---
 
@@ -563,13 +602,17 @@ cargo asm -p sirus-core --lib 1
 
 | Item | Status |
 |---|---|
-| Coverage floor (85%) | **met**: 86.08% tarpaulin / 86.96% llvm-cov lines |
+| Coverage floor (85%) | **met**: 85.05% tarpaulin / 86.14% llvm-cov lines |
 | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect | executed; evidence recorded |
 | live process memory dump scan | pass; masked VM state, constant not observed |
-| Windows PE runtime execution | Wine-tested leaf subset (branches/loops), normal and constant-time; native `pe32-native` CI passed |
+| Windows PE runtime execution | Wine and native Windows; normal, constant-time, hardened; `/guard:cf` fixture and ABI matrix pass |
+| Windows unwind metadata | linked `.pdata` merged, shim `.seh` records emitted, handler/chained records fail closed |
 | handler-layout mutation | layout preambles applied; `.sirus` equality 2.21% residual |
-| native self-code checksum / debug detection / LFENCE | permanently out of scope for the safe tier (ADR-020) |
+| Linux hardened self-code checksum | implemented; tamper test rejects modified VM text |
+| Windows hardening / self-code checksum | debugger/PEB/TSC/LFENCE and debug-register reports; native text hash not implemented |
+| native self-code checksum in the safe tier / kernel anti-debug | out of scope (ADR-020) |
 
-These are documented boundaries, not hidden passes. The Linux ELF and Wine-tested
-Win64 gates pass; native Windows-host execution and unsafe anti-debug controls
-are explicitly not claimed.
+These are documented boundaries, not hidden passes. The Linux ELF and Windows
+gates pass, including native Windows and MSVC CFG. Runtime exception propagation
+through a protected leaf, Windows self-checksum, and kernel-level anti-debug are
+explicitly not claimed.

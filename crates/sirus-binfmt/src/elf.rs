@@ -53,8 +53,6 @@ pub const SHT_DYNSYM: u32 = 11;
 pub const SHT_RELA: u32 = 4;
 /// Relocation entries without addends.
 pub const SHT_REL: u32 = 9;
-/// Symbol without a type.
-pub const STT_NOTYPE: u8 = 0;
 /// Object symbol type.
 pub const STT_OBJECT: u8 = 1;
 /// Function symbol type.

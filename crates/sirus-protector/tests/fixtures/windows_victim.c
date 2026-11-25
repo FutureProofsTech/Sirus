@@ -42,7 +42,6 @@ SIRUS_NOINLINE uint64_t sirus_abi_large(uint64_t a, uint64_t b) {
 }
 
 int main(void) {
-    setvbuf(stdout, NULL, _IONBF, 0);
     const uint64_t pairs[4][2] = {
         {7u, 3u}, {3u, 7u}, {0u, 0u}, {123456789u, 5u}
     };
@@ -52,15 +51,10 @@ int main(void) {
                (unsigned long long)sirus_win_mix(pairs[i][0], pairs[i][1]));
     }
     volatile sirus_abi_fn indirect = sirus_abi_target;
-    fprintf(stderr, "abi-start\n");
     const uint64_t direct = sirus_abi_target(9u, 4u);
-    fprintf(stderr, "abi-direct %llu\n", (unsigned long long)direct);
     const uint64_t pointer = indirect(9u, 4u);
-    fprintf(stderr, "abi-pointer %llu\n", (unsigned long long)pointer);
     const uint64_t xmm = sirus_abi_xmm_check(indirect, 9u, 4u);
-    fprintf(stderr, "abi-xmm %llu\n", (unsigned long long)xmm);
     const uint64_t large = sirus_abi_large(9u, 4u);
-    fprintf(stderr, "abi-large %llu\n", (unsigned long long)large);
     printf("abi %llu %llu %llu %llu\n",
            (unsigned long long)direct,
            (unsigned long long)pointer,

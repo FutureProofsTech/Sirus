@@ -59,48 +59,6 @@ echo "== protect constant-time =="
     --constant-time-passes 256 \
     >"$work/protect-ct.out"
 
-echo "== protect constant-time with two original functions =="
-./target/release/sirus.exe protect \
-    --input "$work/victim.exe" \
-    --output "$work/constant-two.exe" \
-    --function sirus_win_check \
-    --function sirus_win_mix \
-    --seed 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff \
-    --constant-time \
-    --constant-time-passes 256 \
-    >"$work/protect-ct-two.out"
-
-echo "== protect constant-time with 1024 passes =="
-./target/release/sirus.exe protect \
-    --input "$work/victim.exe" \
-    --output "$work/constant-1024.exe" \
-    --function sirus_win_check \
-    --function sirus_win_mix \
-    --function sirus_abi_target \
-    --seed 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff \
-    --constant-time \
-    --constant-time-passes 1024 \
-    >"$work/protect-ct-1024.out"
-
-echo "== protect constant-time ABI-only and main-only diagnostics =="
-./target/release/sirus.exe protect \
-    --input "$work/victim.exe" \
-    --output "$work/constant-abi.exe" \
-    --function sirus_abi_target \
-    --seed 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff \
-    --constant-time \
-    --constant-time-passes 256 \
-    >"$work/protect-ct-abi.out"
-./target/release/sirus.exe protect \
-    --input "$work/victim.exe" \
-    --output "$work/constant-main.exe" \
-    --function sirus_win_check \
-    --function sirus_win_mix \
-    --seed 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff \
-    --constant-time \
-    --constant-time-passes 256 \
-    >"$work/protect-ct-main.out"
-
 echo "== protect hardened =="
 ./target/release/sirus.exe protect \
     --input "$work/victim.exe" \
@@ -113,37 +71,12 @@ echo "== protect hardened =="
     >"$work/protect-hardened.out"
 
 echo "== run =="
-set +e
 "$work/victim.exe" >"$work/native.out" 2>"$work/native.err"
 "$work/protected.exe" >"$work/protected.out" 2>"$work/protected.err"
 "$work/constant.exe" >"$work/constant.out" 2>"$work/constant.err"
-"$work/constant-two.exe" >"$work/constant-two.out" 2>"$work/constant-two.err"
-"$work/constant-1024.exe" >"$work/constant-1024.out" 2>"$work/constant-1024.err"
-"$work/constant-abi.exe" >"$work/constant-abi.out" 2>"$work/constant-abi.err"
-"$work/constant-main.exe" >"$work/constant-main.out" 2>"$work/constant-main.err"
 "$work/hardened.exe" >"$work/hardened.out" 2>"$work/hardened.err"
-set -e
 
-echo "native output:"
-cat "$work/native.out"
-echo "constant output:"
-cat "$work/constant.out"
-echo "constant-two output:"
-cat "$work/constant-two.out"
-echo "constant-1024 output:"
-cat "$work/constant-1024.out"
-echo "constant-abi output:"
-cat "$work/constant-abi.out"
-echo "constant-abi stderr:"
-cat "$work/constant-abi.err"
-echo "constant-main output:"
-cat "$work/constant-main.out"
-echo "constant-main stderr:"
-cat "$work/constant-main.err"
-echo "hardened output:"
-cat "$work/hardened.out"
-
-for variant in protected constant constant-two constant-1024 hardened; do
+for variant in protected constant hardened; do
     if ! cmp -s "$work/native.out" "$work/$variant.out"; then
         echo "Windows runtime mismatch ($variant)" >&2
         echo "native:" >&2

@@ -4,19 +4,19 @@ version = 4
 
 [[package]]
 name = "sirus-binfmt"
-version = "1.5.0"
+version = "1.5.1"
 
 [[package]]
 name = "sirus-core"
-version = "1.5.0"
+version = "1.5.1"
 
 [[package]]
 name = "sirus-hardened"
-version = "1.5.0"
+version = "1.5.1"
 
 [[package]]
 name = "sirus-protector"
-version = "1.5.0"
+version = "1.5.1"
 dependencies = [
  "sirus-binfmt",
  "sirus-core",
@@ -26,7 +26,7 @@ dependencies = [
 
 [[package]]
 name = "sirus-vm"
-version = "1.5.0"
+version = "1.5.1"
 dependencies = [
  "sirus-core",
 ]

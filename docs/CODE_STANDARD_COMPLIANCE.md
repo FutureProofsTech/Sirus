@@ -197,9 +197,9 @@ Implemented exactly in the root `Cargo.toml`:
 | `cargo doc` | stable | executed with `-D warnings`, passing |
 | `cargo-audit` | installed | executed; 0 vulnerabilities |
 | `cargo-deny` | installed | executed; advisories/bans/licenses/sources pass |
-| `cargo-nextest` | installed | executed; 184 tests passing |
-| `cargo-tarpaulin` | installed | executed; 86.08% lines (6017/6990), above 85% floor |
-| `cargo-llvm-cov` | installed | executed; 86.96% lines / 82.70% regions |
+| `cargo-nextest` | installed | executed; 191 tests passing |
+| `cargo-tarpaulin` | installed | executed; 85.05% lines (6212/7304), above 85% floor |
+| `cargo-llvm-cov` | installed | executed; 86.14% lines / 81.98% regions |
 | `cargo-fuzz` | installed | 2,929,049 cumulative runs, no crash |
 | Kani 0.68.0 | installed | 5 core + 4 VM harnesses verified |
 | Miri | nightly | 82 core + 10 VM lib + 20 VM execution tests pass (1 ignored under Miri) |
@@ -218,8 +218,8 @@ Implemented exactly in the root `Cargo.toml`:
 
 ### Residual boundaries (not release blockers)
 
-1. Coverage: the agreed floor is 85%; current measured coverage is 86.08%
-   tarpaulin / 86.96% llvm-cov. 100% is not claimed.
+1. Coverage: the agreed floor is 85%; current measured coverage is 85.05%
+   tarpaulin / 86.14% llvm-cov. 100% is not claimed.
 2. The normal branchy VM profile leaks timing (dudect max |t| = 225). The
    explicit `--constant-time` oblivious mode passes straight-line, branch, and
    loop/memory cases (worst |t| = 2.82) with a fixed pass budget; private memory uses
@@ -228,14 +228,15 @@ Implemented exactly in the root `Cargo.toml`:
    still observe a transient local, as documented.
 4. Byte-level VM-segment uniqueness is not claimed; handler arms are permuted
    but full `.sirus` equality remains 2.21%.
-5. Native Windows host CI is staged as the `pe32-native` job; the Win64 runtime
-   already passes under Wine in normal and constant-time modes.
+5. Native Windows CI runs the `pe32-native` and `pe32-msvc-cfg` jobs; both pass
+   the Win64 runtime in normal, constant-time, and hardened modes, including
+   `/guard:cf` and the ABI matrix.
 
 Commercial/licence-gated tools (IDA/Binary Ninja, Ferrocene, Triton) are external
 evidence gaps, not local gates and not release blockers. All protector modules
 are wired into the crate and included in the Clippy graph. The numbered items
 above are documented boundaries, not hidden passes; the safe-tier prototype
-release is complete for the Linux ELF and Wine-tested Win64 paths.
+release is complete for the Linux ELF and Windows-tested Win64 paths.
 
 ---
 

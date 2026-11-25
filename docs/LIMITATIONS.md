@@ -56,7 +56,7 @@ protected results as data so a wrong value causes a downstream failure.
 
 | Requested control | Why safe Rust cannot implement it | Alternative |
 |---|---|---|
-| Self machine-code checksum | requires raw memory reads | encrypted payload integrity + derived-key binding |
+| Self machine-code checksum | requires raw memory reads | Linux hardened tier: linker-marked text hash checked on every entry; safe/default tier: payload integrity + derived-key binding |
 | RDTSC timing detection | unsafe intrinsic | safe tier: fuel bound; hardened tier: RDTSC budget |
 | Debug register inspection | unsafe OS/context API | hardened tier: Windows `GetThreadContext`; Linux user mode unsupported |
 | DBI/hypervisor detection | unsafe timing/OS introspection | structural encryption and polymorphism |
@@ -65,8 +65,7 @@ protected results as data so a wrong value causes a downstream failure.
 
 No hidden unsafe path exists in the default safe tier. The optional
 `sirus-hardened` crate and `--hardened` generated entries contain explicit unsafe
-code and are not mixed into the default runtime. Self-code checksum and
-hypervisor detection remain unimplemented.
+code and are not mixed into the default runtime. Linux hardened builds now verify a linker-marked text hash on every entry; hypervisor and debug-register reporting are available in the hardened tier. Windows self-checksum remains unimplemented.
 
 ---
 
@@ -92,8 +91,9 @@ hypervisor detection remain unimplemented.
   scrubbing are implemented.
 - The leaf subset with branches and loops is verified under Wine 11.20 via
   `scripts/windows-wine-check.sh`.
-- Native Windows loader validation, CFG/guard-table integration, exception
-  metadata, signing, imports/TLS, and Windows anti-debug remain out of scope.
+- Windows loader/CFG execution, guard-page-safe stack probing, linked unwind
+  metadata, and an ABI matrix are now covered by native CI. Windows self-code
+  checksum, signing, imports/TLS, and kernel-level anti-debug remain out of scope.
 - Native Windows CI passed as the `pe32-native` job and
   `scripts/windows-native-check.sh`; Wine and native Windows both execute the
   normal/constant-time/hardened fixture.
@@ -117,9 +117,9 @@ hypervisor detection remain unimplemented.
   loops return `LoopBound`. Private `Load`/`Store` uses a full-stack byte scan
   with masked selection, making the access pattern fixed but slow. The normal
   branchy profile remains data-dependent and leaks timing.
-- Per-call overhead is about 78.1 us for the default profile, 78.8 us for the
-  hardened profile, 209 us for the constant-time profile, 205 us for hardened
-  constant-time, 57.2 us for the balanced profile, and 14.1 us for the minimal
+- Per-call overhead is about 78.7 us for the default profile, 76.7 us for the
+  hardened profile, 214 us for the constant-time profile, 217 us for hardened
+  constant-time, 56.6 us for the balanced profile, and 14.7 us for the minimal
   profile on the benchmark host. The same function under VMProtect 3.11 demo
   virtualization is about 8.5 us. Sirus has much lower startup cost because it
   does not pack the host image.
@@ -143,7 +143,7 @@ hypervisor detection remain unimplemented.
 ## 6. Verification gaps
 
 - The agreed prototype floor is 85% line coverage. The current measured coverage
-  is 86.08% tarpaulin / 86.96% llvm-cov and the proof script enforces the 85%
+  is 85.05% tarpaulin / 86.14% llvm-cov and the proof script enforces the 85%
   regression floor. 100% is not claimed.
 - Kani proofs cover bounded primitives and memory bounds; the full decoder is too
   large for CBMC and is covered by tests/fuzzing instead.

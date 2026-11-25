@@ -2,6 +2,40 @@
 
 All notable changes to Sirus.
 
+## [1.5.1-hardened] — 2026-11-25
+
+### Added
+
+- Linux hardened self-code checksum: linker-marked `.text` is hashed after
+  linking, the expected value is patched into `.rodata`, and every hardened
+  entry verifies the text before decoding. `red-team.sh` flips a VM text byte
+  and requires observably different behavior.
+- Explicit `--range <hex-rva>:<hex-size>` selector for binaries without usable
+  COFF function symbols.
+- MSVC `/guard:cf` CI job using PDB `S_GPROC32` sizes and linker-map RVAs.
+- Win64 ABI matrix: `XMM6`–`XMM15` preservation, direct/indirect callers, and a
+  32 KiB stack-probed caller.
+- Windows x64 unwind metadata: linked `.pdata` entries are rebased into
+  `.sirus`, ABI shims carry `.seh` directives, and the target exception
+  directory is merged and checksummed. Handler/chained records fail closed.
+
+### Fixed
+
+- Win64 `___chkstk_ms` now probes downward through the guard page one page at a
+  time. The previous upward walk faulted when a multi-page VM frame was entered
+  from a deep caller.
+- Constant-time fuel is raised to the fixed-pass worst case, so multi-function
+  CT builds no longer return `0` after exhausting the normal budget.
+- PDB procedure matching accepts `S_GPROC32_ID`.
+- PE duplicate-RVA size inference and Windows section ordering regressions.
+
+### Evidence
+
+- 191 tests; 85.05% tarpaulin / 86.14% llvm-cov lines.
+- `pe32-wine`, `pe32-native`, and `pe32-msvc-cfg` all pass in GitHub Actions.
+- Benchmarks: default ~78.7 µs, hardened ~76.7 µs, CT ~214 µs, hardened CT
+  ~217 µs, balanced ~56.6 µs, minimal ~14.7 µs.
+
 ## [1.5.0-hardened] — 2026-11-24
 
 ### Added

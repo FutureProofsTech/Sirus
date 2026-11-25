@@ -90,23 +90,23 @@ protected data in ways that fail downstream if incorrect.
 
 ## 7. Known residuals
 
-1. **No native self-code checksum.** Reading arbitrary machine code requires
-   unsafe/OS support. Payload and static plan material are integrity-bound, but
-   the engine code itself can be patched.
-2. **No timing/debug detection.** RDTSC, debug-register inspection, and DBI
-   overhead detection require unsafe or OS-specific code. Not implemented and
-   not claimed.
+1. **Platform-scoped native self-code checksum.** Linux hardened builds hash
+   linker-marked VM text on every entry and reject modifications. Windows hardened
+   builds still rely on payload integrity; their self-checksum is not implemented.
+2. **Opt-in timing/debug detection only.** The hardened tier adds LFENCE/RDTSC,
+   Linux `/proc` tracer checks, Windows PEB checks, and debug-register reporting;
+   the safe/default tier does not. Kernel-level DBI detection is not claimed.
 3. **No LFENCE/Spectre mitigation.** Safe Rust cannot emit the required barrier.
 4. **Handler layout reuse.** Payload/ISA/state geometry and semantic-arm order
    mutate per build, but the interpreter's semantic skeleton is shared. Full
    `.sirus` equality is 2.21% in the current differential sample.
-5. **Coverage and tool notes.** Coverage is 86.08%/86.96%, above the agreed 85%
+5. **Coverage and tool notes.** Coverage is 85.05%/86.14%, above the agreed 85%
    floor; 100% is not the target. Ghidra, radare2, GAMBA/SiMBA/MBA-Blast, angr,
    KLEE, Creusot, and dudect-bencher were executed. IDA/Binary Ninja, Ferrocene,
    and Triton are commercial/licence-gated and outside the local gate; AORAI is
    not applicable to Rust. The default branchy VM leaks timing; the explicit
    `--constant-time` mode passes straight-line, branch, and loop dudect cases.
-6. **Windows runtime.** The strict leaf Win64 runtime (branches and loops included) passes under Wine; native Windows loader/CFG/CI validation is pending and remains an experimental line.
+6. **Windows runtime.** The strict leaf Win64 runtime (branches and loops included) passes under Wine and native Windows, including a `/guard:cf` fixture with indirect callers, linked unwind metadata, and the shared ABI matrix. Runtime exception propagation through a protected leaf is not tested because the lifter rejects calls.
 7. **Symbol metadata.** Protected output retains the host symbol table; the
    injected `.sirus` segment itself contains no obvious strings.
 8. **Local attacker.** A process owner can instrument memory/CPU and eventually

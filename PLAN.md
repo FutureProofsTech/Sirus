@@ -152,12 +152,12 @@ These items are required by the source documents but are impossible to implement
 
 | Document request | Why it conflicts | Alternative control | Residual risk |
 |---|---|---|---|
-| Hash the VM's own machine code and feed it into the rolling key | Reading arbitrary machine code requires raw pointers or OS APIs, both forbidden | Hash the entire encrypted payload and all static plan material; integrity mismatch alters the rolling key arithmetically | Native patching of the VM engine itself is not detected |
+| Hash the VM's own machine code and feed it into the rolling key | Reading arbitrary machine code requires raw pointers or OS APIs, both forbidden | Hash the entire encrypted payload and all static plan material; integrity mismatch alters the rolling key arithmetically | Linux hardened builds now hash linked VM text and detect patching; Windows native patching is still not detected |
 | Detect stepping through timing drift using RDTSC | `_rdtsc` and clock syscalls are unsafe or platform-specific | Deterministic fuel accounting; payload integrity; pointer-free VM design | Human single-stepping is not detected |
 | Detect DBI/hypervisor via cache-timing anomalies | Requires unsafe timing primitives, thread/context introspection, or kernel interfaces | Same as above; structural uniformity of state transitions and payload encryption raise analysis cost | A determined DBI analyst can trace semantics |
 | Inspect debug registers via exception context frames | Requires unsafe OS-specific FFI | Out of scope; no false claim | Hypervisor-level debugging is not resisted |
 | LFENCE/Spectre fences | Intrinsics and inline assembly are unsafe | No secret-dependent native conditional branches in the generated geometry where feasible; `compiler_fence` cannot replace `lfence` and is not claimed as a mitigation | Microarchitectural leakage is not fully mitigated |
-| Native Windows runtime end-to-end | Requires a Windows host, loader/CFG validation, and CI | PE parser/injector and Win64 ABI thunk implemented; Wine runtime passes; native Windows CI passed | Native Windows loader/CFG behavior is not yet claimed |
+| Native Windows runtime end-to-end | Requires a Windows host, loader/CFG validation, and CI | PE parser/injector and Win64 ABI thunk implemented; Wine runtime passes; native Windows CI passed | Native Windows and MSVC `/guard:cf` jobs now execute the same fixture |
 
 These deviations do not weaken the safe-Rust guarantee. The project will not insert hidden unsafe code to “check a box.”
 

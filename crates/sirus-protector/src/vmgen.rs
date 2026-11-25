@@ -1350,8 +1350,9 @@ pub fn ensure_readable(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ENGINE_SOURCE, ensure_readable, permute_handler_layout, read_le_u16, read_le_u32,
-        source_for_audit, validate_blob, validate_relocation_ranges, windows_entry_symbol,
+        ENGINE_SOURCE, code_hash, ensure_readable, permute_handler_layout, read_le_u16,
+        read_le_u32, source_for_audit, validate_blob, validate_relocation_ranges,
+        windows_entry_symbol,
     };
     use sirus_core::lifter::lift_function;
     use sirus_core::program::{CompileOptions, CompiledProgram, compile};
@@ -1361,6 +1362,14 @@ mod tests {
     fn program() -> CompiledProgram {
         let function = lift_function(&[0x48, 0x89, 0xf8, 0xc3], 0x1000).expect("lift");
         compile(&[function], [0x55_u8; 32], CompileOptions::new()).expect("compile")
+    }
+
+    #[test]
+    fn code_hash_covers_words_and_tails() {
+        assert_eq!(code_hash(&[]), 0xcbf2_9ce4_8422_2325);
+        assert_ne!(code_hash(&[1]), code_hash(&[2]));
+        assert_ne!(code_hash(&[0; 8]), code_hash(&[0; 9]));
+        assert_ne!(code_hash(&[0xff; 16]), code_hash(&[0xff; 15]));
     }
 
     #[test]

@@ -1,7 +1,7 @@
 # Sirus Positioning: Commercial and Open-Source Comparison
 
 **Status:** measured positioning report, not a marketing claim  
-**Sirus target:** `v1.5.0-hardened`
+**Sirus target:** `v1.5.1-hardened`
 **Host:** Intel Core i5-14400F, 16 threads, Linux x86-64  
 **Date:** 2026-11-24
 
@@ -30,7 +30,7 @@ function through its Lua API and uses `CompilationType.Virtualization`.
 - 1,000 protected calls per sample, 7 samples, median reported;
 - VMProtect 3.11.0 Linux demo, one function, default virtualization, project
   packing left enabled;
-- Sirus 1.5.0 release protector, deterministic seed;
+- Sirus 1.5.1 release protector, deterministic seed;
 - same source, same inputs, matching checksums (`bb8882a0420aed20`);
 - process startup measured separately (1 call, 7 samples).
 
@@ -41,11 +41,11 @@ function through its Lua API and uses `CompilationType.Virtualization`.
 | Native (Sirus benchmark build) | **~1.2-1.4 ns** | 1× | 0.0002× | — |
 | Native (VMProtect benchmark build) | **1.89 ns** | 1× | 0.0002× | — |
 | VMProtect 3.11 demo, virtualization | **8.48 µs** | ~4,490× | 1× | not exposed |
-| Sirus default (`depth=3, budget=512, decoys=2`) | **~78.1 µs** | ~41,500× | ~9.2× | 13,390 B payload |
-| Sirus hardened | **~78.8 µs** | ~41,900× | ~9.3× | 13,390 B payload |
-| Sirus constant-time | **~209 µs** | ~111,200× | ~24.6× | 13,390 B payload |
-| Sirus balanced (`depth=1, budget=128, decoys=1`) | **~57.2 µs** | ~45,400× | ~6.7× | 8,396 B payload |
-| Sirus minimal (`depth=0, budget=0, decoys=0`) | **~14.1 µs** | ~10,700× | ~1.7× | 1,268 B payload |
+| Sirus default (`depth=3, budget=512, decoys=2`) | **~78.7 µs** | ~49,800× | ~9.3× | 13,390 B payload |
+| Sirus hardened | **~76.7 µs** | ~40,600× | ~9.0× | 13,390 B payload |
+| Sirus constant-time | **~214 µs** | ~101,500× | ~25.2× | 13,390 B payload |
+| Sirus balanced (`depth=1, budget=128, decoys=1`) | **~56.6 µs** | ~30,000× | ~6.7× | 8,396 B payload |
+| Sirus minimal (`depth=0, budget=0, decoys=0`) | **~14.7 µs** | ~6,100× | ~1.7× | 1,268 B payload |
 
 Representative startup, one call per process:
 
@@ -121,8 +121,8 @@ supported. Commercial columns summarize public vendor documentation.
 | Native mutation / metamorphism | P (MBA, decoys, constant blinding) | Y | Y | Y | Y | Y | Y | N (mov-only) |
 | Control-flow flattening | Y | Y | Y | Y | Y | Y | Y | N/A |
 | Packing | N | Y | N (composes with packer) | Y | Y | runtime codegen | N | N |
-| Anti-debug / anti-VM | N | Y | P | Y | Y | research transforms | N | N |
-| Runtime code/memory integrity | P (payload binding; no native self-hash) | Y | P | Y | Y | research transforms | P | N |
+| Anti-debug / anti-VM | P (opt-in hardened) | Y | P | Y | Y | research transforms | N | N |
+| Runtime code/memory integrity | P (payload binding; Linux hardened text hash; Windows native self-hash absent) | Y | P | Y | Y | research transforms | P | N |
 | Licensing / activation | N | Y | N | Y (WinLicense) | Y (game entitlement) | N | N | N |
 | Managed/.NET | N | Y | N | P | N | N | N | N |
 | Safe Rust / zero unsafe in protected runtime | Y | N | N | N | N | partially (C generated) | N | N |
@@ -191,12 +191,12 @@ interpreter. The next useful steps are:
 
 The commercial gap is not mainly the VM concept. It is:
 
-- native Windows PE loader/CFG/exception validation (Wine runtime already passes);
-- anti-debug/anti-VM and native self-integrity (requires an opt-in hardened tier
-  or unsafe/OS primitives);
+- Windows self-code checksum (Linux hardened builds have one; native Windows
+  does not yet);
+- anti-debug/anti-VM depth beyond the opt-in hardened tier's user-mode checks;
 - packing, resource/import protection, licensing;
 - full x86/x64 and ARM64 coverage;
-- exception/unwind metadata and loader edge cases;
+- runtime exception propagation through protected leaves;
 - independent long-term adversarial validation.
 
 ### Honest ranking

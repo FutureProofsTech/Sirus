@@ -1,7 +1,8 @@
 # Windows PE32+ / Win64 Runtime
 
-**Status:** Wine-tested and native Windows CI-tested prototype. Both
-`.github/workflows/windows-wine.yml` jobs have passed.
+**Status:** Wine-tested and native Windows CI-tested. All three jobs in
+`.github/workflows/windows-wine.yml` pass: `pe32-wine`, `pe32-native`, and
+`pe32-msvc-cfg`.
 
 ---
 
@@ -9,12 +10,15 @@
 
 - PE32+ AMD64 parsing and validation.
 - COFF symbol-table lookup by exact name or substring.
-- Raw marker ranges converted to RVAs.
+- Explicit `--range <hex-rva>:<hex-size>` targeting for binaries without usable
+  COFF function symbols.
+- MSVC CFG fixture targeting via PDB `S_GPROC32` sizes plus linker-map RVAs.
 - x86-64 subset lifting from the PE image.
 - The same encrypted VM payload builder used by the ELF path.
 - Win64 code generation and linking:
   - `rustc --target x86_64-pc-windows-gnu`
-  - `lld-link` with no imports, `/opt:noref`, and a real x64 `___chkstk_ms` stack probe
+  - `lld-link` with no imports, `/opt:noref`, and a guard-page-safe
+    `___chkstk_ms` stack probe
   - extraction of `.text` and `.rdata` into one RX section; Windows-only builds
     omit function-pointer keep-statements so the extracted bytes stay
     relocation-free
@@ -24,10 +28,12 @@
   (the default); `--no-scrub` is available for debugging.
 - Base-relocation guard: the extracted `.text`/`.rdata` bytes are rejected if
   the linker records a relocation that targets them.
-- Win64 argument mapping:
-  - host `RCX/RDX/R8/R9` -> virtual `RCX/RDX/R8/R9`
-  - the VM's internal System V argument array is reordered at the generated
-    entry thunk.
+- Win64 argument mapping and an assembly ABI shim that preserves volatile GPRs
+  and `XMM0`–`XMM5`. `XMM6`–`XMM15` preservation is covered by a live ABI test.
+- Linked `.pdata` entries are rebased into the appended `.sirus` section, the
+  ABI shims carry `.seh_proc` unwind directives, and the target exception
+  directory is merged and its checksum refreshed. Unwind records with exception
+  handlers or chained info are rejected until their RVAs are rebased.
 - Wine execution of the protected PE32+ binary in normal, constant-time, and
   hardened modes.
 
@@ -39,13 +45,12 @@ Verified locally:
 
 ```text
 PASS Windows/Wine PE32+ runtime (normal + constant-time + hardened)
-protected 2 function(s); ... VM segment 52736 bytes; ... (normal)
-protected 2 function(s); ... VM segment 53248 bytes; ... (constant-time)
+PASS Windows/Wine C ABI matrix (XMM6-15, indirect, large frame)
 ```
 
-The same victim's branch and loop outputs match the native PE under Wine in
-normal, constant-time, and hardened modes. The Windows cross-build of
-`harden-check` reports four debug-register values through `GetThreadContext`.
+The C ABI matrix covers direct and indirect callers, a 32 KiB stack-probed
+caller, and an assembly checker that detects any clobber of `XMM6`–`XMM15`.
+The same fixture runs in the native Windows and MSVC `/guard:cf` jobs.
 
 ---
 
@@ -55,17 +60,19 @@ The Windows runtime follows the same strict leaf-function subset as the Linux
 runtime:
 
 - up to four integer arguments in `RCX`, `RDX`, `R8`, `R9`;
-- no stack arguments;
+- no stack arguments inside the protected leaf;
 - one integer result in `RAX`;
 - conditional branches and loops inside the lifted function are supported;
 - no calls, indirect control flow, SSE/AVX/x87, RIP-relative data, or host
-  pointer dereference;
-- no exception/unwind metadata in the injected VM;
-- no Windows CFG guard-table integration.
+  pointer dereference inside the protected function;
+- exception/unwind metadata is emitted for the injected VM and the ABI shims;
+- MSVC CFG-enabled callers and indirect calls are tested; the injected VM does
+  not add CFG guard-table entries of its own.
 
-The stack-probe symbol is a real probe-only x64 helper: it touches pages below
-the current stack pointer without adjusting `RSP`, matching LLVM's
-`___chkstk_ms` calling convention. It does not call Windows libraries.
+The stack-probe symbol is a real probe-only x64 helper. It walks downward one
+page at a time from the current stack pointer to the new frame base, touching
+the guard page before lower uncommitted pages. It does not adjust `RSP` before
+LLVM's own subtraction and does not call Windows libraries.
 
 ---
 
@@ -84,19 +91,26 @@ Native Windows host:
 ./scripts/windows-native-check.sh
 ```
 
-This script is executed by the native Windows CI job.
+The GitHub workflow has three jobs:
 
-The GitHub workflow has two jobs: Ubuntu + Wine + mingw-w64, and a
-`windows-latest` native job using msys2 mingw-w64/lld and
-`scripts/windows-native-check.sh`. Neither GitHub job has been executed here;
-the local executed gate is the Wine path.
+- Ubuntu + Wine + mingw-w64 (`scripts/windows-wine-check.sh`);
+- `windows-latest` native mingw-w64/lld (`scripts/windows-native-check.sh`);
+- `windows-latest` MSVC `/guard:cf` with PDB/map range extraction.
+
+All three jobs execute the protected fixture and compare it byte-for-byte with
+the native output. The CFG job also exercises the indirect caller path under
+`/GUARD:CF`.
 
 ---
 
 ## 4. What is still not claimed
 
-- Native Windows loader/CFG/exception compatibility validation.
-- Windows anti-debug/anti-tamper behavior.
+- Windows native self-code checksum (the Linux hardened tier implements one).
+- Windows anti-debug/anti-tamper beyond the existing PEB/debug-register reports.
+- Runtime exception propagation through a protected leaf: the lifter does not
+  support calls, so no test can throw from inside the lifted function. The
+  unwind metadata is structurally merged and validated with handler-free
+  records.
 - Production signing, resources, DLL exports, TLS callbacks, and imports.
 - Full x86-64 or ARM64 Windows instruction coverage.
 

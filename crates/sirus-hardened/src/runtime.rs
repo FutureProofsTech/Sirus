@@ -257,7 +257,9 @@ fn windows_debugger_present() -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{debugger_present, hypervisor_present, lfence, rdtsc, timing_ok};
+    use super::{
+        code_hash, debugger_present, hypervisor_present, lfence, rdtsc, timing_ok, verify_code,
+    };
 
     #[test]
     fn runtime_checks_are_callable() {
@@ -268,5 +270,26 @@ mod tests {
         let _ = rdtsc();
         lfence();
         assert!(timing_ok(start, u64::MAX));
+    }
+
+    #[test]
+    fn code_integrity_accepts_only_unchanged_bytes() {
+        let mut bytes = [0x11_u8; 29];
+        let expected = code_hash(&bytes);
+        let start = bytes.as_ptr() as usize;
+        let end = start + bytes.len();
+        assert!(verify_code(start, end, &expected as *const u64 as usize));
+        if let Some(slot) = bytes.get_mut(5) {
+            *slot ^= 1;
+        }
+        let changed = code_hash(&bytes);
+        assert!(!verify_code(start, end, &expected as *const u64 as usize));
+        assert_ne!(changed, expected);
+        assert!(!verify_code(end, start, &expected as *const u64 as usize));
+        assert!(!verify_code(
+            start,
+            start + 0x10_0001,
+            &expected as *const u64 as usize
+        ));
     }
 }
