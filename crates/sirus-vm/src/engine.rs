@@ -374,7 +374,12 @@ fn execute_semantic(
     execute_semantic_inner(decoded, registers, None, memory, None, None)
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_lines,
+    clippy::inline_always,
+    reason = "semantic dispatch is the per-instruction hot path; avoid a call per opcode"
+)]
+#[inline(always)]
 fn execute_semantic_inner(
     decoded: &Decoded,
     registers: &mut [u64; VM_REGISTERS],

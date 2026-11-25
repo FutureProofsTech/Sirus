@@ -2,6 +2,21 @@
 
 All notable changes to Sirus.
 
+## [1.5.6-hardened] — 2026-11-25
+
+### Performance
+
+- Added `--profile fast`, a first-class alias for the no-MBA/no-decoy profile.
+  It measures ~14.4 µs/call on the reference leaf versus ~75 µs for the default
+  max profile.
+- Forced `execute_semantic_inner` inline to remove a per-instruction call in
+  the generated interpreter.
+
+### Evidence
+
+- 201 tests; fast profile measured `~14.4 µs` (7,665× native).
+- Default max remains ~75 µs; the gap is the intentional MBA/decoy workload.
+
 ## [1.5.5-hardened] — 2026-11-25
 
 ### Performance

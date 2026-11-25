@@ -5,7 +5,7 @@
 **Nightly toolchain:** 2026-08-03 / 2026-08-21 family for Miri and fuzzing
 **Kani:** 0.68.0
 **Project state:** all features described in `README.md` implemented and tested
-**Last evidenced run:** final 1.5.5-hardened tree, tag `v1.5.5-hardened`
+**Last evidenced run:** final 1.5.6-hardened tree, tag `v1.5.6-hardened`
 
 This file records commands actually executed. Anything not executed is listed as
 an external evidence gap or a documented boundary, never inferred.
@@ -321,7 +321,7 @@ VMProtect demo 3.11 virtualization measured on its own native baseline):
 | Sirus constant-time | ~234 us | ~101,500x | ~25.2x |
 | Sirus hardened constant-time | ~235 us | ~111,300x | ~25.5x |
 | Sirus balanced (`depth=1, budget=128, decoys=1`) | ~53.9 us | ~30,000x | ~6.7x |
-| Sirus minimal (`depth=0, budget=0, decoys=0`) | ~15.5 us | ~6,100x | ~1.7x |
+| Sirus minimal/fast (`depth=0, budget=0, decoys=0`) | ~14.4 us | ~6,100x | ~1.7x |
 
 Sirus append size is about 30 KiB (0.7% of the benchmark binary); VMProtect demo
 packs the 4.4 MiB input to a 1.17 MiB output but pays a multi-second startup cost

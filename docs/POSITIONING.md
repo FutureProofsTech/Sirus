@@ -1,7 +1,7 @@
 # Sirus Positioning: Commercial and Open-Source Comparison
 
 **Status:** measured positioning report, not a marketing claim  
-**Sirus target:** `v1.5.5-hardened`
+**Sirus target:** `v1.5.6-hardened`
 **Host:** Intel Core i5-14400F, 16 threads, Linux x86-64  
 **Date:** 2026-11-24
 
@@ -30,7 +30,7 @@ function through its Lua API and uses `CompilationType.Virtualization`.
 - 1,000 protected calls per sample, 7 samples, median reported;
 - VMProtect 3.11.0 Linux demo, one function, default virtualization, project
   packing left enabled;
-- Sirus 1.5.5 release protector, deterministic seed;
+- Sirus 1.5.6 release protector, deterministic seed;
 - same source, same inputs, matching checksums (`bb8882a0420aed20`);
 - process startup measured separately (1 call, 7 samples).
 
@@ -45,7 +45,7 @@ function through its Lua API and uses `CompilationType.Virtualization`.
 | Sirus hardened | **~78.5 µs** | ~40,600× | ~9.0× | 13,390 B payload |
 | Sirus constant-time | **~234 µs** | ~101,500× | ~25.2× | 13,390 B payload |
 | Sirus balanced (`depth=1, budget=128, decoys=1`) | **~53.9 µs** | ~30,000× | ~6.7× | 8,396 B payload |
-| Sirus minimal (`depth=0, budget=0, decoys=0`) | **~15.5 µs** | ~6,100× | ~1.7× | 1,268 B payload |
+| Sirus minimal/fast (`depth=0, budget=0, decoys=0`) | **~14.4 µs** | ~6,100× | ~1.7× | 1,268 B payload |
 
 Representative startup, one call per process:
 

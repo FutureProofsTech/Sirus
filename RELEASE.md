@@ -1,7 +1,7 @@
-# Sirus 1.5.5-hardened — Release Notes
+# Sirus 1.5.6-hardened — Release Notes
 
 **Release type:** safe-tier prototype plus optional hardened tier
-**Tag:** `v1.5.5-hardened`
+**Tag:** `v1.5.6-hardened`
 **Platform:** Linux x86-64 end-to-end; Win64 PE32+ runtime verified under Wine in normal, constant-time, and hardened modes; native Windows CI passed
 **Dependency policy:** zero external crates in shipped code
 **Unsafe policy:** `forbid(unsafe_code)` in the safe tier; the opt-in `sirus-hardened` crate and `--hardened` generated entries allow unsafe code
@@ -140,7 +140,7 @@ Recorded evidence:
 - Payload entropy: 7.996 Shannon / 7.751 min-entropy bits/byte.
 - Per-call benchmark: native ~1.2-1.9 ns; Sirus default ~75.0 us; hardened
   ~78.5 us; constant-time ~234 us; hardened constant-time ~235 us; balanced
-  ~53.9 us; minimal ~15.5 us; VMProtect 3.11 demo virtualization ~8.5 us.
+  ~53.9 us; fast/minimal ~14.4 us; VMProtect 3.11 demo virtualization ~8.5 us.
 - Cold startup: Sirus ~0.6 ms; VMProtect demo ~2.6 s (packed).
 - Constant-time Cachegrind: two inputs produce identical I/D refs, D1/LLd
   misses, branches, and mispredicts for the branch-only protected leaf.

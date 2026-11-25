@@ -23,7 +23,7 @@ esac
 case "$profile" in
     default) protect_args=(--profile max) ;;
     balanced) protect_args=(--profile balanced) ;;
-    minimal) protect_args=(--profile minimal) ;;
+    minimal|fast) protect_args=(--profile "$profile") ;;
     *) echo "unknown SIRUS_BENCH_PROFILE: $profile" >&2; exit 2 ;;
 esac
 

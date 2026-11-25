@@ -137,14 +137,14 @@ fn apply_profile(options: &mut CompileOptions, profile: &str) -> Result<()> {
             options.mba_budget = 128;
             options.decoys = 1;
         }
-        "minimal" => {
+        "minimal" | "fast" => {
             options.mba_depth = 0;
             options.mba_budget = 0;
             options.decoys = 0;
         }
         other => {
             return Err(ProtectError::usage(format!(
-                "unknown profile `{other}`; expected max, balanced, or minimal"
+                "unknown profile `{other}`; expected max, balanced, minimal, or fast"
             )));
         }
     }
@@ -328,7 +328,7 @@ pub const fn help_text() -> &'static str {
      \x20 --range <hex-rva>:<hex-size>  explicit target range\n\n\
      Options:\n\
      \x20 --seed <64-hex>          deterministic build seed\n\
-     \x20 --profile <name>         max (default), balanced, or minimal\n\
+     \x20 --profile <name>         max (default), balanced, minimal, or fast\n\
      \x20 --fuel <n>               runtime instruction budget (default 2000000)\n\
      \x20 --mba-depth <n>          MBA rewrite depth (0..=8, default 3)\n\
      \x20 --mba-budget <n>         MBA node budget (default 512)\n\
@@ -436,6 +436,25 @@ mod tests {
         assert_eq!(parsed.options.mba_depth, 1);
         assert_eq!(parsed.options.mba_budget, 128);
         assert_eq!(parsed.options.decoys, 1);
+
+        let action = parse_from(arguments(&[
+            "protect",
+            "--input",
+            "in",
+            "--output",
+            "out",
+            "--function",
+            "demo",
+            "--profile",
+            "fast",
+        ]))
+        .expect("fast profile");
+        let Action::Protect(parsed) = action else {
+            panic!("expected protect");
+        };
+        assert_eq!(parsed.options.mba_depth, 0);
+        assert_eq!(parsed.options.mba_budget, 0);
+        assert_eq!(parsed.options.decoys, 0);
 
         let action = parse_from(arguments(&[
             "protect",
