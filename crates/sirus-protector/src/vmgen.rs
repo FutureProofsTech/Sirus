@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::entropy::junk;
 use sirus_binfmt::elf::{Elf64, PF_R, PF_W, PF_X, PT_LOAD, STT_FUNC, STT_OBJECT, SymbolEntry};
-use sirus_binfmt::pe::Pe64;
+use sirus_binfmt::pe::{Pe64, Section, UnwindFunction};
 use sirus_core::program::CompiledProgram;
 use sirus_core::shared::derive::{Seed, Tables, table_key};
 
@@ -31,6 +31,8 @@ pub struct WindowsVmBlob {
     pub blob: Vec<u8>,
     /// One entry offset per function, relative to the combined section start.
     pub entry_offsets: Vec<usize>,
+    /// Unwind records covering the copied VM code.
+    pub unwind: Vec<UnwindFunction>,
 }
 
 /// Linked, validated freestanding VM image.
@@ -918,7 +920,7 @@ pub fn build_windows_vm(program: &CompiledProgram, keep_temp: bool) -> Result<Wi
     let mut shim_source = String::from(".text\n");
     for (index, symbol) in entry_symbols.iter().enumerate() {
         let shim = format!(
-            ".globl sirus_shim_{id}_{index}\n.def sirus_shim_{id}_{index}; .scl 2; .type 32; .endef\nsirus_shim_{id}_{index}:\n    pushq %rcx\n    pushq %rdx\n    pushq %r8\n    pushq %r9\n    pushq %r10\n    pushq %r11\n    subq $136, %rsp\n    movdqu %xmm0, 32(%rsp)\n    movdqu %xmm1, 48(%rsp)\n    movdqu %xmm2, 64(%rsp)\n    movdqu %xmm3, 80(%rsp)\n    movdqu %xmm4, 96(%rsp)\n    movdqu %xmm5, 112(%rsp)\n    call {symbol}\n    movdqu 32(%rsp), %xmm0\n    movdqu 48(%rsp), %xmm1\n    movdqu 64(%rsp), %xmm2\n    movdqu 80(%rsp), %xmm3\n    movdqu 96(%rsp), %xmm4\n    movdqu 112(%rsp), %xmm5\n    addq $136, %rsp\n    popq %r11\n    popq %r10\n    popq %r9\n    popq %r8\n    popq %rdx\n    popq %rcx\n    ret\n"
+            ".globl sirus_shim_{id}_{index}\n.def sirus_shim_{id}_{index}; .scl 2; .type 32; .endef\n.seh_proc sirus_shim_{id}_{index}\nsirus_shim_{id}_{index}:\n    pushq %rcx\n    .seh_pushreg %rcx\n    pushq %rdx\n    .seh_pushreg %rdx\n    pushq %r8\n    .seh_pushreg %r8\n    pushq %r9\n    .seh_pushreg %r9\n    pushq %r10\n    .seh_pushreg %r10\n    pushq %r11\n    .seh_pushreg %r11\n    subq $136, %rsp\n    .seh_stackalloc 136\n    .seh_endprologue\n    movdqu %xmm0, 32(%rsp)\n    movdqu %xmm1, 48(%rsp)\n    movdqu %xmm2, 64(%rsp)\n    movdqu %xmm3, 80(%rsp)\n    movdqu %xmm4, 96(%rsp)\n    movdqu %xmm5, 112(%rsp)\n    call {symbol}\n    movdqu 32(%rsp), %xmm0\n    movdqu 48(%rsp), %xmm1\n    movdqu 64(%rsp), %xmm2\n    movdqu 80(%rsp), %xmm3\n    movdqu 96(%rsp), %xmm4\n    movdqu 112(%rsp), %xmm5\n    addq $136, %rsp\n    popq %r11\n    popq %r10\n    popq %r9\n    popq %r8\n    popq %rdx\n    popq %rcx\n    ret\n.seh_endproc\n"
         );
         shim_source.push_str(&shim);
     }
@@ -1042,12 +1044,14 @@ pub fn build_windows_vm(program: &CompiledProgram, keep_temp: bool) -> Result<Wi
         }
         entry_offsets.push(entry_offset);
     }
+    let unwind = windows_unwind_functions(&image, &pe, section_text)?;
     if !keep_temp {
         drop(fs::remove_dir_all(&directory));
     }
     Ok(WindowsVmBlob {
         blob,
         entry_offsets,
+        unwind,
     })
 }
 
@@ -1115,7 +1119,7 @@ fn validate_relocation_ranges(raw: &[u8], ranges: [(u32, u32); 2]) -> Result<()>
     Ok(())
 }
 
-fn read_section(image: &[u8], section: sirus_binfmt::pe::Section) -> Result<&[u8]> {
+fn read_section(image: &[u8], section: Section) -> Result<&[u8]> {
     let start = usize::try_from(section.raw_offset)
         .map_err(|_| ProtectError::internal("Windows VM raw offset"))?;
     let size = usize::try_from(section.raw_size)
@@ -1128,6 +1132,82 @@ fn read_section(image: &[u8], section: sirus_binfmt::pe::Section) -> Result<&[u8
                     .ok_or_else(|| ProtectError::internal("Windows VM raw range"))?,
         )
         .ok_or_else(|| ProtectError::internal("Windows VM raw bytes"))
+}
+
+/// Extracts exact x64 unwind records for the copied VM text.
+///
+/// Fail-closed for handlers and chained records: those contain image-relative
+/// pointers that the append-only exception merge does not rebase yet.
+fn windows_unwind_functions(
+    image: &[u8],
+    pe: &Pe64<'_>,
+    text: Section,
+) -> Result<Vec<UnwindFunction>> {
+    let (_, pdata_section) = pe
+        .find_section(".pdata")
+        .ok_or_else(|| ProtectError::internal("Windows VM unwind table missing"))?;
+    let raw = read_section(image, pdata_section)?;
+    let size = usize::try_from(pdata_section.virtual_size)
+        .map_err(|_| ProtectError::internal("pdata size"))?;
+    let pdata = raw
+        .get(..size)
+        .ok_or_else(|| ProtectError::internal("Windows VM pdata bounds"))?;
+    let text_rva = text.virtual_address;
+    let text_end = text_rva
+        .checked_add(text.virtual_size)
+        .ok_or_else(|| ProtectError::internal("Windows VM text end"))?;
+    let mut functions = Vec::new();
+    let mut offset = 0_usize;
+    while offset < pdata.len() {
+        let chunk = pdata
+            .get(offset..offset.saturating_add(12))
+            .ok_or_else(|| ProtectError::internal("Windows VM pdata entry"))?;
+        let begin = read_le_u32(chunk, 0)?;
+        let end = read_le_u32(chunk, 4)?;
+        let unwind_rva = read_le_u32(chunk, 8)?;
+        if begin == 0 && end == 0 {
+            offset = offset.saturating_add(12);
+            continue;
+        }
+        if begin < text_rva || end > text_end || begin >= end {
+            return Err(ProtectError::internal(
+                "Windows VM pdata outside copied text",
+            ));
+        }
+        let header = pe
+            .read_rva(unwind_rva, 4)
+            .ok_or_else(|| ProtectError::internal("Windows VM unwind header"))?;
+        let version = header.first().copied().unwrap_or(0) & 0x07;
+        let flags = header.first().copied().unwrap_or(0) >> 3;
+        if version != 1 || flags != 0 {
+            return Err(ProtectError::internal(
+                "unsupported Windows VM unwind record",
+            ));
+        }
+        let count = usize::from(header.get(2).copied().unwrap_or(0));
+        let info_len = 4_usize
+            .checked_add(count.saturating_mul(2))
+            .and_then(|value| value.checked_add(3))
+            .map(|value| value & !3)
+            .ok_or_else(|| ProtectError::internal("Windows VM unwind size"))?;
+        let unwind = pe
+            .read_rva(
+                unwind_rva,
+                u32::try_from(info_len)
+                    .map_err(|_| ProtectError::internal("Windows VM unwind length"))?,
+            )
+            .ok_or_else(|| ProtectError::internal("Windows VM unwind bytes"))?;
+        functions.push(UnwindFunction::new(
+            begin
+                .checked_sub(text_rva)
+                .ok_or_else(|| ProtectError::internal("Windows VM unwind begin"))?,
+            end.checked_sub(text_rva)
+                .ok_or_else(|| ProtectError::internal("Windows VM unwind end"))?,
+            unwind.to_vec(),
+        ));
+        offset = offset.saturating_add(12);
+    }
+    Ok(functions)
 }
 
 /// Exposes the generated source for audit/testing.

@@ -37,6 +37,10 @@ const COFF_HEADER_SIZE: usize = 20;
 const SECTION_HEADER_SIZE: usize = 40;
 /// Fixed PE32+ optional header size before data directories.
 const OPTIONAL_FIXED_SIZE: usize = 112;
+/// Exception directory index.
+pub const IMAGE_DIRECTORY_ENTRY_EXCEPTION: u32 = 3;
+/// Size of one x64 runtime-function entry.
+const RUNTIME_FUNCTION_SIZE: usize = 12;
 /// Maximum accepted sections.
 const MAX_SECTIONS: u16 = 512;
 
@@ -615,6 +619,41 @@ impl<'a> Pe64<'a> {
         self.data.get(start..start.checked_add(length)?)
     }
 
+    /// Reads one optional-header data directory.
+    #[inline]
+    #[must_use]
+    pub fn data_directory(&self, index: u32) -> Option<(u32, u32)> {
+        if index >= self.optional.directory_count {
+            return None;
+        }
+        let relative = usize::try_from(index).ok()?.checked_mul(8)?;
+        let offset = self
+            .optional_offset
+            .checked_add(OPTIONAL_FIXED_SIZE)?
+            .checked_add(relative)?;
+        let optional_end = self
+            .optional_offset
+            .checked_add(usize::from(self.coff.optional_size))?;
+        if offset.checked_add(8)? > optional_end {
+            return None;
+        }
+        let virtual_address = read_u32(self.data, offset).ok()?;
+        let size = read_u32(self.data, offset.checked_add(4)?).ok()?;
+        Some((virtual_address, size))
+    }
+
+    /// Returns the RVA that [`append_executable_section`] will assign.
+    #[inline]
+    #[must_use]
+    pub fn next_section_rva(&self) -> Option<u32> {
+        let aligned = align_up(
+            u64::from(self.max_rva_end()),
+            u64::from(self.optional.section_alignment),
+        )
+        .ok()?;
+        u32::try_from(aligned).ok()
+    }
+
     /// Finds a section by name.
     #[inline]
     #[must_use]
@@ -894,6 +933,238 @@ fn pe_checksum(image: &[u8], checksum_offset: usize) -> Result<u32> {
     Ok(result)
 }
 
+/// One new x64 unwind function to merge into the exception directory.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnwindFunction {
+    /// Function start relative to the new section.
+    pub begin: u32,
+    /// Function end relative to the new section.
+    pub end: u32,
+    /// Version-1 `UNWIND_INFO` bytes without handler or chained records.
+    pub unwind: Vec<u8>,
+}
+
+impl UnwindFunction {
+    /// Creates a new unwind function record.
+    #[inline]
+    #[must_use]
+    pub const fn new(begin: u32, end: u32, unwind: Vec<u8>) -> Self {
+        Self { begin, end, unwind }
+    }
+}
+
+/// Merges new runtime functions into a section blob and returns the new
+/// exception-directory location.
+///
+/// Existing entries are copied unchanged. New `UNWIND_INFO` records are
+/// appended after the table and rebased to `section_rva`. Entries with
+/// exception handlers or chained info are rejected because those records
+/// contain image-relative pointers this append-only path does not rebase.
+///
+/// # Errors
+///
+/// Returns a typed error for malformed tables, overlapping ranges, unsupported
+/// unwind records, or arithmetic overflow.
+#[inline]
+pub fn append_exception_table(
+    blob: &mut Vec<u8>,
+    pe: &Pe64<'_>,
+    section_rva: u32,
+    functions: &[UnwindFunction],
+) -> Result<Option<(u32, u32)>> {
+    if functions.is_empty() {
+        return Ok(None);
+    }
+    let existing = match pe.data_directory(IMAGE_DIRECTORY_ENTRY_EXCEPTION) {
+        Some((0, 0)) | None => Vec::new(),
+        Some((0, _)) => return Err(FormatError::Malformed),
+        Some((rva, size)) => {
+            let entry_size =
+                u32::try_from(RUNTIME_FUNCTION_SIZE).map_err(|_| FormatError::Bounds)?;
+            if size == 0 || size % entry_size != 0 {
+                return Err(FormatError::Malformed);
+            }
+            pe.read_rva(rva, size).ok_or(FormatError::Bounds)?.to_vec()
+        }
+    };
+    let existing_count = existing.len() / RUNTIME_FUNCTION_SIZE;
+    let total_count = existing_count
+        .checked_add(functions.len())
+        .ok_or(FormatError::TooManyItems)?;
+    let pdata_len = total_count
+        .checked_mul(RUNTIME_FUNCTION_SIZE)
+        .ok_or(FormatError::TooManyItems)?;
+    let pdata_offset = align_up_usize(blob.len(), 4)?;
+    let xdata_offset = align_up_usize(
+        pdata_offset
+            .checked_add(pdata_len)
+            .ok_or(FormatError::Bounds)?,
+        16,
+    )?;
+    let xdata_rva = section_rva
+        .checked_add(u32::try_from(xdata_offset).map_err(|_| FormatError::Bounds)?)
+        .ok_or(FormatError::Bounds)?;
+
+    let mut entries = Vec::with_capacity(total_count);
+    let mut offset = 0_usize;
+    while offset < existing.len() {
+        let begin = read_u32(&existing, offset)?;
+        let end = read_u32(&existing, offset.checked_add(4).ok_or(FormatError::Bounds)?)?;
+        let unwind = read_u32(&existing, offset.checked_add(8).ok_or(FormatError::Bounds)?)?;
+        if begin >= end {
+            return Err(FormatError::Malformed);
+        }
+        entries.push((begin, end, unwind));
+        offset = offset
+            .checked_add(RUNTIME_FUNCTION_SIZE)
+            .ok_or(FormatError::Bounds)?;
+    }
+
+    let mut xdata = Vec::new();
+    for function in functions {
+        if function.begin >= function.end {
+            return Err(FormatError::Malformed);
+        }
+        if function.unwind.len() < 4 {
+            return Err(FormatError::Malformed);
+        }
+        let header = function
+            .unwind
+            .first()
+            .copied()
+            .ok_or(FormatError::Malformed)?;
+        if header & 0x07 != 1 || header >> 3 != 0 {
+            return Err(FormatError::UnsupportedAction);
+        }
+        let count = usize::from(
+            function
+                .unwind
+                .get(2)
+                .copied()
+                .ok_or(FormatError::Malformed)?,
+        );
+        let expected = align_up_usize(
+            4_usize
+                .checked_add(count.checked_mul(2).ok_or(FormatError::Bounds)?)
+                .ok_or(FormatError::Bounds)?,
+            4,
+        )?;
+        if function.unwind.len() < expected {
+            return Err(FormatError::Malformed);
+        }
+        let info_offset = align_up_usize(xdata.len(), 4)?;
+        xdata.resize(info_offset, 0);
+        xdata.extend_from_slice(
+            function
+                .unwind
+                .get(..expected)
+                .ok_or(FormatError::Malformed)?,
+        );
+        let begin = section_rva
+            .checked_add(function.begin)
+            .ok_or(FormatError::Bounds)?;
+        let end = section_rva
+            .checked_add(function.end)
+            .ok_or(FormatError::Bounds)?;
+        let unwind = xdata_rva
+            .checked_add(u32::try_from(info_offset).map_err(|_| FormatError::Bounds)?)
+            .ok_or(FormatError::Bounds)?;
+        entries.push((begin, end, unwind));
+    }
+    entries.sort_unstable_by_key(|entry| entry.0);
+    let mut index = 1_usize;
+    while index < entries.len() {
+        let previous = entries
+            .get(index.saturating_sub(1))
+            .copied()
+            .ok_or(FormatError::Malformed)?;
+        let current = entries.get(index).copied().ok_or(FormatError::Malformed)?;
+        if previous.1 > current.0 {
+            return Err(FormatError::Overlap);
+        }
+        index = index.saturating_add(1);
+    }
+
+    let mut pdata = Vec::with_capacity(pdata_len);
+    for (begin, end, unwind) in entries {
+        let begin_bytes = begin.to_le_bytes();
+        let end_bytes = end.to_le_bytes();
+        let unwind_bytes = unwind.to_le_bytes();
+        pdata.extend_from_slice(&begin_bytes);
+        pdata.extend_from_slice(&end_bytes);
+        pdata.extend_from_slice(&unwind_bytes);
+    }
+    blob.resize(pdata_offset, 0);
+    blob.extend_from_slice(&pdata);
+    blob.resize(xdata_offset, 0);
+    blob.extend_from_slice(&xdata);
+    Ok(Some((
+        section_rva
+            .checked_add(u32::try_from(pdata_offset).map_err(|_| FormatError::Bounds)?)
+            .ok_or(FormatError::Bounds)?,
+        u32::try_from(pdata_len).map_err(|_| FormatError::Bounds)?,
+    )))
+}
+
+/// Writes one optional-header data directory.
+///
+/// # Errors
+///
+/// Returns a typed error when the directory index is out of range or the
+/// optional header is truncated.
+#[inline]
+pub fn write_data_directory(
+    image: &mut [u8],
+    pe: &Pe64<'_>,
+    index: u32,
+    virtual_address: u32,
+    size: u32,
+) -> Result<()> {
+    if index >= pe.optional.directory_count {
+        return Err(FormatError::UnsupportedAction);
+    }
+    let relative = usize::try_from(index)
+        .map_err(|_| FormatError::Bounds)?
+        .checked_mul(8)
+        .ok_or(FormatError::Bounds)?;
+    let offset = pe
+        .optional_offset
+        .checked_add(OPTIONAL_FIXED_SIZE)
+        .and_then(|value| value.checked_add(relative))
+        .ok_or(FormatError::Bounds)?;
+    let optional_end = pe
+        .optional_offset
+        .checked_add(usize::from(pe.coff.optional_size))
+        .ok_or(FormatError::Bounds)?;
+    if offset.checked_add(8).ok_or(FormatError::Bounds)? > optional_end {
+        return Err(FormatError::Bounds);
+    }
+    write_u32(image, offset, virtual_address)?;
+    write_u32(
+        image,
+        offset.checked_add(4).ok_or(FormatError::Bounds)?,
+        size,
+    )?;
+    Ok(())
+}
+
+/// Recomputes and writes the PE checksum.
+///
+/// # Errors
+///
+/// Returns a typed error for malformed images or bounds failures.
+#[inline]
+pub fn refresh_checksum(image: &mut [u8]) -> Result<()> {
+    let pe = Pe64::parse(image)?;
+    let checksum_offset = pe
+        .optional_offset
+        .checked_add(64)
+        .ok_or(FormatError::Bounds)?;
+    let checksum = pe_checksum(image, checksum_offset)?;
+    write_u32(image, checksum_offset, checksum)
+}
+
 /// Patches a relative jump using RVAs.
 ///
 /// # Errors
@@ -947,8 +1218,9 @@ pub fn patch_relative_jump_rva(
 #[cfg(test)]
 mod tests {
     use super::{
-        DOS_MAGIC, IMAGE_FILE_MACHINE_AMD64, PE_MAGIC, PE32_PLUS_MAGIC, Pe64,
-        append_executable_section, patch_relative_jump_rva,
+        DOS_MAGIC, IMAGE_FILE_MACHINE_AMD64, PE_MAGIC, PE32_PLUS_MAGIC, Pe64, UnwindFunction,
+        append_exception_table, append_executable_section, patch_relative_jump_rva, read_u32,
+        refresh_checksum, write_data_directory,
     };
     use alloc::vec;
     use alloc::vec::Vec;
@@ -1232,6 +1504,110 @@ mod tests {
         no_slack[0x98 + 60..0x98 + 64].copy_from_slice(&0x1a8_u32.to_le_bytes());
         assert!(append_executable_section(&no_slack, &[0x90; 0x20]).is_err());
     }
+    fn synthetic_pe_with_exception() -> Vec<u8> {
+        let mut data = synthetic_pe();
+        let optional = 0x98_usize;
+        data[optional + 108..optional + 112].copy_from_slice(&4_u32.to_le_bytes());
+        data[optional + 112 + 24..optional + 112 + 28].copy_from_slice(&0x1070_u32.to_le_bytes());
+        data[optional + 112 + 28..optional + 112 + 32].copy_from_slice(&12_u32.to_le_bytes());
+        data[0x260..0x264].copy_from_slice(&[0x01, 0x00, 0x00, 0x00]);
+        data[0x270..0x274].copy_from_slice(&0x1040_u32.to_le_bytes());
+        data[0x274..0x278].copy_from_slice(&0x1050_u32.to_le_bytes());
+        data[0x278..0x27c].copy_from_slice(&0x1060_u32.to_le_bytes());
+        data
+    }
+
+    fn unwind(count: u8) -> Vec<u8> {
+        let size = (4 + usize::from(count) * 2 + 3) & !3;
+        let mut bytes = vec![0_u8; size];
+        bytes[0] = 1;
+        bytes[2] = count;
+        bytes
+    }
+
+    #[test]
+    fn merges_exception_entries_and_rebases_new_unwind_info() {
+        let data = synthetic_pe_with_exception();
+        let pe = Pe64::parse(&data).expect("pe");
+        assert_eq!(pe.data_directory(3), Some((0x1070, 12)));
+        assert_eq!(pe.next_section_rva(), Some(0x2000));
+        let mut blob = vec![0xaa_u8; 0x20];
+        let directory = append_exception_table(
+            &mut blob,
+            &pe,
+            0x2000,
+            &[UnwindFunction::new(0x10, 0x20, unwind(1))],
+        )
+        .expect("merge")
+        .expect("directory");
+        assert_eq!(directory, (0x2020, 24));
+        assert_eq!(read_u32(&blob, 0x20).expect("first begin"), 0x1040);
+        assert_eq!(read_u32(&blob, 0x2c).expect("new begin"), 0x2010);
+        assert_eq!(read_u32(&blob, 0x30).expect("new end"), 0x2020);
+        assert_eq!(read_u32(&blob, 0x34).expect("new unwind"), 0x2040);
+        assert_eq!(
+            blob.get(0x40..0x48),
+            Some([1, 0, 1, 0, 0, 0, 0, 0].as_slice())
+        );
+        assert_eq!(blob.len(), 0x48);
+    }
+
+    #[test]
+    fn exception_merge_rejects_overlap_and_handlers() {
+        let data = synthetic_pe_with_exception();
+        let pe = Pe64::parse(&data).expect("pe");
+        let mut blob = Vec::new();
+        assert_eq!(
+            append_exception_table(
+                &mut blob,
+                &pe,
+                0x2000,
+                &[
+                    UnwindFunction::new(0x10, 0x20, unwind(0)),
+                    UnwindFunction::new(0x18, 0x28, unwind(0)),
+                ],
+            )
+            .err(),
+            Some(crate::FormatError::Overlap)
+        );
+        let mut handler = unwind(0);
+        handler[0] = 0x09;
+        assert_eq!(
+            append_exception_table(
+                &mut blob,
+                &pe,
+                0x2000,
+                &[UnwindFunction::new(0x10, 0x20, handler)],
+            )
+            .err(),
+            Some(crate::FormatError::UnsupportedAction)
+        );
+    }
+
+    #[test]
+    fn directory_updates_refresh_the_checksum() {
+        let mut image = synthetic_pe_with_exception();
+        let source = image.clone();
+        let pe = Pe64::parse(&source).expect("pe");
+        let before = pe.optional_header().checksum;
+        write_data_directory(&mut image, &pe, 3, 0x2020, 24).expect("directory");
+        {
+            let updated = Pe64::parse(&image).expect("updated");
+            assert_eq!(updated.data_directory(3), Some((0x2020, 24)));
+        }
+        refresh_checksum(&mut image).expect("checksum");
+        {
+            let refreshed = Pe64::parse(&image).expect("refreshed");
+            assert_ne!(refreshed.optional_header().checksum, before);
+        }
+        let source = image.clone();
+        let pe = Pe64::parse(&source).expect("pe");
+        assert_eq!(
+            write_data_directory(&mut image, &pe, 32, 0, 0).err(),
+            Some(crate::FormatError::UnsupportedAction)
+        );
+    }
+
     #[test]
     fn malformed_prefixes_and_mutations_fail_closed() {
         let base = synthetic_pe();

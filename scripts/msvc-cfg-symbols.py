@@ -86,11 +86,13 @@ def pdb_tool():
 
 
 def pdb_sizes(path):
-    """Parse S_GPROC32 code sizes from `llvm-pdbutil dump --symbols`."""
+    """Parse S_GPROC32/S_GPROC32_ID code sizes from llvm-pdbutil output."""
     if not path or not Path(path).is_file():
+        print(f"pdb not found: {path}", file=sys.stderr)
         return {}
     tool = pdb_tool()
     if tool is None:
+        print("llvm-pdbutil not found", file=sys.stderr)
         return {}
     result = subprocess.run(
         [tool, "dump", "--symbols", str(path)],
@@ -104,7 +106,7 @@ def pdb_sizes(path):
     sizes = {}
     current = None
     for line in result.stdout.splitlines():
-        match = re.search(r"S_GPROC32\b.*`([^`]+)`", line)
+        match = re.search(r"S_[GL]PROC32(?:_ID)?\b.*`([^`]+)`", line)
         if match:
             current = match.group(1).lstrip("_")
             continue
@@ -115,6 +117,12 @@ def pdb_sizes(path):
             if current in NAMES:
                 sizes[current] = int(match.group(1))
             current = None
+    if not sizes:
+        print(
+            f"no matching PDB procedures in {path}; "
+            f"first output: {result.stdout[:400]!r}",
+            file=sys.stderr,
+        )
     return sizes
 
 

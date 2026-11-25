@@ -9,8 +9,9 @@ use sirus_binfmt::elf::{
     Elf64, Injection, PF_X, PT_LOAD, STT_OBJECT, inject, overwrite_vaddr, patch_relative_jump,
 };
 use sirus_binfmt::pe::{
-    IMAGE_SCN_MEM_EXECUTE, Pe64, append_executable_section as append_pe_section,
-    patch_relative_jump_rva,
+    IMAGE_DIRECTORY_ENTRY_EXCEPTION, IMAGE_SCN_MEM_EXECUTE, Pe64, append_exception_table,
+    append_executable_section as append_pe_section, patch_relative_jump_rva, refresh_checksum,
+    write_data_directory,
 };
 use sirus_core::ir::MAX_FUNCTION_BYTES;
 use sirus_core::lifter::lift_function;
@@ -427,6 +428,18 @@ fn scrub_range(
     Ok(())
 }
 
+fn attach_windows_exceptions(
+    pe: &Pe64<'_>,
+    windows: &mut vmgen::WindowsVmBlob,
+) -> Result<(u32, Option<(u32, u32)>)> {
+    let section_rva = pe
+        .next_section_rva()
+        .ok_or_else(|| ProtectError::internal("PE next section RVA"))?;
+    let unwind = core::mem::take(&mut windows.unwind);
+    let exception = append_exception_table(&mut windows.blob, pe, section_rva, &unwind)?;
+    Ok((section_rva, exception))
+}
+
 #[allow(
     clippy::large_stack_frames,
     reason = "PE protection owns the bounded lifted-program state"
@@ -484,9 +497,23 @@ fn protect_pe(arguments: &ProtectArgs, input: &[u8]) -> Result<ProtectReport> {
         None => seed(),
     };
     let program = compile(&functions, build_seed, arguments.options)?;
-    let windows = vmgen::build_windows_vm(&program, arguments.keep_temp)?;
+    let mut windows = vmgen::build_windows_vm(&program, arguments.keep_temp)?;
+    let (section_rva, exception) = attach_windows_exceptions(&pe, &mut windows)?;
     let injection = append_pe_section(input, &windows.blob)?;
+    if injection.section_rva != section_rva {
+        return Err(ProtectError::internal("PE section RVA mismatch"));
+    }
     let mut image = injection.image;
+    if let Some((exception_rva, exception_size)) = exception {
+        write_data_directory(
+            &mut image,
+            &pe,
+            IMAGE_DIRECTORY_ENTRY_EXCEPTION,
+            exception_rva,
+            exception_size,
+        )?;
+        refresh_checksum(&mut image)?;
+    }
     if windows.entry_offsets.len() != targets.len() {
         return Err(ProtectError::internal("Windows VM entry count"));
     }
