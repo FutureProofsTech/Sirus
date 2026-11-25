@@ -60,12 +60,21 @@ def object_sizes(path):
         canonical = name.lstrip("_")
         if len(debug) < 8:
             debug.append((name, data[entry + 17]))
-        if canonical in NAMES:
-            print(f"object debug: {name} aux={data[entry + 17]} type={u16(data, entry + 14)} section={u16(data, entry + 12)}", file=sys.stderr)
         aux = data[entry + 17]
-        if canonical in NAMES and aux >= 1:
-            aux_entry = entry + 18
-            sizes[canonical] = u32(data, aux_entry + 4)
+        if canonical in NAMES:
+            section = u16(data, entry + 12)
+            count = u16(data, 2)
+            header = 20 + (section - 1) * 40
+            print(
+                f"object debug: {name} section={section}/{count} "
+                f"vsize={u32(data, header + 8)} raw={u32(data, header + 16)} aux={aux}",
+                file=sys.stderr,
+            )
+            if aux >= 1:
+                aux_entry = entry + 18
+                sizes[canonical] = u32(data, aux_entry + 4)
+            else:
+                sizes[canonical] = section_size(data, section)
         index += 1 + aux
     return sizes
 
