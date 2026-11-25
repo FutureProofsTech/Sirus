@@ -457,7 +457,7 @@ fn generate_source(program: &CompiledProgram, id: &str, vm_base: u64) -> Result<
          \x20   a6: u64, a7: u64, a8: u64, a9: u64, a10: u64, a11: u64,\n\
          ) -> ([u64; 6], [u64; 6]) {{\n\
          #[cfg(target_os = \"windows\")]\n\
-         {{ let _ = (a4, a5, a6, a7, a8, a9, a10, a11); ([0, 0, a1, a0, a2, a3], [0; 6]) }}\n\
+         {{ let _ = (a10, a11); ([0, 0, a1, a0, a2, a3], [a4, a5, a6, a7, a8, a9]) }}\n\
          #[cfg(not(target_os = \"windows\"))]\n\
          {{ ([a0, a1, a2, a3, a4, a5], [a6, a7, a8, a9, a10, a11]) }}\n\
          }}\n\n"
@@ -1234,6 +1234,7 @@ fn windows_entry_symbol(object: &[u8], id: &str, index: usize) -> Result<String>
 /// unavailable, or if the resulting image is structurally invalid.
 #[allow(
     clippy::too_many_lines,
+    clippy::format_push_string,
     reason = "Windows toolchain orchestration is a linear external-process transaction"
 )]
 pub fn build_windows_vm(program: &CompiledProgram, keep_temp: bool) -> Result<WindowsVmBlob> {
@@ -1313,10 +1314,24 @@ pub fn build_windows_vm(program: &CompiledProgram, keep_temp: bool) -> Result<Wi
     for index in 0..program.entry_states().len() {
         entry_symbols.push(windows_entry_symbol(&object, &id, index)?);
     }
+    let mut stack_copy = String::new();
+    for slot in 0..6_usize {
+        stack_copy.push_str(&format!(
+            "    movq $0, {}(%rsp)\n",
+            0x20_usize.saturating_add(slot.saturating_mul(8))
+        ));
+    }
+    for slot in 0..usize::from(program.stack_args()) {
+        stack_copy.push_str(&format!(
+            "    movq {}(%rsp), %rax\n    movq %rax, {}(%rsp)\n",
+            0x120_usize.saturating_add(slot.saturating_mul(8)),
+            0x20_usize.saturating_add(slot.saturating_mul(8))
+        ));
+    }
     let mut shim_source = String::from(".text\n");
     for (index, symbol) in entry_symbols.iter().enumerate() {
         let shim = format!(
-            ".globl sirus_shim_{id}_{index}\n.def sirus_shim_{id}_{index}; .scl 2; .type 32; .endef\n.seh_proc sirus_shim_{id}_{index}\nsirus_shim_{id}_{index}:\n    pushq %rcx\n    .seh_pushreg %rcx\n    pushq %rdx\n    .seh_pushreg %rdx\n    pushq %r8\n    .seh_pushreg %r8\n    pushq %r9\n    .seh_pushreg %r9\n    pushq %r10\n    .seh_pushreg %r10\n    pushq %r11\n    .seh_pushreg %r11\n    subq $136, %rsp\n    .seh_stackalloc 136\n    .seh_endprologue\n    movdqu %xmm0, 32(%rsp)\n    movdqu %xmm1, 48(%rsp)\n    movdqu %xmm2, 64(%rsp)\n    movdqu %xmm3, 80(%rsp)\n    movdqu %xmm4, 96(%rsp)\n    movdqu %xmm5, 112(%rsp)\n    call {symbol}\n    movdqu 32(%rsp), %xmm0\n    movdqu 48(%rsp), %xmm1\n    movdqu 64(%rsp), %xmm2\n    movdqu 80(%rsp), %xmm3\n    movdqu 96(%rsp), %xmm4\n    movdqu 112(%rsp), %xmm5\n    addq $136, %rsp\n    popq %r11\n    popq %r10\n    popq %r9\n    popq %r8\n    popq %rdx\n    popq %rcx\n    ret\n.seh_endproc\n"
+            ".globl sirus_shim_{id}_{index}\n.def sirus_shim_{id}_{index}; .scl 2; .type 32; .endef\n.seh_proc sirus_shim_{id}_{index}\nsirus_shim_{id}_{index}:\n    pushq %rcx\n    .seh_pushreg %rcx\n    pushq %rdx\n    .seh_pushreg %rdx\n    pushq %r8\n    .seh_pushreg %r8\n    pushq %r9\n    .seh_pushreg %r9\n    pushq %r10\n    .seh_pushreg %r10\n    pushq %r11\n    .seh_pushreg %r11\n    subq $200, %rsp\n    .seh_stackalloc 200\n    .seh_endprologue\n    movdqu %xmm0, 104(%rsp)\n    movdqu %xmm1, 120(%rsp)\n    movdqu %xmm2, 136(%rsp)\n    movdqu %xmm3, 152(%rsp)\n    movdqu %xmm4, 168(%rsp)\n    movdqu %xmm5, 184(%rsp)\n{stack_copy}    call {symbol}\n    movdqu 104(%rsp), %xmm0\n    movdqu 120(%rsp), %xmm1\n    movdqu 136(%rsp), %xmm2\n    movdqu 152(%rsp), %xmm3\n    movdqu 168(%rsp), %xmm4\n    movdqu 184(%rsp), %xmm5\n    addq $200, %rsp\n    popq %r11\n    popq %r10\n    popq %r9\n    popq %r8\n    popq %rdx\n    popq %rcx\n    ret\n.seh_endproc\n"
         );
         shim_source.push_str(&shim);
     }

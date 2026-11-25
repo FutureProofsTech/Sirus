@@ -11,9 +11,9 @@ use crate::mba::{BuildRng, ExprArena, ExprOp, expand, nonlinear_wrap};
 use crate::shared::derive::Tables;
 use crate::shared::format::{
     ALIASES_PER_SEMANTIC, MAX_OPERANDS, REG_ONE, REG_TEMP_BASE, ROLE_IMM, ROLE_REG, SEM_ADD_RR,
-    SEM_AND_RR, SEM_CMPEQ_RR, SEM_CMPLES_RR, SEM_CMPLEU_RR, SEM_CMPLTS_RR, SEM_CMPLTU_RR, SEM_JCC,
-    SEM_JMP, SEM_LOAD8, SEM_LOAD16, SEM_LOAD32, SEM_LOAD64, SEM_MOV_RI, SEM_MOV_RR, SEM_MUL_RR,
-    SEM_NEG_R, SEM_NOT_R, SEM_OR_RR, SEM_RET, SEM_ROTL_RR, SEM_ROTR_RR, SEM_SAR_RR,
+    SEM_AND_RR, SEM_CALL, SEM_CMPEQ_RR, SEM_CMPLES_RR, SEM_CMPLEU_RR, SEM_CMPLTS_RR, SEM_CMPLTU_RR,
+    SEM_JCC, SEM_JMP, SEM_LOAD8, SEM_LOAD16, SEM_LOAD32, SEM_LOAD64, SEM_MOV_RI, SEM_MOV_RR,
+    SEM_MUL_RR, SEM_NEG_R, SEM_NOT_R, SEM_OR_RR, SEM_RET, SEM_ROTL_RR, SEM_ROTR_RR, SEM_SAR_RR,
     SEM_SELECT_RRRR, SEM_SHL_RR, SEM_SHR_RR, SEM_STORE8, SEM_STORE16, SEM_STORE32, SEM_STORE64,
     SEM_SUB_RR, SEM_TRAP, SEM_XOR_RR, format,
 };
@@ -33,6 +33,7 @@ struct BlockEncoder<'a> {
     tables: &'a Tables,
     rng: &'a mut BuildRng,
     states: &'a [u64],
+    call_entries: &'a [u64],
     depth: u8,
     budget: u16,
     arena: ExprArena,
@@ -46,6 +47,7 @@ impl<'a> BlockEncoder<'a> {
         tables: &'a Tables,
         rng: &'a mut BuildRng,
         states: &'a [u64],
+        call_entries: &'a [u64],
         depth: u8,
         budget: u16,
         nonlinear: bool,
@@ -54,6 +56,7 @@ impl<'a> BlockEncoder<'a> {
             tables,
             rng,
             states,
+            call_entries,
             depth,
             budget,
             arena: ExprArena::new(),
@@ -555,6 +558,19 @@ impl<'a> BlockEncoder<'a> {
             }
             Terminator::Return { value } => self.emit(SEM_RET, [u64::from(value), 0, 0, 0]),
             Terminator::Trap => self.emit(SEM_TRAP, [0_u64; MAX_OPERANDS]),
+            Terminator::Call {
+                target,
+                return_block,
+                ..
+            } => {
+                let callee = self.call_entries.get(usize::from(target)).copied().ok_or(
+                    CoreError::InvalidBlock {
+                        block: return_block,
+                    },
+                )?;
+                let return_state = self.target_state(return_block)?;
+                self.emit(SEM_CALL, [callee, return_state, 0, 0])
+            }
         }
     }
 
@@ -569,32 +585,58 @@ impl<'a> BlockEncoder<'a> {
 
 /// Encodes one flattened block body.
 #[inline]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "block encoder receives the plan, call table, and bounded MBA settings"
+)]
 pub(crate) fn encode_block(
     ops: &[IrOp],
     terminator: Terminator,
     states: &[u64],
+    call_entries: &[u64],
     tables: &Tables,
     rng: &mut BuildRng,
     mba_depth: u8,
     mba_budget: u16,
 ) -> Result<ByteBuf<MAX_BLOCK_BODY>> {
-    let encoder = BlockEncoder::new(tables, rng, states, mba_depth, mba_budget, false);
+    let encoder = BlockEncoder::new(
+        tables,
+        rng,
+        states,
+        call_entries,
+        mba_depth,
+        mba_budget,
+        false,
+    );
     encoder.finish(ops, terminator)
 }
 
 /// Encodes one flattened block body and adds the non-linear MBA layer to the
 /// first arithmetic statement.
 #[inline]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "block encoder receives the plan, call table, and bounded MBA settings"
+)]
 pub(crate) fn encode_block_with_nonlinear(
     ops: &[IrOp],
     terminator: Terminator,
     states: &[u64],
+    call_entries: &[u64],
     tables: &Tables,
     rng: &mut BuildRng,
     mba_depth: u8,
     mba_budget: u16,
 ) -> Result<ByteBuf<MAX_BLOCK_BODY>> {
-    let encoder = BlockEncoder::new(tables, rng, states, mba_depth, mba_budget, true);
+    let encoder = BlockEncoder::new(
+        tables,
+        rng,
+        states,
+        call_entries,
+        mba_depth,
+        mba_budget,
+        true,
+    );
     encoder.finish(ops, terminator)
 }
 
@@ -623,6 +665,7 @@ mod tests {
             &ops,
             Terminator::Return { value: REG_RAX },
             &states,
+            &[],
             &tables,
             &mut rng,
             0,
@@ -662,6 +705,7 @@ mod tests {
             &ops,
             Terminator::Return { value: REG_RAX },
             &states,
+            &[],
             &tables,
             &mut rng,
             4,
@@ -679,6 +723,7 @@ mod tests {
             &[IrOp::Mov { dst: 255, src: 0 }],
             Terminator::Return { value: 0 },
             &states,
+            &[],
             &tables,
             &mut rng,
             0,
@@ -696,6 +741,7 @@ mod tests {
             &[],
             Terminator::Jump { target: 3 },
             &states,
+            &[],
             &tables,
             &mut rng,
             0,
@@ -882,6 +928,7 @@ mod tests {
             &operations,
             Terminator::Return { value: REG_RAX },
             &states,
+            &[],
             &tables,
             &mut rng,
             0,

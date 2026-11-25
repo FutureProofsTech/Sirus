@@ -48,6 +48,29 @@ struct DataRef {
     len: usize,
 }
 
+/// Stack-argument offsets for the supported host ABIs.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StackAbi {
+    /// Offset from RSP to the first stack argument.
+    pub rsp_arg_offset: i64,
+    /// Offset from RBP to the first stack argument.
+    pub rbp_arg_offset: i64,
+}
+
+impl StackAbi {
+    /// System V AMD64 stack-argument offsets.
+    pub const SYSTEM_V: Self = Self {
+        rsp_arg_offset: 8,
+        rbp_arg_offset: 16,
+    };
+    /// Microsoft x64 stack-argument offsets.
+    pub const WIN64: Self = Self {
+        rsp_arg_offset: 0x28,
+        rbp_arg_offset: 0x30,
+    };
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FlagKind {
     Add,
@@ -66,16 +89,25 @@ struct Lifter<'a> {
     ops: BoundedVec<IrOp, MAX_IR_OPS>,
     error_offset: u64,
     reader: &'a dyn BinaryData,
+    calls: &'a [(u64, u16)],
     data: ByteBuf<MAX_DATA_BYTES>,
     data_refs: BoundedVec<DataRef, MAX_DATA_REFS>,
     data_base: usize,
     current_va: u64,
     current_len: u8,
     max_stack_args: u8,
+    stack_abi: StackAbi,
 }
 
 impl<'a> Lifter<'a> {
-    fn new(code_len: usize, base_va: u64, reader: &'a dyn BinaryData, data_base: usize) -> Self {
+    fn new(
+        code_len: usize,
+        base_va: u64,
+        reader: &'a dyn BinaryData,
+        calls: &'a [(u64, u16)],
+        data_base: usize,
+        stack_abi: StackAbi,
+    ) -> Self {
         Self {
             code_len,
             base_va,
@@ -84,12 +116,14 @@ impl<'a> Lifter<'a> {
             ops: BoundedVec::new(),
             error_offset: base_va,
             reader,
+            calls,
             data: ByteBuf::new(),
             data_refs: BoundedVec::new(),
             data_base,
             current_va: base_va,
             current_len: 0,
             max_stack_args: 0,
+            stack_abi,
         }
     }
 
@@ -262,9 +296,9 @@ impl<'a> Lifter<'a> {
             return Ok(());
         };
         let (threshold, bias) = if base == REG_RBP {
-            (16_i64, 16_i64)
+            (self.stack_abi.rbp_arg_offset, self.stack_abi.rbp_arg_offset)
         } else if base == REG_RSP {
-            (8_i64, 8_i64)
+            (self.stack_abi.rsp_arg_offset, self.stack_abi.rsp_arg_offset)
         } else {
             return Ok(());
         };
@@ -1308,6 +1342,30 @@ impl<'a> Lifter<'a> {
                 self.mov(index, REG_TMP1)?;
                 Ok(None)
             }
+            Mnemonic::Call => {
+                let target_va = instruction.target.ok_or(CoreError::InvalidBranchTarget {
+                    offset: instruction.offset,
+                    target: instruction.offset,
+                })?;
+                let target = self
+                    .calls
+                    .iter()
+                    .find(|(address, _)| *address == target_va)
+                    .map(|(_, index)| *index)
+                    .ok_or(CoreError::Decode(DecodeError {
+                        offset: instruction.offset,
+                        reason: DecodeReason::UnsupportedCall,
+                    }))?;
+                let return_va = instruction
+                    .offset
+                    .checked_add(u64::from(instruction.length))
+                    .ok_or(CoreError::ArithmeticOverflow)?;
+                Ok(Some(Terminator::Call {
+                    target,
+                    return_va,
+                    return_block: 0,
+                }))
+            }
             Mnemonic::Jmp => {
                 let Some(target) = instruction.target else {
                     return Err(CoreError::InvalidBranchTarget {
@@ -1512,6 +1570,20 @@ impl<'a> Lifter<'a> {
                         break;
                     }
                     Mnemonic::Ret => break,
+                    Mnemonic::Call => {
+                        if end >= self.code_len {
+                            return Err(CoreError::InvalidBranchTarget {
+                                offset: instruction.offset,
+                                target: self
+                                    .base_va
+                                    .wrapping_add(u64::try_from(end).unwrap_or(u64::MAX)),
+                            });
+                        }
+                        self.add_leader(end)?;
+                        queue
+                            .push(u32::try_from(end).map_err(|_| CoreError::ArithmeticOverflow)?)?;
+                        break;
+                    }
                     _ => {
                         cursor = end;
                     }
@@ -1673,12 +1745,35 @@ pub fn lift_function_with_data(
     reader: &dyn BinaryData,
     data_base: usize,
 ) -> Result<LiftedFunction> {
+    lift_function_with_data_and_calls(code, base_va, reader, &[], data_base, StackAbi::SYSTEM_V)
+}
+
+/// Lifts one bounded native function with read-only data and direct-call targets.
+///
+/// `calls` maps native target addresses to function indices in the protection
+/// set. Calls to addresses outside this map fail closed.
+///
+/// # Errors
+///
+/// Returns a typed error for empty or oversized functions, malformed or
+/// unsupported instructions, overlapping decode paths, invalid branch targets,
+/// unreadable RIP-relative data, unknown call targets, and fixed-capacity
+/// exhaustion.
+#[inline]
+pub fn lift_function_with_data_and_calls(
+    code: &[u8],
+    base_va: u64,
+    reader: &dyn BinaryData,
+    calls: &[(u64, u16)],
+    data_base: usize,
+    stack_abi: StackAbi,
+) -> Result<LiftedFunction> {
     if code.is_empty() || code.len() > MAX_FUNCTION_BYTES {
         return Err(CoreError::InvalidFunctionSize {
             size: u64::try_from(code.len()).unwrap_or(u64::MAX),
         });
     }
-    let mut lifter = Lifter::new(code.len(), base_va, reader, data_base);
+    let mut lifter = Lifter::new(code.len(), base_va, reader, calls, data_base, stack_abi);
     lifter.discover(code)?;
     lifter.build(code)?;
     if lifter.blocks.is_empty() {
@@ -1697,7 +1792,9 @@ pub fn lift_function_with_data(
 
 #[cfg(test)]
 mod tests {
-    use super::{BinaryData, EmptyData, FlagKind, Lifter, lift_function, lift_function_with_data};
+    use super::{
+        BinaryData, EmptyData, FlagKind, Lifter, StackAbi, lift_function, lift_function_with_data,
+    };
     use crate::error::CoreError;
     use crate::ir::Terminator;
     use crate::shared::format::{REG_RAX, REG_RDI, REG_RSI};
@@ -1721,7 +1818,7 @@ mod tests {
             REG_RDI,
             REG_RSI,
             FlagKind::Add,
-            Lifter::new(1, 0, &EmptyData, 0),
+            Lifter::new(1, 0, &EmptyData, &[], 0, StackAbi::SYSTEM_V),
         );
     }
 

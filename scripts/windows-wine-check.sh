@@ -130,6 +130,66 @@ done
 grep -q 'abi 48 48 0 3' "$work/cvictim.native.out"
 echo "PASS Windows/Wine C ABI matrix (XMM6-15, indirect, large frame)"
 
+echo "== Windows stack arguments =="
+x86_64-w64-mingw32-gcc -O2 "$fixtures/windows_stack.c" -o "$work/wstack.exe"
+for variant in normal ct; do
+    extra=()
+    if [[ "$variant" == "ct" ]]; then
+        extra=(--constant-time --constant-time-passes 64)
+    fi
+    ./target/release/sirus protect \
+        --input "$work/wstack.exe" \
+        --output "$work/wstack.$variant.exe" \
+        --function sirus_win_stack \
+        --seed 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff \
+        "${extra[@]}" \
+        >"$work/wstack.$variant.protect"
+    chmod +x "$work/wstack.$variant.exe"
+done
+WINEDEBUG=-all wine "$work/wstack.exe" >"$work/wstack.native.out" 2>"$work/wstack.native.err"
+for variant in normal ct; do
+    WINEDEBUG=-all wine "$work/wstack.$variant.exe" \
+        >"$work/wstack.$variant.out" 2>"$work/wstack.$variant.err"
+    if ! cmp -s "$work/wstack.native.out" "$work/wstack.$variant.out"; then
+        echo "Windows stack-argument mismatch ($variant)" >&2
+        diff -u "$work/wstack.native.out" "$work/wstack.$variant.out" >&2
+        exit 1
+    fi
+done
+grep -q '^41' "$work/wstack.native.out"
+echo "PASS Windows/Wine stack arguments (5th-8th, normal + constant-time)"
+
+echo "== Windows direct protected calls =="
+x86_64-w64-mingw32-gcc -O2 -fno-optimize-sibling-calls \
+    "$fixtures/windows_call.c" -o "$work/wcall.exe"
+./target/release/sirus protect \
+    --input "$work/wcall.exe" \
+    --output "$work/wcall.protected.exe" \
+    --function sirus_win_caller \
+    --function sirus_win_callee \
+    --seed 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff \
+    >"$work/wcall.protect"
+chmod +x "$work/wcall.protected.exe"
+WINEDEBUG=-all wine "$work/wcall.exe" >"$work/wcall.native.out" 2>"$work/wcall.native.err"
+WINEDEBUG=-all wine "$work/wcall.protected.exe" >"$work/wcall.protected.out" 2>"$work/wcall.protected.err"
+if ! cmp -s "$work/wcall.native.out" "$work/wcall.protected.out"; then
+    echo "Windows direct-call mismatch" >&2
+    diff -u "$work/wcall.native.out" "$work/wcall.protected.out" >&2
+    exit 1
+fi
+if ./target/release/sirus protect \
+    --input "$work/wcall.exe" \
+    --output "$work/wcall.ct.exe" \
+    --function sirus_win_caller \
+    --function sirus_win_callee \
+    --constant-time \
+    --seed 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff \
+    >"$work/wcall.ct.protect" 2>&1; then
+    echo "constant-time calls must fail closed" >&2
+    exit 1
+fi
+echo "PASS Windows/Wine direct protected calls (normal; constant-time rejected)"
+
 python3 scripts/pe-tamper.py \
     "$work/cvictim.hardened.exe" "$work/cvictim.tampered.exe"
 chmod +x "$work/cvictim.tampered.exe"

@@ -803,6 +803,15 @@ pub enum Terminator {
         /// Return value register.
         value: u8,
     },
+    /// Direct call to another protected function.
+    Call {
+        /// Target function index in the protection set.
+        target: u16,
+        /// Native address of the instruction after the call.
+        return_va: u64,
+        /// Resolved caller block that starts at `return_va`.
+        return_block: u16,
+    },
     /// Fail closed.
     #[default]
     Trap,

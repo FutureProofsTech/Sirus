@@ -15,7 +15,7 @@ use sirus_binfmt::pe::{
     patch_relative_jump_rva, refresh_checksum, write_data_directory,
 };
 use sirus_core::ir::MAX_FUNCTION_BYTES;
-use sirus_core::lifter::{BinaryData, lift_function_with_data};
+use sirus_core::lifter::{BinaryData, StackAbi, lift_function_with_data_and_calls};
 use sirus_core::program::{ProgramStats, compile};
 use sirus_core::shared::derive::Seed;
 
@@ -286,15 +286,29 @@ pub fn protect(arguments: &ProtectArgs) -> Result<ProtectReport> {
     };
     let mut lifted = Vec::with_capacity(targets.len());
     let reader = ElfReadOnly { elf: &elf };
+    let mut call_targets = Vec::with_capacity(targets.len());
+    for (index, target) in targets.iter().enumerate() {
+        call_targets.push((
+            target.va,
+            u16::try_from(index).map_err(|_| ProtectError::internal("too many call targets"))?,
+        ));
+    }
     let mut data_base = 0_usize;
     for target in &targets {
         let code = elf
             .read_vaddr(target.va, target.size)
             .ok_or(ProtectError::Format(sirus_binfmt::FormatError::Bounds))?;
-        let function =
-            lift_function_with_data(code, target.va, &reader, data_base).map_err(|error| {
-                ProtectError::context(format!("lift function {}", target.name), error.into())
-            })?;
+        let function = lift_function_with_data_and_calls(
+            code,
+            target.va,
+            &reader,
+            &call_targets,
+            data_base,
+            StackAbi::SYSTEM_V,
+        )
+        .map_err(|error| {
+            ProtectError::context(format!("lift function {}", target.name), error.into())
+        })?;
         data_base = data_base
             .checked_add(function.data.len())
             .ok_or_else(|| ProtectError::internal("ELF data layout overflow"))?;
@@ -538,6 +552,20 @@ fn protect_pe(arguments: &ProtectArgs, input: &[u8]) -> Result<ProtectReport> {
         pe: &pe,
         image_base: pe.optional_header().image_base,
     };
+    let mut call_targets = Vec::with_capacity(targets.len());
+    let image_base = pe.optional_header().image_base;
+    for (index, target) in targets.iter().enumerate() {
+        let call_va = image_base
+            .checked_add(u64::from(
+                u32::try_from(target.va)
+                    .map_err(|_| ProtectError::internal("PE call target RVA"))?,
+            ))
+            .ok_or_else(|| ProtectError::internal("PE call target VA"))?;
+        call_targets.push((
+            call_va,
+            u16::try_from(index).map_err(|_| ProtectError::internal("too many call targets"))?,
+        ));
+    }
     let mut data_base = 0_usize;
     for target in &targets {
         let rva = u32::try_from(target.va).map_err(|_| ProtectError::internal("PE target RVA"))?;
@@ -551,7 +579,14 @@ fn protect_pe(arguments: &ProtectArgs, input: &[u8]) -> Result<ProtectReport> {
             .image_base
             .checked_add(u64::from(rva))
             .ok_or_else(|| ProtectError::internal("PE lift base"))?;
-        let function = lift_function_with_data(bytes, base, &reader, data_base)?;
+        let function = lift_function_with_data_and_calls(
+            bytes,
+            base,
+            &reader,
+            &call_targets,
+            data_base,
+            StackAbi::WIN64,
+        )?;
         data_base = data_base
             .checked_add(function.data.len())
             .ok_or_else(|| ProtectError::internal("PE data layout overflow"))?;

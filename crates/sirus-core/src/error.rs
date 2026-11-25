@@ -26,6 +26,8 @@ pub enum DecodeReason {
     TooLong,
     /// The decoded form requires a feature the lifter does not support.
     UnsupportedForm,
+    /// A direct call target is not in the protected function set.
+    UnsupportedCall,
 }
 
 /// Error produced by decoding one x86-64 instruction.
@@ -136,6 +138,7 @@ impl fmt::Display for DecodeReason {
             Self::HighByteRegister => "high-byte register without REX",
             Self::TooLong => "instruction exceeds 15 bytes",
             Self::UnsupportedForm => "unsupported instruction form",
+            Self::UnsupportedCall => "call target is not protected",
         };
         formatter.write_str(text)
     }
@@ -255,6 +258,7 @@ mod tests {
             DecodeReason::HighByteRegister,
             DecodeReason::TooLong,
             DecodeReason::UnsupportedForm,
+            DecodeReason::UnsupportedCall,
         ];
         for reason in reasons {
             let mut buffer = Buffer::new();

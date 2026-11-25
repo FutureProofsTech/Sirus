@@ -13,14 +13,14 @@ use crate::shared::cipher::{
 use crate::shared::derive::{DecodeTables, Seed, Tables};
 use crate::shared::format::{
     MAX_OPERANDS, REG_R8, REG_R9, REG_RAX, REG_RCX, REG_RDI, REG_RDX, REG_RSI, REG_RSP, ROLE_IMM,
-    ROLE_REG, SEM_ADD_RI, SEM_ADD_RR, SEM_AND_RI, SEM_AND_RR, SEM_CMPEQ_RR, SEM_CMPLES_RR,
-    SEM_CMPLEU_RR, SEM_CMPLTS_RR, SEM_CMPLTU_RR, SEM_JCC, SEM_JMP, SEM_LOAD8, SEM_LOAD16,
-    SEM_LOAD32, SEM_LOAD64, SEM_MOV_RI, SEM_MOV_RR, SEM_MUL_RR, SEM_NEG_R, SEM_NOP, SEM_NOT_R,
-    SEM_OR_RI, SEM_OR_RR, SEM_RET, SEM_ROTL_RI, SEM_ROTL_RR, SEM_ROTR_RI, SEM_ROTR_RR, SEM_SAR_RI,
-    SEM_SAR_RR, SEM_SELECT_RRRR, SEM_SHL_RI, SEM_SHL_RR, SEM_SHR_RI, SEM_SHR_RR, SEM_STORE8,
-    SEM_STORE16, SEM_STORE32, SEM_STORE64, SEM_SUB_RI, SEM_SUB_RR, SEM_TRAP, SEM_XOR_RI,
-    SEM_XOR_RR, VM_DATA_LIMIT, VM_MEMORY_SIZE, VM_REGISTERS, VM_STACK_ARG_BASE, VM_STACK_ARG_SLOTS,
-    format,
+    ROLE_REG, SEM_ADD_RI, SEM_ADD_RR, SEM_AND_RI, SEM_AND_RR, SEM_CALL, SEM_CMPEQ_RR,
+    SEM_CMPLES_RR, SEM_CMPLEU_RR, SEM_CMPLTS_RR, SEM_CMPLTU_RR, SEM_JCC, SEM_JMP, SEM_LOAD8,
+    SEM_LOAD16, SEM_LOAD32, SEM_LOAD64, SEM_MOV_RI, SEM_MOV_RR, SEM_MUL_RR, SEM_NEG_R, SEM_NOP,
+    SEM_NOT_R, SEM_OR_RI, SEM_OR_RR, SEM_RET, SEM_ROTL_RI, SEM_ROTL_RR, SEM_ROTR_RI, SEM_ROTR_RR,
+    SEM_SAR_RI, SEM_SAR_RR, SEM_SELECT_RRRR, SEM_SHL_RI, SEM_SHL_RR, SEM_SHR_RI, SEM_SHR_RR,
+    SEM_STORE8, SEM_STORE16, SEM_STORE32, SEM_STORE64, SEM_SUB_RI, SEM_SUB_RR, SEM_TRAP,
+    SEM_XOR_RI, SEM_XOR_RR, VM_DATA_LIMIT, VM_MEMORY_SIZE, VM_REGISTERS, VM_STACK_ARG_BASE,
+    VM_STACK_ARG_SLOTS, format,
 };
 
 /// Deterministic VM outcome.
@@ -140,6 +140,13 @@ enum Flow {
     Return(u64),
     /// Halt through an explicit trap.
     Trap,
+    /// Direct guest call.
+    Call {
+        /// Callee entry state.
+        callee: u64,
+        /// State to resume after the callee returns.
+        return_state: u64,
+    },
     /// Conditional transfer used only by oblivious execution.
     Branch {
         /// Raw branch condition.
@@ -383,6 +390,11 @@ fn store_memory_with_key(
     Some(())
 }
 
+#[cfg(target_os = "windows")]
+const STACK_ARG_OFFSET: usize = 0x28;
+#[cfg(not(target_os = "windows"))]
+const STACK_ARG_OFFSET: usize = 8;
+
 #[inline]
 fn install_stack_arguments(memory: &mut [u8], memory_key: u64, args: [u64; 6]) -> bool {
     let base = usize::try_from(VM_STACK_ARG_BASE).unwrap_or(usize::MAX);
@@ -394,8 +406,16 @@ fn install_stack_arguments(memory: &mut [u8], memory_key: u64, args: [u64; 6]) -
             args.get(slot.saturating_sub(1)).copied().unwrap_or(0)
         };
         let bytes = value.to_le_bytes();
-        let Some(offset) = base.checked_add(slot.saturating_mul(8)) else {
-            return false;
+        let offset = if slot == 0 {
+            base
+        } else {
+            let Some(offset) = base
+                .checked_add(STACK_ARG_OFFSET)
+                .and_then(|start| start.checked_add(slot.saturating_sub(1).saturating_mul(8)))
+            else {
+                return false;
+            };
+            offset
         };
         let mut index = 0_usize;
         while index < 8 {
@@ -692,6 +712,14 @@ fn execute_semantic_inner(
             let value = reg_value(registers, masks, values, 0)?;
             Some(Flow::Return(value))
         }
+        SEM_CALL => {
+            let callee = immediate(values, 0)?;
+            let return_state = immediate(values, 1)?;
+            Some(Flow::Call {
+                callee,
+                return_state,
+            })
+        }
         SEM_TRAP => Some(Flow::Trap),
         _ => None,
     }
@@ -962,6 +990,8 @@ fn execute_with_tables_and_stack(
     fuel = fuel.saturating_sub(scan_cost);
     steps = steps.saturating_add(scan_cost);
 
+    let mut call_stack = [0_u64; MAX_CALL_DEPTH];
+    let mut call_depth = 0_usize;
     'dispatch: loop {
         let mut found: Option<(usize, usize)> = None;
         let mut entry_index_scan = 0_usize;
@@ -1033,7 +1063,31 @@ fn execute_with_tables_and_stack(
                     state = (when_true & mask) | (when_false & !mask);
                     continue 'dispatch;
                 }
+                Flow::Call {
+                    callee,
+                    return_state,
+                } => {
+                    if call_depth >= MAX_CALL_DEPTH {
+                        return halt(Status::Trap, steps);
+                    }
+                    let Some(slot) = call_stack.get_mut(call_depth) else {
+                        return halt(Status::Trap, steps);
+                    };
+                    *slot = return_state;
+                    call_depth = call_depth.saturating_add(1);
+                    state = callee;
+                    continue 'dispatch;
+                }
                 Flow::Return(value) => {
+                    if call_depth > 0 {
+                        call_depth = call_depth.saturating_sub(1);
+                        let Some(return_state) = call_stack.get(call_depth).copied() else {
+                            return halt(Status::Trap, steps);
+                        };
+                        let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_RAX, value);
+                        state = return_state;
+                        continue 'dispatch;
+                    }
                     return Run {
                         value,
                         status: Status::Returned,
@@ -1089,6 +1143,9 @@ pub fn execute_entry_with_stack(
         execute_with_tables_and_stack(input, entry_index, args, stack_args, tables)
     }
 }
+
+/// Maximum nested guest-call depth.
+pub const MAX_CALL_DEPTH: usize = 16;
 
 /// Default fixed pass budget for oblivious execution.
 pub const DEFAULT_OBLIVIOUS_PASSES: usize = 256;
@@ -1350,6 +1407,9 @@ fn execute_oblivious_with_tables_and_stack(
                             return halt(Status::BadPayload, steps);
                         };
                         break;
+                    }
+                    Flow::Call { .. } => {
+                        return halt(Status::BadPayload, steps);
                     }
                     Flow::Return(value) => {
                         result |= apply & value;

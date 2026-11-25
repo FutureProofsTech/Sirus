@@ -518,6 +518,14 @@ fn visit_cycle(function: &LiftedFunction, block: u16, state: &mut [u8; MAX_BLOCK
     false
 }
 
+fn function_has_call(function: &LiftedFunction) -> bool {
+    function
+        .blocks
+        .as_slice()
+        .iter()
+        .any(|block| matches!(block.terminator, Terminator::Call { .. }))
+}
+
 fn function_has_cycle(function: &LiftedFunction) -> bool {
     let mut state = [0_u8; MAX_BLOCKS];
     let mut index = 0_usize;
@@ -558,6 +566,9 @@ pub fn compile(
         return Err(CoreError::InvalidFunctionSize {
             size: u64::try_from(functions.len()).unwrap_or(u64::MAX),
         });
+    }
+    if options.constant_time && functions.iter().any(function_has_call) {
+        return Err(CoreError::InvalidPlan);
     }
     let tables = Tables::derive(&seed);
     let mut state_rng = BuildRng::new(&seed, DOMAIN_STATE);
@@ -603,6 +614,21 @@ pub fn compile(
             *count = block_count;
         }
         function_index = function_index.saturating_add(1);
+    }
+
+    let mut call_entries = [0_u64; MAX_FUNCTIONS];
+    let mut entry_index = 0_usize;
+    while entry_index < functions.len() {
+        let Some(row) = states.get(entry_index) else {
+            return Err(CoreError::InvalidState);
+        };
+        let Some(entry) = row.first().copied() else {
+            return Err(CoreError::InvalidState);
+        };
+        if let Some(slot) = call_entries.get_mut(entry_index) {
+            *slot = entry;
+        }
+        entry_index = entry_index.saturating_add(1);
     }
 
     let mut remaining_pairs = MAX_BLOCKS.saturating_sub(total_original) / 2;
@@ -743,7 +769,42 @@ pub fn compile(
             };
             let guard = guard_for.get(block_index).copied().unwrap_or(u16::MAX);
             let terminator = if guard == u16::MAX {
-                block.terminator
+                match block.terminator {
+                    Terminator::Call {
+                        target, return_va, ..
+                    } => {
+                        let mut return_block = None;
+                        let mut candidate = 0_usize;
+                        while candidate < function.blocks.len() {
+                            let Some(candidate_block) = function.blocks.get(candidate) else {
+                                return Err(CoreError::InvalidBlock {
+                                    block: u16::try_from(candidate)
+                                        .map_err(|_| CoreError::InvalidBlock { block: u16::MAX })?,
+                                });
+                            };
+                            if candidate_block.start_va == return_va {
+                                return_block =
+                                    Some(u16::try_from(candidate).map_err(|_| {
+                                        CoreError::InvalidBlock { block: u16::MAX }
+                                    })?);
+                                break;
+                            }
+                            candidate = candidate.saturating_add(1);
+                        }
+                        let Some(return_block) = return_block else {
+                            return Err(CoreError::InvalidBranchTarget {
+                                offset: block.start_va,
+                                target: return_va,
+                            });
+                        };
+                        Terminator::Call {
+                            target,
+                            return_va,
+                            return_block,
+                        }
+                    }
+                    other => other,
+                }
             } else {
                 Terminator::Jump { target: guard }
             };
@@ -752,6 +813,7 @@ pub fn compile(
                     ops,
                     terminator,
                     state_slice,
+                    &call_entries,
                     &tables,
                     &mut encode_rng,
                     options.mba_depth,
@@ -762,6 +824,7 @@ pub fn compile(
                     ops,
                     terminator,
                     state_slice,
+                    &call_entries,
                     &tables,
                     &mut encode_rng,
                     options.mba_depth,
@@ -841,6 +904,7 @@ pub fn compile(
                         .map_err(|_| CoreError::InvalidBlock { block: u16::MAX })?,
                 },
                 state_slice,
+                &call_entries,
                 &tables,
                 &mut encode_rng,
                 options.mba_depth,
@@ -886,6 +950,7 @@ pub fn compile(
                 decoy_ops.as_slice(),
                 Terminator::Jump { target },
                 state_slice,
+                &call_entries,
                 &tables,
                 &mut encode_rng,
                 options.mba_depth,

@@ -191,6 +191,8 @@ pub enum Mnemonic {
     Jcc(Condition),
     /// Return.
     Ret,
+    /// Direct relative call.
+    Call,
     /// Conditional move.
     Cmov(Condition),
     /// Conditional byte set.
@@ -581,6 +583,24 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
     }
 
     match opcode {
+        0xe8 => {
+            let displacement = read_signed(code, &mut index, 4, offset)?;
+            let length =
+                u8::try_from(index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            let target = offset
+                .wrapping_add(u64::from(length))
+                .wrapping_add(u64::from_ne_bytes(displacement.to_ne_bytes()));
+            Ok(Instruction {
+                offset,
+                length,
+                mnemonic: Mnemonic::Call,
+                width: Width::W64,
+                dst: Operand::None,
+                src: Operand::None,
+                aux: Operand::None,
+                target: Some(target),
+            })
+        }
         0x90 => {
             if (rex & 0x01) != 0 {
                 return Err(decode_error(offset, DecodeReason::UnsupportedOpcode));
@@ -1675,8 +1695,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_calls_and_rip_relative_accesses() {
-        assert!(decode(&[0xe8, 0, 0, 0, 0], 0).is_err());
+    fn decodes_direct_calls_and_rejects_indirect_calls() {
+        let call = decode_at(&[0xe8, 0, 0, 0, 0], 0x1000);
+        assert_eq!(call.mnemonic, Mnemonic::Call);
+        assert_eq!(call.target, Some(0x1005));
         assert!(decode(&[0xff, 0x15, 0, 0, 0, 0], 0).is_err());
         let rip = decode(&[0x48, 0x8b, 0x05, 0, 0, 0, 0], 0);
         assert!(rip.is_ok());
@@ -1802,7 +1824,6 @@ mod tests {
     fn rejects_unsupported_and_malformed_encodings() {
         for bytes in [
             &[0x48, 0x8b][..],
-            &[0xe8, 0, 0, 0, 0][..],
             &[0xff, 0xd0][..],
             &[0xff, 0xe0][..],
             &[0x67, 0x48, 0x8b, 0x00][..],
