@@ -12,11 +12,17 @@ All notable changes to Sirus.
 - Runtime `RtlLookupFunctionEntry` probe for the patched entry's merged
   `RUNTIME_FUNCTION` record.
 
+### Added
+
+- Lifter/compiler libFuzzer target and 112,332-run session.
+- Release artifact script with SHA-256 manifest, CycloneDX SBOM, and optional
+  local GPG signing.
+
 ### Evidence
 
 - `pe32-wine`, `pe32-native`, and `pe32-msvc-cfg` pass with the new ABI, unwind,
   and checksum probes.
-- 194 tests; 85.16% tarpaulin / 86.77% llvm-cov lines.
+- 195 tests; 87.10% tarpaulin / 88.40% llvm-cov lines.
 
 ## [1.5.1-hardened] — 2026-11-25
 

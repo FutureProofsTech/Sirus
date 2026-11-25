@@ -79,7 +79,7 @@
 
 ### Verification
 
-- 194 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
+- 195 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
   statistical-timing measurement hooks.
 - Real victim compilation and execution differential matrix.
 - Differential two-seed builds.
@@ -103,7 +103,7 @@
 ./scripts/verify.sh
 ```
 
-Passes formatting, Clippy (`-D warnings`, all targets), 194 tests, rustdoc,
+Passes formatting, Clippy (`-D warnings`, all targets), 195 tests, rustdoc,
 audit, deny, Kani, red-team, and memory-dump diagnostic.
 
 ```sh
@@ -119,11 +119,15 @@ Recorded evidence:
 - Kani: 5 core + 4 VM harnesses.
 - Miri: 10 VM lib + 20 VM execution (1 ignored under Miri) + 82 core tests.
 - libFuzzer VM: 3,271,319 cumulative executions, no crash.
+- libFuzzer lifter/compiler: 112,332 runs, no crash.
 - libFuzzer formats: 28,971,774 PE and 20,071,488 ELF cumulative runs, no crash.
 - Reproducible output: identical normal, hardened, and constant-time binaries
   for a fixed input and seed.
-- Tarpaulin: 85.16% lines (6272/7365).
-- llvm-cov: 86.77% lines, 82.53% regions.
+- Release artifacts: `scripts/release-artifacts.sh` emits a binary copy,
+  SHA-256 manifest, CycloneDX SBOM, and optional GPG signature when
+  `SIRUS_SIGNING_KEY` is set.
+- Tarpaulin: 87.10% lines (6415/7365).
+- llvm-cov: 88.40% lines, 83.91% regions.
 - Payload differential: 0.40% equal bytes.
 - Handler arms are permuted per build; full VM segment differential remains
   2.21% equal bytes (a metric, not a uniqueness proof).
@@ -132,6 +136,8 @@ Recorded evidence:
   ~76.7 us; constant-time ~214 us; hardened constant-time ~217 us; balanced
   ~56.6 us; minimal ~14.7 us; VMProtect 3.11 demo virtualization ~8.5 us.
 - Cold startup: Sirus ~0.6 ms; VMProtect demo ~2.6 s (packed).
+- Constant-time Cachegrind: two inputs produce identical I/D refs, D1/LLd
+  misses, branches, and mispredicts for the branch-only protected leaf.
 - No obvious strings in `.sirus`.
 - Original bodies absent from protected file and live memory.
 - Tamper/forced-return alter results; valgrind clean.
@@ -187,7 +193,7 @@ tools are outside the local gate and are not release blockers.
 ### Coverage
 
 The agreed prototype target is **above 85%**. This release measures
-**85.16% tarpaulin lines / 86.77% llvm-cov lines**. 100% is not claimed, but the
+**87.10% tarpaulin lines / 88.40% llvm-cov lines**. 100% is not claimed, but the
 85% floor is met and enforced by the proof script.
 
 ---
@@ -223,6 +229,8 @@ scripts/prove.sh              proof/fuzz gate
 scripts/red-team.sh           adversarial harness
 scripts/memory-dump.sh        live memory diagnostic
 scripts/install-tools.sh      tool bootstrap
+scripts/release-artifacts.sh  release binary, checksums, SBOM, optional signature
+scripts/cachegrind-check.sh   constant-time cachegrind gate
 verification/creusot          Creusot/Why3 boundary proofs
 verification/dudect           official dudect-bencher harness
 docs/                          architecture, format, threat, proof, traceability
@@ -244,7 +252,7 @@ docs/                          architecture, format, threat, proof, traceability
 | Miri | pass |
 | libFuzzer | pass |
 | fmt/clippy/doc/audit/deny | pass |
-| Coverage floor 85% | **pass — 85.16% tarpaulin / 86.77% llvm-cov lines** |
+| Coverage floor 85% | **pass — 87.10% tarpaulin / 88.40% llvm-cov lines** |
 | External evidence tooling | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect executed; commercial/licence-only tools are outside the local gate |
 | Windows runtime | **Wine + native Windows leaf subset (branches/loops), normal + constant-time + hardened; MSVC `/guard:cf` and ABI matrix pass** |
 | Windows unwind metadata | **linked `.pdata` merged; `.seh` shim records; `RtlLookupFunctionEntry` runtime probe; handlers/chained fail closed** |

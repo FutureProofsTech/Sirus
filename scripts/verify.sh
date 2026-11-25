@@ -48,4 +48,10 @@ fi
 echo "== red-team harness =="
 ./scripts/red-team.sh
 
+echo "== constant-time cachegrind =="
+./scripts/cachegrind-check.sh
+
+echo "== release artifacts =="
+./scripts/release-artifacts.sh
+
 echo "== all gates passed =="

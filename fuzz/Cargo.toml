@@ -10,6 +10,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 sirus-binfmt = { path = "../crates/sirus-binfmt" }
+sirus-core = { path = "../crates/sirus-core" }
 sirus-vm = { path = "../crates/sirus-vm" }
 
 [[bin]]
@@ -27,5 +28,11 @@ doc = false
 [[bin]]
 name = "elf"
 path = "fuzz_targets/elf.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "lifter"
+path = "fuzz_targets/lifter.rs"
 test = false
 doc = false

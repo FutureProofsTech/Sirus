@@ -1446,6 +1446,8 @@ mod tests {
     use sirus_core::lifter::lift_function;
     use sirus_core::program::{CompileOptions, CompiledProgram, compile};
     use std::fs;
+    use std::path::Path;
+    use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn program() -> CompiledProgram {
@@ -1537,6 +1539,39 @@ mod tests {
         assert_eq!(blob.get(0xc..0x14), Some(expected.as_slice()));
         assert!(patch_windows_rdata(&mut blob, 0x4, rdata, 0x3000, 1).is_err());
         assert!(patch_windows_rdata(&mut blob, 0x0, rdata, 0x2200, 1).is_err());
+    }
+
+    #[test]
+    fn windows_vm_build_smoke_when_toolchain_available() {
+        let Ok(rustc) = Command::new("rustc")
+            .args([
+                "--print",
+                "target-libdir",
+                "--target",
+                "x86_64-pc-windows-gnu",
+            ])
+            .output()
+        else {
+            return;
+        };
+        if !rustc.status.success()
+            || !Path::new(String::from_utf8_lossy(&rustc.stdout).trim()).is_dir()
+        {
+            return;
+        }
+        for tool in ["x86_64-w64-mingw32-gcc", "lld-link"] {
+            if Command::new(tool).arg("--version").output().is_err() {
+                return;
+            }
+        }
+        let function = lift_function(&[0x48, 0x89, 0xf8, 0xc3], 0x1000).expect("lift");
+        let mut options = CompileOptions::new();
+        options.hardened = true;
+        let program = compile(&[function], [0x70_u8; 32], options).expect("compile");
+        let blob = super::build_windows_vm(&program, false).expect("windows vm");
+        assert_ne!(blob.blob.len(), 0);
+        assert_eq!(blob.entry_offsets.len(), 1);
+        assert_ne!(blob.unwind.len(), 0);
     }
 
     #[test]

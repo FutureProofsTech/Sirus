@@ -69,6 +69,7 @@ fi
 echo "== libFuzzer =="
 if [[ -d fuzz ]]; then
     (cd fuzz && cargo +nightly fuzz run vm -- -max_total_time="${SIRUS_FUZZ_SECONDS:-20}" -rss_limit_mb=4096 -timeout=5)
+    (cd fuzz && cargo +nightly fuzz run lifter -- -max_total_time="${SIRUS_FUZZ_SECONDS:-20}" -rss_limit_mb=4096 -timeout=5)
 fi
 
 if [[ "${SIRUS_REPRODUCIBLE:-0}" == "1" ]]; then

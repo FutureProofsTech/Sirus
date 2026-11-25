@@ -36,12 +36,12 @@ Result: **exit 0**. The script runs:
 
 ## 2. Test inventory
 
-`cargo test --workspace` now runs **194 tests**, all passing; the MBA corpus and
+`cargo test --workspace` now runs **195 tests**, all passing; the MBA corpus and
 statistical timing tests are `#[ignore]` measurement hooks and are not part of
 the normal count.
 
 ```text
-194 passed, 0 failed
+195 passed, 0 failed
 ```
 
 Breakdown:
@@ -51,7 +51,7 @@ Breakdown:
 | `sirus-binfmt` unit tests | 25 |
 | `sirus-binfmt` real-loader test | 1 |
 | `sirus-core` unit tests | 82 |
-| `sirus-protector` unit tests | 38 |
+| `sirus-protector` unit tests | 39 |
 | `sirus-hardened` runtime checks | 3 |
 | `sirus-protector` end-to-end | 1 |
 | `sirus-protector` pipeline errors | 1 |
@@ -149,6 +149,15 @@ No crash, panic, OOB, or timeout. The fuzz target builds a valid integrity key
 for arbitrary payloads so the decoder body path is exercised, not only the
 integrity rejection path.
 
+The 1.5.2 session also added a lifter/compiler target:
+
+```text
+Done 112332 runs in 21 second(s)
+```
+
+It lifts arbitrary byte strings and compiles every successfully lifted function
+in normal and (input-selected) constant-time modes.
+
 In-tree deterministic fuzz additionally runs 20,000 random payloads and 10,000
 mutations of a valid payload.
 
@@ -180,7 +189,7 @@ cargo tarpaulin --workspace --all-targets --engine Llvm \
   --exclude-files 'target/*' --exclude-files 'bench/*' --timeout 120
 ```
 
-Result: **85.16% line coverage (6272 / 7365 lines)** with
+Result: **87.10% line coverage (6415 / 7365 lines)** with
 `--exclude-files 'target/*' --exclude-files 'bench/*'`. This is above the agreed
 85% floor.
 
@@ -205,9 +214,9 @@ cargo llvm-cov --workspace --all-targets --summary-only
 ```
 
 ```text
-TOTAL regions 82.53% (4168 missed of 23854)
-TOTAL functions 74.13% (245 missed of 947)
-TOTAL lines 86.77% (1683 missed of 12724)
+TOTAL regions 83.91% (3845 missed of 23900)
+TOTAL functions 74.68% (240 missed of 948)
+TOTAL lines 88.40% (1479 missed of 12751)
 ```
 
 The two tools instrument differently; both are above the 85% floor and show the
@@ -572,6 +581,33 @@ explicit fuel of `1` and requires all three to return.
 
 ---
 
+## 8i-c. Constant-time cachegrind
+
+```sh
+./scripts/cachegrind-check.sh
+```
+
+A branch-only protected leaf is run with two different input pairs under
+Cachegrind, after one warm-up run. The four measured runs are stable and the
+two inputs produce identical counts.
+
+```text
+I refs=15202501
+D refs=5284936
+D1 misses=4783
+LLd misses=2792
+Branches=1438216
+Mispredicts=120703
+PASS constant-time cachegrind counts are input-independent
+```
+
+The first post-link run can show a transient cache-state difference, so the
+script warms up once before measuring. This is cache simulation of the
+branch-only leaf; the private-memory scan remains covered by the dudect memory
+case and the engine tests.
+
+---
+
 ## 8j. Hardened runtime checks
 
 ```sh
@@ -621,7 +657,7 @@ cargo asm -p sirus-core --lib 1
 
 | Item | Status |
 |---|---|
-| Coverage floor (85%) | **met**: 85.16% tarpaulin / 86.77% llvm-cov lines |
+| Coverage floor (85%) | **met**: 87.10% tarpaulin / 88.40% llvm-cov lines |
 | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect | executed; evidence recorded |
 | live process memory dump scan | pass; masked VM state, constant not observed |
 | Windows PE runtime execution | Wine and native Windows; normal, constant-time, hardened; `/guard:cf`, ABI matrix, unwind lookup, and text-checksum tamper tests pass |
