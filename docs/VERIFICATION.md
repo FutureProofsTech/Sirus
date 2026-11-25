@@ -133,18 +133,13 @@ Final passes on the current tree:
 ```text
 cargo +nightly miri test -p sirus-vm --lib
   11 tests passed (1.17 s)
-
-cargo +nightly miri test -p sirus-vm --test execution
-  19 passed, 1 ignored
-
-cargo +nightly miri test -p sirus-core
-  82 tests passed (1 ignored)
 ```
 
-This includes the slice-based VM memory helpers, stack/push/pop semantics,
-branch/loop executions, malformed payloads, the non-linear MBA equivalence
-checks, and all core tests. Miri is extremely slow and is not part of the fast
-gate.
+The 1.5.7 VM library run passes. The full VM execution suite (19 passed,
+1 ignored on the 1.5.6 tree) and the core suite (82 tests on the 1.5.6 tree) are
+opt-in, extremely slow, and were not rerun for this tag. The 1.5.7 tree keeps
+the same Miri-clean VM helpers; Kani, fuzzing, and end-to-end binaries cover the
+new lift and call paths.
 
 ---
 
