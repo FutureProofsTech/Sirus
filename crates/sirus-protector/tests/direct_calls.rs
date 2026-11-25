@@ -7,6 +7,7 @@
     clippy::unwrap_used,
     clippy::panic,
     clippy::indexing_slicing,
+    clippy::too_many_lines,
     reason = "integration test uses assertion panics and fixed fixtures"
 )]
 
@@ -121,6 +122,45 @@ fn direct_calls_between_protected_functions_execute() {
         assert_eq!(
             actual.stdout, expected.stdout,
             "output mismatch for {arguments:?}"
+        );
+    }
+
+    let followed = directory.join("followed");
+    let output = Command::new(env!("CARGO_BIN_EXE_sirus"))
+        .arg("protect")
+        .arg("--input")
+        .arg(&native)
+        .arg("--output")
+        .arg(&followed)
+        .arg("--function")
+        .arg("sirus_caller")
+        .arg("--follow-calls")
+        .arg("--seed")
+        .arg("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")
+        .output()
+        .expect("run protector");
+    assert!(
+        output.status.success(),
+        "follow-calls protect failed: {}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    for arguments in [
+        &["0", "0"][..],
+        &["1", "2"][..],
+        &["3", "4"][..],
+        &["0xffffffffffffffff", "7"][..],
+    ] {
+        let expected = run(&native, arguments);
+        let actual = run(&followed, arguments);
+        assert!(
+            actual.status.success(),
+            "follow-calls protected failed for {arguments:?}: {}",
+            String::from_utf8_lossy(&actual.stderr)
+        );
+        assert_eq!(
+            actual.stdout, expected.stdout,
+            "follow-calls output mismatch for {arguments:?}"
         );
     }
 

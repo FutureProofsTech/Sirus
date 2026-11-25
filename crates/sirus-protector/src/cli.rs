@@ -43,6 +43,8 @@ pub struct ProtectArgs {
     pub vm_base: Option<u64>,
     /// Optional path for generated-source audit output.
     pub emit_source: Option<PathBuf>,
+    /// Automatically lift direct callees that resolve to local functions.
+    pub follow_calls: bool,
 }
 
 /// Top-level action.
@@ -164,6 +166,7 @@ fn parse_protect(arguments: &[OsString]) -> Result<Action> {
     let mut options = CompileOptions::new();
     let mut keep_temp = false;
     let mut scrub = true;
+    let mut follow_calls = false;
     let mut vm_base: Option<u64> = None;
     let mut emit_source: Option<PathBuf> = None;
     let mut index = 1_usize;
@@ -250,6 +253,7 @@ fn parse_protect(arguments: &[OsString]) -> Result<Action> {
             }
             "--keep-temp" => keep_temp = true,
             "--no-scrub" => scrub = false,
+            "--follow-calls" => follow_calls = true,
             "--help" | "-h" => return Ok(Action::Help),
             _ => {
                 return Err(ProtectError::usage(format!(
@@ -285,6 +289,7 @@ fn parse_protect(arguments: &[OsString]) -> Result<Action> {
         scrub,
         vm_base,
         emit_source,
+        follow_calls,
     }))
 }
 
@@ -340,7 +345,8 @@ pub const fn help_text() -> &'static str {
      \x20 --vm-base <hex>          override VM virtual address\n\
      \x20 --emit-source <path>     write generated VM source for audit\n\
      \x20 --keep-temp              keep compiler temporary files\n\
-     \x20 --no-scrub               do not destroy original function bodies\n"
+     \x20 --no-scrub               do not destroy original function bodies\n\
+     \x20 --follow-calls           automatically lift direct local callees\n"
 }
 
 #[cfg(test)]

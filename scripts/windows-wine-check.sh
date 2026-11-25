@@ -190,6 +190,23 @@ if ./target/release/sirus protect \
 fi
 echo "PASS Windows/Wine direct protected calls (normal; constant-time rejected)"
 
+./target/release/sirus protect \
+    --input "$work/wcall.exe" \
+    --output "$work/wcall.follow.exe" \
+    --function sirus_win_caller \
+    --follow-calls \
+    --seed 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff \
+    >"$work/wcall.follow.protect"
+chmod +x "$work/wcall.follow.exe"
+WINEDEBUG=-all wine "$work/wcall.follow.exe" \
+    >"$work/wcall.follow.out" 2>"$work/wcall.follow.err"
+if ! cmp -s "$work/wcall.native.out" "$work/wcall.follow.out"; then
+    echo "Windows follow-calls mismatch" >&2
+    diff -u "$work/wcall.native.out" "$work/wcall.follow.out" >&2
+    exit 1
+fi
+echo "PASS Windows/Wine follow-calls auto-lifts the callee"
+
 python3 scripts/pe-tamper.py \
     "$work/cvictim.hardened.exe" "$work/cvictim.tampered.exe"
 chmod +x "$work/cvictim.tampered.exe"

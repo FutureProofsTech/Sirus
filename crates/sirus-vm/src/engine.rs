@@ -16,11 +16,11 @@ use crate::shared::format::{
     ROLE_REG, SEM_ADD_RI, SEM_ADD_RR, SEM_AND_RI, SEM_AND_RR, SEM_CALL, SEM_CMPEQ_RR,
     SEM_CMPLES_RR, SEM_CMPLEU_RR, SEM_CMPLTS_RR, SEM_CMPLTU_RR, SEM_JCC, SEM_JMP, SEM_LOAD8,
     SEM_LOAD16, SEM_LOAD32, SEM_LOAD64, SEM_MOV_RI, SEM_MOV_RR, SEM_MUL_RR, SEM_NEG_R, SEM_NOP,
-    SEM_NOT_R, SEM_OR_RI, SEM_OR_RR, SEM_RET, SEM_ROTL_RI, SEM_ROTL_RR, SEM_ROTR_RI, SEM_ROTR_RR,
-    SEM_SAR_RI, SEM_SAR_RR, SEM_SELECT_RRRR, SEM_SHL_RI, SEM_SHL_RR, SEM_SHR_RI, SEM_SHR_RR,
-    SEM_STORE8, SEM_STORE16, SEM_STORE32, SEM_STORE64, SEM_SUB_RI, SEM_SUB_RR, SEM_TRAP,
-    SEM_XOR_RI, SEM_XOR_RR, VM_DATA_LIMIT, VM_MEMORY_SIZE, VM_REGISTERS, VM_STACK_ARG_BASE,
-    VM_STACK_ARG_SLOTS, format,
+    SEM_NOT_R, SEM_OR_RI, SEM_OR_RR, SEM_REP_MOVS, SEM_REP_STOS, SEM_RET, SEM_ROTL_RI, SEM_ROTL_RR,
+    SEM_ROTR_RI, SEM_ROTR_RR, SEM_SAR_RI, SEM_SAR_RR, SEM_SELECT_RRRR, SEM_SHL_RI, SEM_SHL_RR,
+    SEM_SHR_RI, SEM_SHR_RR, SEM_STORE8, SEM_STORE16, SEM_STORE32, SEM_STORE64, SEM_SUB_RI,
+    SEM_SUB_RR, SEM_TRAP, SEM_XOR_RI, SEM_XOR_RR, VM_DATA_LIMIT, VM_MEMORY_SIZE, VM_REGISTERS,
+    VM_STACK_ARG_BASE, VM_STACK_ARG_SLOTS, format,
 };
 
 /// Deterministic VM outcome.
@@ -720,9 +720,65 @@ fn execute_semantic_inner(
                 return_state,
             })
         }
+        SEM_REP_MOVS | SEM_REP_STOS => {
+            if active.is_some() {
+                return None;
+            }
+            let width_code = immediate(values, 0)?;
+            execute_rep(
+                registers,
+                masks,
+                memory,
+                memory_key,
+                width_code,
+                decoded.semantic == SEM_REP_MOVS,
+            )?;
+            Some(Flow::Continue)
+        }
         SEM_TRAP => Some(Flow::Trap),
         _ => None,
     }
+}
+
+fn execute_rep(
+    registers: &mut [u64; VM_REGISTERS],
+    masks: Option<&[u64; VM_REGISTERS]>,
+    memory: &mut [u8],
+    memory_key: Option<u64>,
+    width_code: u64,
+    copy: bool,
+) -> Option<()> {
+    let width = match width_code {
+        0 => 1_usize,
+        1 => 8_usize,
+        _ => return None,
+    };
+    let count = get_reg_value_raw(registers, masks, REG_RCX)?;
+    let maximum = u64::try_from(VM_MEMORY_SIZE / width).ok()?;
+    if count > maximum {
+        return None;
+    }
+    let mut source = get_reg_value_raw(registers, masks, REG_RSI)?;
+    let mut destination = get_reg_value_raw(registers, masks, REG_RDI)?;
+    let fill = get_reg_value_raw(registers, masks, REG_RAX)?;
+    let mut index = 0_u64;
+    while index < count {
+        let value = if copy {
+            load_memory_with_key(memory, source, width, memory_key)?
+        } else {
+            fill
+        };
+        store_memory_with_key(memory, destination, width, value, memory_key)?;
+        if copy {
+            source = source.checked_add(u64::try_from(width).ok()?)?;
+        }
+        destination = destination.checked_add(u64::try_from(width).ok()?)?;
+        index = index.saturating_add(1);
+    }
+    set_reg_value_raw(registers, masks, REG_RSI, source)?;
+    set_reg_value_raw(registers, masks, REG_RDI, destination)?;
+    set_reg_value_raw(registers, masks, REG_RCX, 0)?;
+    Some(())
 }
 
 fn load_memory_oblivious(
@@ -1471,6 +1527,19 @@ fn enqueue_target(
 }
 
 #[inline]
+fn get_reg_value_raw(
+    registers: &[u64; VM_REGISTERS],
+    masks: Option<&[u64; VM_REGISTERS]>,
+    slot: u8,
+) -> Option<u64> {
+    let index = usize::from(slot);
+    let stored = registers.get(index).copied()?;
+    match masks {
+        Some(masks) => Some(stored ^ masks.get(index).copied()?),
+        None => Some(stored),
+    }
+}
+
 fn set_reg_value_raw(
     registers: &mut [u64; VM_REGISTERS],
     masks: Option<&[u64; VM_REGISTERS]>,

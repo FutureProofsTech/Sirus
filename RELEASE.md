@@ -1,7 +1,7 @@
-# Sirus 1.5.7-hardened — Release Notes
+# Sirus 1.5.8-hardened — Release Notes
 
 **Release type:** safe-tier prototype plus optional hardened tier
-**Tag:** `v1.5.7-hardened`
+**Tag:** `v1.5.8-hardened`
 **Platform:** Linux x86-64 end-to-end; Win64 PE32+ runtime verified under Wine in normal, constant-time, and hardened modes; native Windows CI passed
 **Dependency policy:** zero external crates in shipped code
 **Unsafe policy:** `forbid(unsafe_code)` in the safe tier; the opt-in `sirus-hardened` crate and `--hardened` generated entries allow unsafe code
@@ -41,6 +41,12 @@
 - Direct `call rel32` between functions selected in the same protection run
   executes on a bounded guest call stack. External calls and constant-time
   calls fail closed.
+- `--follow-calls` auto-lifts direct local callees found by reachable call
+  scanning; unresolved and external calls fail closed.
+- VEX-encoded 128-bit AVX integer forms execute for the documented operation
+  set; 256-bit AVX is rejected.
+- `rep movsb`/`movsq` and `rep stosb`/`stosq` execute on private memory in
+  normal mode and fail closed in constant-time mode.
 - Optional `--hardened` entries add Linux `/proc` debugger detection, Windows
   PEB debugger detection, serialized RDTSC timing checks, LFENCE, and a
   self-code checksum over linked VM text on Linux and Windows.
@@ -93,7 +99,7 @@
 
 ### Verification
 
-- 211 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
+- 218 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
   statistical-timing measurement hooks.
 - Real victim compilation and execution differential matrix.
 - Differential two-seed builds.
@@ -117,7 +123,7 @@
 ./scripts/verify.sh
 ```
 
-Passes formatting, Clippy (`-D warnings`, all targets), 211 tests, rustdoc,
+Passes formatting, Clippy (`-D warnings`, all targets), 218 tests, rustdoc,
 audit, deny, Kani, red-team, and memory-dump diagnostic.
 
 ```sh
@@ -131,9 +137,9 @@ Runs Kani, Miri, and libFuzzer. Full Miri execution is slow; set
 Recorded evidence:
 
 - Kani: 5 core + 4 VM harnesses.
-- Miri: 11 VM library tests passed on 1.5.7; the full execution and core suites are opt-in and were not rerun for this tag.
-- libFuzzer VM: 3,696,143 cumulative executions, no crash.
-- libFuzzer lifter/compiler: 197,859 cumulative runs, no crash.
+- Miri: 11 VM library tests passed on 1.5.7; the 1.5.8 tree keeps the same Miri-clean VM library path; the full execution and core suites are opt-in and slow.
+- libFuzzer VM: 4,094,420 cumulative executions, no crash.
+- libFuzzer lifter/compiler: 271,795 cumulative runs, no crash.
 - libFuzzer formats: 28,971,774 PE and 20,071,488 ELF cumulative runs, no crash.
 - Reproducible output: identical normal, hardened, and constant-time binaries
   for a fixed input and seed.
@@ -141,7 +147,7 @@ Recorded evidence:
   deterministic source archive, SHA-256 manifest, CycloneDX SBOM, and optional
   GPG signature when `SIRUS_SIGNING_KEY` is set.
 - `rust-toolchain.toml` pins stable Rust 1.99.0 and the Windows GNU target.
-- Tarpaulin: 87.57% lines (7340/8382).
+- Tarpaulin: 86.80% lines (7538/8684).
 - llvm-cov: pending final summary.
 - Payload differential: 0.40% equal bytes.
 - Handler arms are permuted per build; full VM segment differential remains
@@ -222,7 +228,7 @@ constant-time modes.
 ### Coverage
 
 The agreed prototype target is **above 85%**. This release measures
-**87.57% tarpaulin lines / 89.07% llvm-cov lines**. 100% is not claimed, but the
+**86.80% tarpaulin lines / 88.27% llvm-cov lines**. 100% is not claimed, but the
 85% floor is met and enforced by the proof script.
 
 ---
@@ -282,7 +288,7 @@ docs/                          architecture, format, threat, proof, traceability
 | Miri | pass |
 | libFuzzer | pass |
 | fmt/clippy/doc/audit/deny | pass |
-| Coverage floor 85% | **pass — 87.57% tarpaulin / 89.07% llvm-cov lines** |
+| Coverage floor 85% | **pass — 86.80% tarpaulin / 88.27% llvm-cov lines** |
 | External evidence tooling | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect executed; commercial/licence-only tools are outside the local gate |
 | Windows runtime | **Wine + native Windows leaf subset (branches/loops), normal + constant-time + hardened; MSVC `/guard:cf` and ABI matrix pass** |
 | Windows unwind metadata | **linked `.pdata` merged; `.seh` shim records; `RtlLookupFunctionEntry` runtime probe; handlers/chained fail closed** |

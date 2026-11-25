@@ -2,7 +2,7 @@
 
 **Zero-dependency polymorphic code virtualizer in Safe Rust.**
 
-**Release:** `1.5.7-hardened` — see [`RELEASE.md`](RELEASE.md) and [`CHANGELOG.md`](CHANGELOG.md).
+**Release:** `1.5.8-hardened` — see [`RELEASE.md`](RELEASE.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 Sirus takes a compiled Linux x86-64 ELF, lifts a selected function into an
 internal IR, flattens its control flow, expands sensitive arithmetic through
@@ -32,6 +32,9 @@ commercial/open-source positioning is in
 | RIP-relative read-only data | **working; writable RIP-relative targets fail closed** |
 | Stack arguments | **System V 7th-12th; Win64 5th-10th** |
 | SSE2 integer subset | **working: moves, bitwise, add/sub, multiply, unpack, byte shifts** |
+| AVX 128-bit VEX subset | **working for the documented integer forms; 256-bit AVX rejected** |
+| Repeated string operations | **`rep movsb`/`movsq`/`stosb`/`stosq` on private memory; constant-time rejected** |
+| Automatic callee following | **`--follow-calls` lifts direct local callees; unresolved/external calls fail closed** |
 | Direct protected calls | **working between selected functions; external calls fail closed** |
 | Encrypted per-build decode table + fast ARX body stream | working |
 | Linear + non-linear MBA (variable shifts, modular inverse) | working; GAMBA times out, SiMBA reduces |
@@ -39,7 +42,7 @@ commercial/open-source positioning is in
 | Safe Rust / no external crates | safe tier enforced; `sirus-hardened` is opt-in unsafe |
 | Kani, Miri, libFuzzer, differential/tamper/bypass, Ghidra, radare2 | run locally |
 | angr, KLEE, Creusot, dudect-bencher | run locally; bounded/model results stated |
-| Coverage floor (85%) | **met: 87.57% tarpaulin / 89.07% llvm-cov lines** |
+| Coverage floor (85%) | **met: 86.80% tarpaulin / 88.27% llvm-cov lines** |
 | Constant-time VM execution | `--constant-time` oblivious branch/loop/memory mode below dudect threshold; normal profile leaks |
 | Live memory state | virtual registers/private stack masked at rest; snapshot constant scan passes |
 | Linux caller-saved ABI | entry shim preserves GPRs + XMM0–XMM15; optimized C caller regression passes |
@@ -108,6 +111,7 @@ Options:
 
 - `--seed <64-hex>` deterministic build seed
 - `--profile <max|balanced|minimal|fast>` security/performance preset
+- `--follow-calls` automatically lift direct local callees
 - `--fuel <n>` runtime instruction budget (default 2,000,000)
 - `--mba-depth <n>` 0..=8 (default 3)
 - `--mba-budget <n>` expression node budget (default 512)
@@ -129,11 +133,12 @@ Supported instruction subset includes common integer `mov`, `movzx`, `movsx`,
 `jcc`, `ret`, `cmovcc`, `setcc`, and stack-frame addressing.
 
 Not virtualizable (fail closed): external calls, indirect calls/jumps,
-writable RIP-relative globals, floating point/AVX/x87, syscalls, atomics,
+writable RIP-relative globals, floating point/AVX-256/x87, syscalls, atomics,
 privilege/segment instructions, jump tables, host pointer dereference,
 arguments beyond 12 (System V) or 10 (Win64), and functions with cross-block
-flag liveness that cannot be proven. Direct calls to another selected protected
-function and SSE2 integer operations are supported.
+flag liveness that cannot be proven. Direct protected calls, RIP-relative
+read-only reads, SSE2, VEX-encoded 128-bit AVX integer operations, and repeated
+string moves/fills are supported.
 
 The ABI is System V AMD64 with up to six integer arguments and one integer
 result. Virtualized code operates on a private 4 KiB stack and cannot access host

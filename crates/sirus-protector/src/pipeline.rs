@@ -14,8 +14,10 @@ use sirus_binfmt::pe::{
     append_exception_table, append_executable_section as append_pe_section,
     patch_relative_jump_rva, refresh_checksum, write_data_directory,
 };
-use sirus_core::ir::MAX_FUNCTION_BYTES;
-use sirus_core::lifter::{BinaryData, StackAbi, lift_function_with_data_and_calls};
+use sirus_core::ir::{MAX_FUNCTION_BYTES, MAX_FUNCTIONS};
+use sirus_core::lifter::{
+    BinaryData, StackAbi, discover_direct_calls, lift_function_with_data_and_calls,
+};
 use sirus_core::program::{ProgramStats, compile};
 use sirus_core::shared::derive::Seed;
 
@@ -175,6 +177,44 @@ const fn ranges_overlap(first_va: u64, first_size: u64, second_va: u64, second_s
     first_va < second_end && second_va < first_end
 }
 
+fn expand_elf_targets(elf: &Elf64<'_>, targets: &mut Vec<Target>) -> Result<()> {
+    let functions = elf.functions()?;
+    let mut index = 0_usize;
+    while index < targets.len() {
+        let target = targets
+            .get(index)
+            .cloned()
+            .ok_or_else(|| ProtectError::internal("ELF target cursor"))?;
+        let code = elf
+            .read_vaddr(target.va, target.size)
+            .ok_or(ProtectError::Format(sirus_binfmt::FormatError::Bounds))?;
+        let calls = discover_direct_calls(code, target.va).map_err(|error| {
+            ProtectError::context(format!("discover calls in {}", target.name), error.into())
+        })?;
+        for call in calls.as_slice() {
+            if targets.iter().any(|candidate| candidate.va == *call) {
+                continue;
+            }
+            if targets.len() >= MAX_FUNCTIONS {
+                return Err(ProtectError::internal(
+                    "follow-calls exceeded the protected-function limit",
+                ));
+            }
+            let symbol = functions
+                .iter()
+                .find(|function| function.value == *call && function.size > 0)
+                .ok_or(ProtectError::Format(sirus_binfmt::FormatError::NotFound))?;
+            targets.push(Target {
+                name: symbol.name.to_owned(),
+                va: symbol.value,
+                size: symbol.size,
+            });
+        }
+        index = index.saturating_add(1);
+    }
+    Ok(())
+}
+
 fn validate_targets(elf: &Elf64<'_>, targets: &[Target]) -> Result<()> {
     for (index, target) in targets.iter().enumerate() {
         if target.size == 0 || target.size > u64::try_from(MAX_FUNCTION_BYTES).unwrap_or(u64::MAX) {
@@ -276,6 +316,9 @@ pub fn protect(arguments: &ProtectArgs) -> Result<ProtectReport> {
     for selector in &arguments.selectors {
         let target = resolve_selector(&elf, selector)?;
         targets.push(target);
+    }
+    if arguments.follow_calls {
+        expand_elf_targets(&elf, &mut targets)?;
     }
     validate_targets(&elf, &targets)?;
 
@@ -510,6 +553,83 @@ fn attach_windows_exceptions(
     Ok((section_rva, exception))
 }
 
+fn validate_pe_target(pe: &Pe64<'_>, target: &Target, existing: &[Target]) -> Result<()> {
+    let rva = u32::try_from(target.va).map_err(|_| ProtectError::internal("PE target RVA"))?;
+    let size = u32::try_from(target.size).map_err(|_| ProtectError::internal("PE target size"))?;
+    let section = pe.section_for_rva(rva, size).ok_or(ProtectError::Format(
+        sirus_binfmt::FormatError::RangeOutsideExecutable,
+    ))?;
+    if section.characteristics & IMAGE_SCN_MEM_EXECUTE == 0 || size == 0 {
+        return Err(ProtectError::Format(
+            sirus_binfmt::FormatError::RangeOutsideExecutable,
+        ));
+    }
+    if pe.read_rva(rva, size).is_none() {
+        return Err(ProtectError::Format(sirus_binfmt::FormatError::Bounds));
+    }
+    for other in existing {
+        if ranges_overlap(target.va, target.size, other.va, other.size) {
+            return Err(ProtectError::Format(sirus_binfmt::FormatError::Overlap));
+        }
+    }
+    Ok(())
+}
+
+fn expand_pe_targets(pe: &Pe64<'_>, targets: &mut Vec<Target>) -> Result<()> {
+    let image_base = pe.optional_header().image_base;
+    let symbols = pe.symbols()?;
+    let mut index = 0_usize;
+    while index < targets.len() {
+        let target = targets
+            .get(index)
+            .cloned()
+            .ok_or_else(|| ProtectError::internal("PE target cursor"))?;
+        let rva = u32::try_from(target.va).map_err(|_| ProtectError::internal("PE target RVA"))?;
+        let size =
+            u32::try_from(target.size).map_err(|_| ProtectError::internal("PE target size"))?;
+        let bytes = pe
+            .read_rva(rva, size)
+            .ok_or(ProtectError::Format(sirus_binfmt::FormatError::Bounds))?;
+        let base = image_base
+            .checked_add(u64::from(rva))
+            .ok_or_else(|| ProtectError::internal("PE follow-calls base"))?;
+        let calls = discover_direct_calls(bytes, base).map_err(|error| {
+            ProtectError::context(format!("discover calls in {}", target.name), error.into())
+        })?;
+        for call in calls.as_slice() {
+            let call_rva = u32::try_from(
+                call.checked_sub(image_base)
+                    .ok_or_else(|| ProtectError::internal("PE call target below image base"))?,
+            )
+            .map_err(|_| ProtectError::internal("PE call target RVA"))?;
+            if targets
+                .iter()
+                .any(|candidate| candidate.va == u64::from(call_rva))
+            {
+                continue;
+            }
+            if targets.len() >= MAX_FUNCTIONS {
+                return Err(ProtectError::internal(
+                    "follow-calls exceeded the protected-function limit",
+                ));
+            }
+            let symbol = symbols
+                .iter()
+                .find(|symbol| symbol.rva == call_rva && symbol.size > 0 && symbol.kind == 0x20)
+                .ok_or(ProtectError::Format(sirus_binfmt::FormatError::NotFound))?;
+            let candidate = Target {
+                name: symbol.name.clone(),
+                va: u64::from(symbol.rva),
+                size: u64::from(symbol.size),
+            };
+            validate_pe_target(pe, &candidate, targets)?;
+            targets.push(candidate);
+        }
+        index = index.saturating_add(1);
+    }
+    Ok(())
+}
+
 #[allow(
     clippy::large_stack_frames,
     clippy::too_many_lines,
@@ -546,6 +666,9 @@ fn protect_pe(arguments: &ProtectArgs, input: &[u8]) -> Result<ProtectReport> {
             }
         }
         targets.push(target);
+    }
+    if arguments.follow_calls {
+        expand_pe_targets(&pe, &mut targets)?;
     }
     let mut functions = Vec::with_capacity(targets.len());
     let reader = PeReadOnly {
@@ -857,6 +980,7 @@ mod tests {
             scrub: true,
             vm_base: None,
             emit_source: None,
+            follow_calls: false,
         }
     }
 

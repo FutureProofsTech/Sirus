@@ -5,7 +5,7 @@
 **Nightly toolchain:** 2026-08-03 / 2026-08-21 family for Miri and fuzzing
 **Kani:** 0.68.0
 **Project state:** all features described in `README.md` implemented and tested
-**Last evidenced run:** final 1.5.7-hardened tree, tag `v1.5.7-hardened`
+**Last evidenced run:** final 1.5.8-hardened tree, tag `v1.5.8-hardened`
 
 This file records commands actually executed. Anything not executed is listed as
 an external evidence gap or a documented boundary, never inferred.
@@ -36,12 +36,12 @@ Result: **exit 0**. The script runs:
 
 ## 2. Test inventory
 
-`cargo test --workspace` now runs **211 tests**, all passing; the MBA corpus and
+`cargo test --workspace` now runs **218 tests**, all passing; the MBA corpus and
 statistical timing tests are `#[ignore]` measurement hooks and are not part of
 the normal count.
 
 ```text
-211 passed, 0 failed
+218 passed, 0 failed
 ```
 
 Breakdown:
@@ -50,7 +50,7 @@ Breakdown:
 |---|---:|
 | `sirus-binfmt` unit tests | 26 |
 | `sirus-binfmt` real-loader test | 1 |
-| `sirus-core` unit tests | 87 |
+| `sirus-core` unit tests | 92 |
 | `sirus-protector` unit tests | 43 |
 | `sirus-hardened` runtime checks | 3 |
 | `sirus-protector` end-to-end | 1 |
@@ -61,6 +61,8 @@ Breakdown:
 | `sirus-protector` SSE2 moves | 1 |
 | `sirus-protector` SSE2 arithmetic | 1 |
 | `sirus-protector` direct protected calls | 1 |
+| `sirus-protector` AVX-128 subset | 1 |
+| `sirus-protector` repeated strings | 1 |
 | `sirus-vm` unit tests | 11 |
 | `sirus-vm` execution | 21 |
 | `sirus-vm` deterministic fuzz | 2 |
@@ -75,11 +77,14 @@ The feature fixtures compile real C victims and execute protected binaries:
 - a read-only table loaded through `lea` plus an indexed RIP-relative load;
 - an 8-argument leaf using System V stack arguments 7 and 8;
 - `movdqu`/`pxor`/`paddq` and `paddd`/`psubd`/`pmuludq`/`punpcklqdq` forms;
-- a selected caller and callee connected by a direct `call rel32`.
+- a selected caller and callee connected by a direct `call rel32`;
+- a VEX-encoded 128-bit AVX table/xor/add/store sequence;
+- `rep movsb` and `rep stosb` over private stack memory.
 
-The RIP-relative, stack-argument, and SSE2 fixtures run in normal and
-constant-time modes. The direct-call fixture runs in normal mode; the protector
-rejects calls in constant-time mode.
+The RIP-relative, stack-argument, SSE2, and AVX-128 fixtures run in normal and
+constant-time modes. The direct-call fixture runs in normal mode and rejects
+constant-time calls. The repeated-string fixture runs in normal mode and
+rejects constant-time repeated strings.
 
 Windows/Wine adds a native C 8-argument fixture (5th-8th stack arguments,
 normal and constant-time) and a two-function direct-call fixture (normal;
@@ -135,7 +140,7 @@ cargo +nightly miri test -p sirus-vm --lib
   11 tests passed (1.17 s)
 ```
 
-The 1.5.7 VM library run passes. The full VM execution suite (19 passed,
+The 1.5.8 VM library run passes. The full VM execution suite (19 passed,
 1 ignored on the 1.5.6 tree) and the core suite (82 tests on the 1.5.6 tree) are
 opt-in, extremely slow, and were not rerun for this tag. The 1.5.7 tree keeps
 the same Miri-clean VM helpers; Kani, fuzzing, and end-to-end binaries cover the
@@ -157,9 +162,9 @@ Done 1056362 runs in 61 second(s)
 ```
 
 The final-tree session completed 1,056,362 runs with no crash. A fresh
-1.5.1 session completed another 342,270 runs, and the 1.5.7 session completed
-424,824 runs; adding all recorded sessions, the cumulative total is
-**3,696,143 executions**.
+1.5.1 session completed another 342,270 runs, the 1.5.7 session completed
+424,824 runs, and the 1.5.8 session completed 398,277 runs; adding all recorded
+sessions, the cumulative total is **4,094,420 executions**.
 
 No crash, panic, OOB, or timeout. The fuzz target builds a valid integrity key
 for arbitrary payloads so the decoder body path is exercised, not only the
@@ -170,11 +175,12 @@ The 1.5.2 session also added a lifter/compiler target:
 ```text
 Done 112332 runs in 21 second(s)
 Done 85527 runs in 31 second(s)  (1.5.7 session)
+Done 73936 runs in 31 second(s)  (1.5.8 session)
 ```
 
 It lifts arbitrary byte strings and compiles every successfully lifted function
 in normal and (input-selected) constant-time modes. The cumulative lifter total
-is **197,859 executions**.
+is **271,795 executions**.
 
 In-tree deterministic fuzz additionally runs 20,000 random payloads and 10,000
 mutations of a valid payload.
@@ -207,7 +213,7 @@ cargo tarpaulin --workspace --all-targets --engine Llvm \
   --exclude-files 'target/*' --exclude-files 'bench/*' --timeout 120
 ```
 
-Result: **87.57% line coverage (7340 / 8382 lines)** with
+Result: **86.80% line coverage (7538 / 8684 lines)** with
 `--exclude-files 'target/*' --exclude-files 'bench/*'`. This is above the agreed
 85% floor.
 
@@ -232,9 +238,9 @@ cargo llvm-cov --workspace --all-targets --summary-only
 ```
 
 ```text
-TOTAL regions 84.96% (4051 missed of 26939)
-TOTAL functions 74.36% (271 missed of 1057)
-TOTAL lines 89.07% (1599 missed of 14628)
+TOTAL regions 84.23% (4383 missed of 27796)
+TOTAL functions 73.47% (291 missed of 1097)
+TOTAL lines 88.27% (1772 missed of 15112)
 ```
 
 The two tools instrument differently; both are above the 85% floor and show the
@@ -698,7 +704,7 @@ cargo asm -p sirus-core --lib 1
 
 | Item | Status |
 |---|---|
-| Coverage floor (85%) | **met**: 87.57% tarpaulin / 89.07% llvm-cov lines |
+| Coverage floor (85%) | **met**: 86.80% tarpaulin / 88.27% llvm-cov lines |
 | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect | executed; evidence recorded |
 | live process memory dump scan | pass; masked VM state, constant not observed |
 | Windows PE runtime execution | Wine and native Windows; normal, constant-time, hardened; `/guard:cf`, ABI matrix, unwind lookup, and text-checksum tamper tests pass |

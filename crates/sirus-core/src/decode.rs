@@ -193,6 +193,14 @@ pub enum Mnemonic {
     Ret,
     /// Direct relative call.
     Call,
+    /// Repeated byte copy.
+    RepMovsb,
+    /// Repeated qword copy.
+    RepMovsq,
+    /// Repeated byte fill.
+    RepStosb,
+    /// Repeated qword fill.
+    RepStosq,
     /// Conditional move.
     Cmov(Condition),
     /// Conditional byte set.
@@ -491,7 +499,145 @@ fn no_operands(
 }
 
 #[allow(clippy::too_many_lines)]
+fn decode_vex(code: &[u8], offset: u64) -> Result<Instruction> {
+    let mut index = 0_usize;
+    let first = read_u8(code, &mut index, offset)?;
+    let (map, pp, length, vvvv, rex) = if first == 0xc5 {
+        let byte = read_u8(code, &mut index, offset)?;
+        let r = (byte >> 7) & 1;
+        (
+            1_u8,
+            byte & 0x03,
+            (byte >> 2) & 1,
+            (!((byte >> 3) & 0x0f)) & 0x0f,
+            u8::from(r == 0) << 2,
+        )
+    } else {
+        let byte1 = read_u8(code, &mut index, offset)?;
+        let byte2 = read_u8(code, &mut index, offset)?;
+        let r = (byte1 >> 7) & 1;
+        let x = (byte1 >> 6) & 1;
+        let b = (byte1 >> 5) & 1;
+        let w = (byte2 >> 7) & 1;
+        let rex = (u8::from(r == 0) << 2) | (u8::from(x == 0) << 1) | u8::from(b == 0) | (w << 3);
+        (
+            byte1 & 0x1f,
+            byte2 & 0x03,
+            (byte2 >> 2) & 1,
+            (!((byte2 >> 3) & 0x0f)) & 0x0f,
+            rex,
+        )
+    };
+    if map != 1 || length != 0 {
+        return Err(decode_error(offset, DecodeReason::UnsupportedEncoding));
+    }
+    let opcode = read_u8(code, &mut index, offset)?;
+    if pp == 0x00 && opcode == 0x77 {
+        return no_operands(offset, index, offset, Mnemonic::Nop, Width::W64);
+    }
+    if pp == 0x01 && opcode == 0x73 {
+        let modrm = decode_modrm(code, &mut index, rex, true, Width::W64, Width::W64, offset)?;
+        let Operand::Reg {
+            index: register, ..
+        } = modrm.rm
+        else {
+            return Err(decode_error(offset, DecodeReason::UnsupportedForm));
+        };
+        let shift = read_u8(code, &mut index, offset)?;
+        let operation = match modrm.reg {
+            3 => SseOp::Psrldq { shift },
+            7 => SseOp::Pslldq { shift },
+            _ => return Err(decode_error(offset, DecodeReason::UnsupportedOpcode)),
+        };
+        let length =
+            u8::try_from(index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+        return Ok(Instruction {
+            offset,
+            length,
+            mnemonic: Mnemonic::Sse(operation),
+            width: Width::W64,
+            dst: Operand::Xmm { index: register },
+            src: Operand::Imm {
+                value: u64::from(shift),
+                width: Width::W8,
+            },
+            aux: Operand::None,
+            target: None,
+        });
+    }
+    if pp == 0x01 && (opcode == 0x6e || opcode == 0x7e) {
+        let width = if (rex & 0x08) != 0 {
+            Width::W64
+        } else {
+            Width::W32
+        };
+        let modrm = decode_modrm(code, &mut index, rex, true, width, width, offset)?;
+        let register = Operand::Xmm { index: modrm.reg };
+        let (operation, dst, src) = if opcode == 0x7e {
+            (SseOp::MovqToGpr, modrm.rm, register)
+        } else {
+            (SseOp::MovqFromGpr, register, modrm.rm)
+        };
+        let length =
+            u8::try_from(index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+        return Ok(Instruction {
+            offset,
+            length,
+            mnemonic: Mnemonic::Sse(operation),
+            width,
+            dst,
+            src,
+            aux: Operand::None,
+            target: None,
+        });
+    }
+    let operation = match (pp, opcode) {
+        (0x01, 0xef) => SseOp::Pxor,
+        (0x01, 0xdb) => SseOp::Pand,
+        (0x01, 0xeb) => SseOp::Por,
+        (0x01, 0xd4) => SseOp::Paddq,
+        (0x01, 0xfb) => SseOp::Psubq,
+        (0x01, 0xfe) => SseOp::Paddd,
+        (0x01, 0xfa) => SseOp::Psubd,
+        (0x01, 0xf4) => SseOp::Pmuludq,
+        (0x01, 0x6c) => SseOp::Punpcklqdq,
+        (0x01, 0x6d) => SseOp::Punpckhqdq,
+        (0x02, 0x6f) => SseOp::MovdquLoad,
+        (0x02, 0x7f) => SseOp::MovdquStore,
+        (0x01, 0x6f) => SseOp::MovdqaLoad,
+        (0x01, 0x7f) => SseOp::MovdqaStore,
+        _ => return Err(decode_error(offset, DecodeReason::UnsupportedOpcode)),
+    };
+    let modrm = decode_modrm(code, &mut index, rex, true, Width::W64, Width::W64, offset)?;
+    let rm = match modrm.rm {
+        Operand::Reg {
+            index: register, ..
+        } => Operand::Xmm { index: register },
+        memory => memory,
+    };
+    let register = Operand::Xmm { index: modrm.reg };
+    let (dst, src, aux) = match operation {
+        SseOp::MovdquStore | SseOp::MovdqaStore => (rm, register, Operand::None),
+        SseOp::MovdquLoad | SseOp::MovdqaLoad => (register, rm, Operand::None),
+        _ => (register, Operand::Xmm { index: vvvv }, rm),
+    };
+    let length = u8::try_from(index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+    Ok(Instruction {
+        offset,
+        length,
+        mnemonic: Mnemonic::Sse(operation),
+        width: Width::W64,
+        dst,
+        src,
+        aux,
+        target: None,
+    })
+}
+
 fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
+    if matches!(code.first().copied(), Some(0xc4 | 0xc5)) {
+        return decode_vex(code, offset);
+    }
     let mut index = 0_usize;
     let mut operand_override = false;
     let mut rex = 0_u8;
@@ -541,6 +687,19 @@ fn decode_inner(code: &[u8], offset: u64) -> Result<Instruction> {
     };
 
     let opcode = read_u8(code, &mut index, offset)?;
+
+    if rep_prefix == Some(0xf3) {
+        let repeated = match opcode {
+            0xa4 => Some((Mnemonic::RepMovsb, Width::W8)),
+            0xa5 => Some((Mnemonic::RepMovsq, Width::W64)),
+            0xaa => Some((Mnemonic::RepStosb, Width::W8)),
+            0xab => Some((Mnemonic::RepStosq, Width::W64)),
+            _ => None,
+        };
+        if let Some((mnemonic, width)) = repeated {
+            return no_operands(offset, index, offset, mnemonic, width);
+        }
+    }
 
     if opcode == 0x0f {
         let start = index;
@@ -1662,6 +1821,26 @@ mod tests {
     }
 
     #[test]
+    fn decodes_repeated_string_forms() {
+        assert_eq!(
+            decode_at(&[0xf3, 0xa4], 0x1000).mnemonic,
+            Mnemonic::RepMovsb
+        );
+        assert_eq!(
+            decode_at(&[0xf3, 0xa5], 0x1000).mnemonic,
+            Mnemonic::RepMovsq
+        );
+        assert_eq!(
+            decode_at(&[0xf3, 0xaa], 0x1000).mnemonic,
+            Mnemonic::RepStosb
+        );
+        assert_eq!(
+            decode_at(&[0xf3, 0xab], 0x1000).mnemonic,
+            Mnemonic::RepStosq
+        );
+    }
+
+    #[test]
     fn decodes_common_sse2_forms() {
         let instruction = decode_at(&[0x66, 0x0f, 0xef, 0xc0], 0x1000);
         assert_eq!(instruction.mnemonic, Mnemonic::Sse(SseOp::Pxor));
@@ -1691,6 +1870,44 @@ mod tests {
 
         let instruction = decode_at(&[0x66, 0x48, 0x0f, 0x7e, 0xc0], 0x1000);
         assert_eq!(instruction.mnemonic, Mnemonic::Sse(SseOp::MovqToGpr));
+        assert_eq!(instruction.width, Width::W64);
+    }
+
+    #[test]
+    fn decodes_vex_128_bit_forms_and_rejects_256_bit() {
+        let instruction = decode_at(&[0xc5, 0xf1, 0xef, 0xc2], 0x1000);
+        assert_eq!(instruction.mnemonic, Mnemonic::Sse(SseOp::Pxor));
+        assert_eq!(instruction.dst, Operand::Xmm { index: 0 });
+        assert_eq!(instruction.src, Operand::Xmm { index: 1 });
+        assert_eq!(instruction.aux, Operand::Xmm { index: 2 });
+
+        let instruction = decode_at(&[0xc5, 0xfa, 0x6f, 0x00], 0x1000);
+        assert_eq!(instruction.mnemonic, Mnemonic::Sse(SseOp::MovdquLoad));
+        assert_eq!(instruction.dst, Operand::Xmm { index: 0 });
+        assert!(matches!(instruction.src, Operand::Mem(_)));
+
+        let instruction = decode_at(&[0xc5, 0xfa, 0x7f, 0x00], 0x1000);
+        assert_eq!(instruction.mnemonic, Mnemonic::Sse(SseOp::MovdquStore));
+        assert_eq!(instruction.src, Operand::Xmm { index: 0 });
+
+        assert!(decode(&[0xc5, 0xfd, 0xef, 0xc0], 0x1000).is_err());
+        assert_eq!(
+            decode_at(&[0xc5, 0xf8, 0x77], 0x1000).mnemonic,
+            Mnemonic::Nop
+        );
+
+        let instruction = decode_at(&[0xc5, 0xf9, 0x73, 0xd8, 0x08], 0x1000);
+        assert_eq!(
+            instruction.mnemonic,
+            Mnemonic::Sse(SseOp::Psrldq { shift: 8 })
+        );
+
+        let instruction = decode_at(&[0xc4, 0xe1, 0xf9, 0x7e, 0xc0], 0x1000);
+        assert_eq!(instruction.mnemonic, Mnemonic::Sse(SseOp::MovqToGpr));
+        assert_eq!(instruction.width, Width::W64);
+
+        let instruction = decode_at(&[0xc4, 0xe1, 0xf9, 0x6e, 0xc0], 0x1000);
+        assert_eq!(instruction.mnemonic, Mnemonic::Sse(SseOp::MovqFromGpr));
         assert_eq!(instruction.width, Width::W64);
     }
 
@@ -1830,7 +2047,6 @@ mod tests {
             &[0xf0, 0x48, 0x8b, 0x00][..],
             &[0x88, 0xe0][..],
             &[0x48, 0x8b, 0x04, 0x25, 0, 0, 0, 0][..],
-            &[0xc5, 0xf8, 0x77][..],
             &[0x62, 0xf1, 0x7c, 0x48, 0x58, 0xc0][..],
             &[0x0f, 0x0b][..],
             &[0x0f, 0x05][..],

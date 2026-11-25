@@ -518,6 +518,14 @@ fn visit_cycle(function: &LiftedFunction, block: u16, state: &mut [u8; MAX_BLOCK
     false
 }
 
+fn function_has_rep(function: &LiftedFunction) -> bool {
+    function
+        .ops
+        .as_slice()
+        .iter()
+        .any(|operation| matches!(operation, IrOp::RepMovs { .. } | IrOp::RepStos { .. }))
+}
+
 fn function_has_call(function: &LiftedFunction) -> bool {
     function
         .blocks
@@ -567,7 +575,11 @@ pub fn compile(
             size: u64::try_from(functions.len()).unwrap_or(u64::MAX),
         });
     }
-    if options.constant_time && functions.iter().any(function_has_call) {
+    if options.constant_time
+        && functions
+            .iter()
+            .any(|function| function_has_call(function) || function_has_rep(function))
+    {
         return Err(CoreError::InvalidPlan);
     }
     let tables = Tables::derive(&seed);

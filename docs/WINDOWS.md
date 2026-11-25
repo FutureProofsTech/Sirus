@@ -79,11 +79,13 @@ runtime:
   to six stack arguments (5th-10th);
 - one integer result in `RAX`;
 - conditional branches and loops inside the lifted function are supported;
-- RIP-relative reads of read-only data and the documented SSE2 integer subset
-  are supported;
+- RIP-relative reads of read-only data, the documented SSE2 integer subset,
+  VEX-encoded 128-bit AVX integer forms, and repeated string moves/fills are
+  supported;
 - direct calls to another function selected in the same protection run are
-  supported; external calls, indirect control flow, AVX/x87, writable
-  RIP-relative globals, and host pointer dereference are rejected;
+  supported; `--follow-calls` auto-lifts direct local callees; external calls,
+  indirect control flow, 256-bit AVX/x87, writable RIP-relative globals, and
+  host pointer dereference are rejected;
 - exception/unwind metadata is emitted for the injected VM and the ABI shims;
 - MSVC CFG-enabled callers and indirect calls are tested. Protected entries are
   reached through a direct `rel32` jump, which CFG does not instrument; an

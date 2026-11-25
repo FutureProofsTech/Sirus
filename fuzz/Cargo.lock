@@ -83,11 +83,11 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "sirus-binfmt"
-version = "1.5.7"
+version = "1.5.8"
 
 [[package]]
 name = "sirus-core"
-version = "1.5.7"
+version = "1.5.8"
 
 [[package]]
 name = "sirus-fuzz"
@@ -101,7 +101,7 @@ dependencies = [
 
 [[package]]
 name = "sirus-vm"
-version = "1.5.7"
+version = "1.5.8"
 dependencies = [
  "sirus-core",
 ]

@@ -23,6 +23,7 @@ const FLAG_ALL: u8 = FLAG_ZF | FLAG_CF | FLAG_SF | FLAG_OF;
 const MAX_QUEUE: usize = 1024;
 const INSTRUCTION_LIMIT: usize = MAX_FUNCTION_BYTES;
 const MAX_DATA_REFS: usize = 64;
+const MAX_DISCOVERED_CALLS: usize = 32;
 const RIP_WINDOW: usize = 256;
 
 /// Resolves read-only bytes from the input image for RIP-relative operands.
@@ -97,6 +98,7 @@ struct Lifter<'a> {
     current_len: u8,
     max_stack_args: u8,
     stack_abi: StackAbi,
+    discovered_calls: BoundedVec<u64, MAX_DISCOVERED_CALLS>,
 }
 
 impl<'a> Lifter<'a> {
@@ -124,6 +126,7 @@ impl<'a> Lifter<'a> {
             current_len: 0,
             max_stack_args: 0,
             stack_abi,
+            discovered_calls: BoundedVec::new(),
         }
     }
 
@@ -819,6 +822,41 @@ impl<'a> Lifter<'a> {
         }
     }
 
+    fn prepare_sse_binary(&mut self, instruction: &Instruction, index: u8) -> Result<()> {
+        if matches!(instruction.aux, Operand::None) {
+            return self.read_sse_scratch(instruction.src);
+        }
+        let low = Self::xmm_low(index);
+        let high = Self::xmm_high(index);
+        match instruction.src {
+            Operand::Xmm { index: source } => {
+                self.mov(low, Self::xmm_low(source))?;
+                self.mov(high, Self::xmm_high(source))?;
+            }
+            Operand::Mem(memory) => {
+                self.compute_address(&memory, Some(16))?;
+                self.emit(IrOp::Load {
+                    dst: low,
+                    addr: REG_TMP3,
+                    width: Width::W64,
+                })?;
+                self.add_imm(REG_TMP3, 8)?;
+                self.emit(IrOp::Load {
+                    dst: high,
+                    addr: REG_TMP3,
+                    width: Width::W64,
+                })?;
+            }
+            _ => {
+                return Err(CoreError::Decode(DecodeError {
+                    offset: self.error_offset,
+                    reason: DecodeReason::UnsupportedForm,
+                }));
+            }
+        }
+        self.read_sse_scratch(instruction.aux)
+    }
+
     fn lower_sse_shift(&mut self, index: u8, shift: u8, left: bool) -> Result<()> {
         let low = Self::xmm_low(index);
         let high = Self::xmm_high(index);
@@ -955,7 +993,7 @@ impl<'a> Lifter<'a> {
                         reason: DecodeReason::UnsupportedForm,
                     }));
                 };
-                self.read_sse_scratch(instruction.src)?;
+                self.prepare_sse_binary(instruction, index)?;
                 let low = Self::xmm_low(index);
                 let high = Self::xmm_high(index);
                 match operation {
@@ -1065,6 +1103,22 @@ impl<'a> Lifter<'a> {
         self.error_offset = instruction.offset;
         match instruction.mnemonic {
             Mnemonic::Nop | Mnemonic::Endbr => Ok(None),
+            Mnemonic::RepMovsb => {
+                self.emit(IrOp::RepMovs { width: Width::W8 })?;
+                Ok(None)
+            }
+            Mnemonic::RepMovsq => {
+                self.emit(IrOp::RepMovs { width: Width::W64 })?;
+                Ok(None)
+            }
+            Mnemonic::RepStosb => {
+                self.emit(IrOp::RepStos { width: Width::W8 })?;
+                Ok(None)
+            }
+            Mnemonic::RepStosq => {
+                self.emit(IrOp::RepStos { width: Width::W64 })?;
+                Ok(None)
+            }
             Mnemonic::Sse(operation) => self.lower_sse(instruction, operation),
             Mnemonic::Mov => {
                 let width = instruction.width;
@@ -1571,6 +1625,11 @@ impl<'a> Lifter<'a> {
                     }
                     Mnemonic::Ret => break,
                     Mnemonic::Call => {
+                        if let Some(target) = instruction.target {
+                            if !self.discovered_calls.contains(&target) {
+                                self.discovered_calls.push(target)?;
+                            }
+                        }
                         if end >= self.code_len {
                             return Err(CoreError::InvalidBranchTarget {
                                 offset: instruction.offset,
@@ -1710,6 +1769,27 @@ const fn operand_width(operand: Operand) -> Option<Width> {
         | Operand::Mem(MemoryOperand { width, .. }) => Some(width),
         _ => None,
     }
+}
+
+/// Returns direct `call rel32` targets reachable from one native function.
+///
+/// # Errors
+///
+/// Returns a typed error for malformed control flow, out-of-range branches, or
+/// capacity exhaustion while scanning the function.
+#[inline]
+pub fn discover_direct_calls(
+    code: &[u8],
+    base_va: u64,
+) -> Result<BoundedVec<u64, MAX_DISCOVERED_CALLS>> {
+    if code.is_empty() || code.len() > MAX_FUNCTION_BYTES {
+        return Err(CoreError::InvalidFunctionSize {
+            size: u64::try_from(code.len()).unwrap_or(u64::MAX),
+        });
+    }
+    let mut lifter = Lifter::new(code.len(), base_va, &EmptyData, &[], 0, StackAbi::SYSTEM_V);
+    lifter.discover(code)?;
+    Ok(lifter.discovered_calls)
 }
 
 /// Lifts one bounded native function without embedded read-only data.
@@ -1900,6 +1980,65 @@ mod tests {
             }
             self.bytes.get(..len)
         }
+    }
+
+    #[test]
+    fn discovers_direct_call_targets() {
+        let code = [0xe8, 0, 0, 0, 0, 0xc3];
+        let calls = super::discover_direct_calls(&code, 0x1000).expect("discover");
+        assert_eq!(calls.as_slice(), &[0x1005]);
+    }
+
+    #[test]
+    fn lifts_repeated_string_forms() {
+        let function = lift_function(&[0xf3, 0xa4, 0xc3], 0x1000).expect("rep movsb");
+        assert!(function.ops.as_slice().iter().any(|operation| {
+            matches!(
+                operation,
+                crate::ir::IrOp::RepMovs {
+                    width: crate::ir::Width::W8
+                }
+            )
+        }));
+        let function = lift_function(&[0xf3, 0xab, 0xc3], 0x1000).expect("rep stosq");
+        assert!(function.ops.as_slice().iter().any(|operation| {
+            matches!(
+                operation,
+                crate::ir::IrOp::RepStos {
+                    width: crate::ir::Width::W64
+                }
+            )
+        }));
+    }
+
+    #[test]
+    fn lifts_vex_three_operand_forms() {
+        let code = [0xc5, 0xf1, 0xef, 0xc2, 0xc3];
+        let function = lift_function(&code, 0x1000).expect("vex lift");
+        assert!(
+            function.ops.as_slice().iter().any(|operation| {
+                matches!(operation, crate::ir::IrOp::Mov { dst: 64, src: 66 })
+            })
+        );
+        assert!(
+            function.ops.as_slice().iter().any(|operation| {
+                matches!(operation, crate::ir::IrOp::Mov { dst: 65, src: 67 })
+            })
+        );
+        assert!(
+            function
+                .ops
+                .as_slice()
+                .iter()
+                .any(|operation| { matches!(operation, crate::ir::IrOp::Xor { dst: 64, .. }) })
+        );
+        assert!(
+            function
+                .ops
+                .as_slice()
+                .iter()
+                .any(|operation| { matches!(operation, crate::ir::IrOp::Xor { dst: 65, .. }) })
+        );
     }
 
     #[test]

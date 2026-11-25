@@ -30,7 +30,7 @@ pub const VM_STACK_ARG_BASE: u64 = VM_STACK_TOP - 72;
 pub const ALIASES_PER_SEMANTIC: usize = 4;
 
 /// Number of semantic operations in the virtual ISA.
-pub const SEMANTIC_COUNT: usize = 45;
+pub const SEMANTIC_COUNT: usize = 47;
 
 /// Maximum number of fields in one encoded instruction.
 pub const MAX_OPERANDS: usize = 4;
@@ -234,6 +234,10 @@ pub const SEM_RET: u8 = 42;
 pub const SEM_TRAP: u8 = 43;
 /// Direct call to another protected function: `callee_entry, return_state`.
 pub const SEM_CALL: u8 = 44;
+/// Repeated private-memory copy: `width_code, 0`.
+pub const SEM_REP_MOVS: u8 = 45;
+/// Repeated private-memory fill: `width_code, 0`.
+pub const SEM_REP_STOS: u8 = 46;
 
 /// Every semantic id in ascending order. Iterating this array avoids unchecked
 /// integer casts and keeps table construction exhaustive.
@@ -283,6 +287,8 @@ pub const SEMANTIC_IDS: [u8; SEMANTIC_COUNT] = [
     SEM_RET,
     SEM_TRAP,
     SEM_CALL,
+    SEM_REP_MOVS,
+    SEM_REP_STOS,
 ];
 
 /// Returns the canonical operand layout of a semantic operation.
@@ -304,7 +310,7 @@ pub const fn format(semantic: u8) -> Option<Format> {
         SEM_SELECT_RRRR => Some(f4(ROLE_REG, ROLE_REG, ROLE_REG, ROLE_REG)),
         SEM_JMP => Some(f2(ROLE_IMM, ROLE_REG)),
         SEM_JCC => Some(f4(ROLE_REG, ROLE_IMM, ROLE_IMM, ROLE_REG)),
-        SEM_CALL => Some(f2(ROLE_IMM, ROLE_IMM)),
+        SEM_CALL | SEM_REP_MOVS | SEM_REP_STOS => Some(f2(ROLE_IMM, ROLE_IMM)),
         _ => None,
     }
 }

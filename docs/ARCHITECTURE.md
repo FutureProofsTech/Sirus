@@ -145,7 +145,7 @@ guard never changes live architectural state.
 Per build, a 256-bit seed derives:
 
 - 256-byte shuffled opcode pool;
-- four aliases per semantic operation (180 opcodes total);
+- four aliases per semantic operation (188 opcodes total);
 - per-alias operand order;
 - per-alias register-map variant;
 - per-alias immediate endianness;

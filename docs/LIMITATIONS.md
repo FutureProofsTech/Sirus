@@ -24,6 +24,11 @@ Also supported:
 - SSE2 `movdqu`/`movdqa`, `pxor`/`pand`/`por`, `paddq`/`psubq`,
   `paddd`/`psubd`, `pmuludq`, `punpcklqdq`/`punpckhqdq`,
   `psrldq`/`pslldq`, and `movq`/`movd` forms;
+- VEX-encoded 128-bit AVX versions of the same integer operations, including
+  `vpsrldq`/`vpslldq` and `vmovq`; 256-bit AVX remains rejected;
+- `rep movsb`/`movsq` and `rep stosb`/`stosq` on the private memory region;
+- `--follow-calls` automatically lifts direct local callees that resolve to a
+  real function symbol; external or unresolved calls fail closed;
 - System V stack arguments 7 through 12 and Win64 stack arguments 5 through 10.
 
 ### Rejected
@@ -32,7 +37,7 @@ Also supported:
 - calls to a function outside the selected protection set;
 - writable RIP-relative globals and absolute memory;
 - jump tables and computed jump targets;
-- AVX/AVX2, x87, MMX, floating point;
+- 256-bit AVX/AVX2, x87, MMX, floating point;
 - syscalls, `rdtsc`, `cpuid`, privileged or IO instructions;
 - atomics and fences;
 - segment overrides, address-size override, lock prefix;

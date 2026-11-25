@@ -778,6 +778,16 @@ pub enum IrOp {
         /// Access width.
         width: Width,
     },
+    /// Repeated private-memory copy from RSI to RDI for RCX elements.
+    RepMovs {
+        /// Element width.
+        width: Width,
+    },
+    /// Repeated private-memory fill at RDI for RCX elements.
+    RepStos {
+        /// Element width.
+        width: Width,
+    },
 }
 
 /// Terminator of a basic block.

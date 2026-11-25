@@ -2,6 +2,24 @@
 
 All notable changes to Sirus.
 
+## [1.5.8-hardened] — 2026-11-25
+
+### Functionality
+
+- Add VEX-encoded 128-bit AVX integer operations for the existing SSE2 subset,
+  including `vpsrldq`/`vpslldq` and `vmovq`; reject 256-bit AVX.
+- Add `rep movsb`/`movsq` and `rep stosb`/`stosq` over private VM memory in
+  normal mode; constant-time repeated-string operations fail closed.
+- Add `--follow-calls` to auto-lift direct local callees on ELF and PE when the
+  target resolves to a real function symbol. External/unresolved calls still
+  fail closed.
+
+### Evidence
+
+- 218 tests; new AVX-128 and repeated-string C fixtures.
+- Windows/Wine follow-calls gate passes.
+- Coverage: 86.80% tarpaulin lines (7538/8684); 88.27% llvm-cov lines.
+
 ## [1.5.7-hardened] — 2026-11-25
 
 ### Functionality
