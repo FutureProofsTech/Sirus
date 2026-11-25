@@ -129,3 +129,16 @@ for variant in normal ct hardened; do
 done
 grep -q 'abi 48 48 0 3' "$work/cvictim.native.out"
 echo "PASS Windows/Wine C ABI matrix (XMM6-15, indirect, large frame)"
+
+python3 scripts/pe-tamper.py \
+    "$work/cvictim.hardened.exe" "$work/cvictim.tampered.exe"
+chmod +x "$work/cvictim.tampered.exe"
+set +e
+WINEDEBUG=-all wine "$work/cvictim.tampered.exe" \
+    >"$work/cvictim.tampered.out" 2>"$work/cvictim.tampered.err"
+set -e
+if cmp -s "$work/cvictim.native.out" "$work/cvictim.tampered.out"; then
+    echo "Windows/Wine hardened VM accepted modified machine code" >&2
+    exit 1
+fi
+echo "PASS Windows/Wine hardened self-code checksum"

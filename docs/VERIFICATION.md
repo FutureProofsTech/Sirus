@@ -5,7 +5,7 @@
 **Nightly toolchain:** 2026-08-03 / 2026-08-21 family for Miri and fuzzing
 **Kani:** 0.68.0
 **Project state:** all features described in `README.md` implemented and tested
-**Last evidenced run:** final 1.5.1-hardened tree, tag `v1.5.1-hardened`
+**Last evidenced run:** final 1.5.2-hardened tree, tag `v1.5.2-hardened`
 
 This file records commands actually executed. Anything not executed is listed as
 an external evidence gap or a documented boundary, never inferred.
@@ -36,12 +36,12 @@ Result: **exit 0**. The script runs:
 
 ## 2. Test inventory
 
-`cargo test --workspace` now runs **191 tests**, all passing; the MBA corpus and
+`cargo test --workspace` now runs **194 tests**, all passing; the MBA corpus and
 statistical timing tests are `#[ignore]` measurement hooks and are not part of
 the normal count.
 
 ```text
-191 passed, 0 failed
+194 passed, 0 failed
 ```
 
 Breakdown:
@@ -51,8 +51,8 @@ Breakdown:
 | `sirus-binfmt` unit tests | 25 |
 | `sirus-binfmt` real-loader test | 1 |
 | `sirus-core` unit tests | 82 |
-| `sirus-protector` unit tests | 36 |
-| `sirus-hardened` runtime checks | 2 |
+| `sirus-protector` unit tests | 38 |
+| `sirus-hardened` runtime checks | 3 |
 | `sirus-protector` end-to-end | 1 |
 | `sirus-protector` pipeline errors | 1 |
 | `sirus-protector` marker end-to-end | 1 |
@@ -180,7 +180,7 @@ cargo tarpaulin --workspace --all-targets --engine Llvm \
   --exclude-files 'target/*' --exclude-files 'bench/*' --timeout 120
 ```
 
-Result: **85.05% line coverage (6212 / 7304 lines)** with
+Result: **85.16% line coverage (6272 / 7365 lines)** with
 `--exclude-files 'target/*' --exclude-files 'bench/*'`. This is above the agreed
 85% floor.
 
@@ -205,9 +205,9 @@ cargo llvm-cov --workspace --all-targets --summary-only
 ```
 
 ```text
-TOTAL regions 81.98% (4220 missed of 23423)
-TOTAL functions 73.30% (248 missed of 929)
-TOTAL lines 86.14% (1738 missed of 12538)
+TOTAL regions 82.53% (4168 missed of 23854)
+TOTAL functions 74.13% (245 missed of 947)
+TOTAL lines 86.77% (1683 missed of 12724)
 ```
 
 The two tools instrument differently; both are above the 85% floor and show the
@@ -536,7 +536,24 @@ PASS hardened self-code checksum rejects modified VM text
 ```
 
 The hash slot is outside the hashed range, so patching it does not create a
-fixed-point problem. Handler-bearing Windows builds do not have this check yet.
+fixed-point problem.
+
+Windows hardened builds use the same word-wise FNV-1a over the linked `.text`
+section. The expected hash, text length, and per-entry offsets are patched into
+`.rdata` statics after linking; each entry subtracts its offset from its own
+address to recover the text base and verifies before decoding. Both Wine and
+native Windows scripts flip a `.sirus` byte and require the modified binary to
+produce a different result.
+
+```text
+PASS Windows/Wine hardened self-code checksum
+PASS native Windows hardened self-code checksum
+```
+
+The Windows fixture also calls `RtlLookupFunctionEntry` on the patched entry's
+shim and reports `unwind 1` in both native and protected runs, covering runtime
+lookup of the merged `.pdata` record. It does not yet execute an exception
+through a protected leaf.
 
 ### Windows stack and constant-time fixes
 
@@ -604,14 +621,14 @@ cargo asm -p sirus-core --lib 1
 
 | Item | Status |
 |---|---|
-| Coverage floor (85%) | **met**: 85.05% tarpaulin / 86.14% llvm-cov lines |
+| Coverage floor (85%) | **met**: 85.16% tarpaulin / 86.77% llvm-cov lines |
 | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect | executed; evidence recorded |
 | live process memory dump scan | pass; masked VM state, constant not observed |
-| Windows PE runtime execution | Wine and native Windows; normal, constant-time, hardened; `/guard:cf` fixture and ABI matrix pass |
+| Windows PE runtime execution | Wine and native Windows; normal, constant-time, hardened; `/guard:cf`, ABI matrix, unwind lookup, and text-checksum tamper tests pass |
 | Windows unwind metadata | linked `.pdata` merged, shim `.seh` records emitted, handler/chained records fail closed |
 | handler-layout mutation | layout preambles applied; `.sirus` equality 2.21% residual |
 | Linux hardened self-code checksum | implemented; tamper test rejects modified VM text |
-| Windows hardening / self-code checksum | debugger/PEB/TSC/LFENCE and debug-register reports; native text hash not implemented |
+| Windows hardening / self-code checksum | debugger/PEB/TSC/LFENCE, debug-register reports, and linked text hash with tamper test |
 | native self-code checksum in the safe tier / kernel anti-debug | out of scope (ADR-020) |
 
 These are documented boundaries, not hidden passes. The Linux ELF and Windows

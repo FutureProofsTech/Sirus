@@ -1,7 +1,7 @@
-# Sirus 1.5.1-hardened — Release Notes
+# Sirus 1.5.2-hardened — Release Notes
 
 **Release type:** safe-tier prototype plus optional hardened tier
-**Tag:** `v1.5.1-hardened`
+**Tag:** `v1.5.2-hardened`
 **Platform:** Linux x86-64 end-to-end; Win64 PE32+ runtime verified under Wine in normal, constant-time, and hardened modes; native Windows CI passed
 **Dependency policy:** zero external crates in shipped code
 **Unsafe policy:** `forbid(unsafe_code)` in the safe tier; the opt-in `sirus-hardened` crate and `--hardened` generated entries allow unsafe code
@@ -28,8 +28,8 @@
 - Branchy, looping, and private-memory functions can run in fixed-pass oblivious constant-time
   mode; private memory uses an oblivious full-stack scan and longer loops report `LoopBound`.
 - Optional `--hardened` entries add Linux `/proc` debugger detection, Windows
-  PEB debugger detection, serialized RDTSC timing checks, LFENCE, and a Linux
-  self-code checksum over linker-marked VM text.
+  PEB debugger detection, serialized RDTSC timing checks, LFENCE, and a
+  self-code checksum over linked VM text on Linux and Windows.
 - `sirus harden-check` reports debugger state, TSC delta, and Windows debug
   registers (`unsupported` on Linux user mode).
 - Full verification, proof, fuzz, red-team, and documentation assets ship in the
@@ -62,8 +62,9 @@
   register maps, per-alias endianness.
 - Per-build semantic-handler arm permutation and engine/entry layout preambles in the generated runtime.
 - Optional hardened entry checks: raw-syscall Linux tracer detection, PEB
-  debugger detection on Windows, RDTSC/LFENCE timing budget, and Windows
-  debug-register reporting through `harden-check`.
+  debugger detection on Windows, RDTSC/LFENCE timing budget, Windows
+  debug-register reporting through `harden-check`, and linked text checksums on
+  both platforms.
 - Windows x64 unwind metadata for the injected VM and ABI shims, merged into
   the target exception directory; handler/chained records fail closed.
 - Constant-time fuel bound derived from the fixed-pass worst case.
@@ -78,7 +79,7 @@
 
 ### Verification
 
-- 191 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
+- 194 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
   statistical-timing measurement hooks.
 - Real victim compilation and execution differential matrix.
 - Differential two-seed builds.
@@ -102,7 +103,7 @@
 ./scripts/verify.sh
 ```
 
-Passes formatting, Clippy (`-D warnings`, all targets), 191 tests, rustdoc,
+Passes formatting, Clippy (`-D warnings`, all targets), 194 tests, rustdoc,
 audit, deny, Kani, red-team, and memory-dump diagnostic.
 
 ```sh
@@ -121,8 +122,8 @@ Recorded evidence:
 - libFuzzer formats: 28,971,774 PE and 20,071,488 ELF cumulative runs, no crash.
 - Reproducible output: identical normal, hardened, and constant-time binaries
   for a fixed input and seed.
-- Tarpaulin: 85.05% lines (6212/7304).
-- llvm-cov: 86.14% lines, 81.98% regions.
+- Tarpaulin: 85.16% lines (6272/7365).
+- llvm-cov: 86.77% lines, 82.53% regions.
 - Payload differential: 0.40% equal bytes.
 - Handler arms are permuted per build; full VM segment differential remains
   2.21% equal bytes (a metric, not a uniqueness proof).
@@ -158,8 +159,9 @@ ELF path remains the primary production path.
 
 The default safe tier keeps ADR-020: no unsafe controls. The opt-in
 `--hardened` tier adds Linux `/proc` tracer detection, Windows PEB checks,
-RDTSC/LFENCE budgets, debug-register reporting, and a Linux text checksum.
-Windows self-code checksum and kernel-level anti-debug remain unimplemented.
+RDTSC/LFENCE budgets, debug-register reporting, and a linked text checksum on
+Linux and Windows. Kernel-level anti-debug and runtime exception propagation
+through a protected leaf remain unimplemented.
 Payload integrity, encryption, fuel bounds, oblivious execution, and structural
 obfuscation remain the default substitutes.
 
@@ -185,7 +187,7 @@ tools are outside the local gate and are not release blockers.
 ### Coverage
 
 The agreed prototype target is **above 85%**. This release measures
-**85.05% tarpaulin lines / 86.14% llvm-cov lines**. 100% is not claimed, but the
+**85.16% tarpaulin lines / 86.77% llvm-cov lines**. 100% is not claimed, but the
 85% floor is met and enforced by the proof script.
 
 ---
@@ -201,7 +203,6 @@ The opt-in `sirus-hardened` boundary now ships:
 
 Still open for a future hardened line:
 
-- Windows native self-code checksum;
 - kernel-level anti-debug/DBI detection;
 - `mlock`/`mprotect`/`madvise` payload controls;
 - a formal Spectre/cache proof.
@@ -243,14 +244,14 @@ docs/                          architecture, format, threat, proof, traceability
 | Miri | pass |
 | libFuzzer | pass |
 | fmt/clippy/doc/audit/deny | pass |
-| Coverage floor 85% | **pass — 85.05% tarpaulin / 86.14% llvm-cov lines** |
+| Coverage floor 85% | **pass — 85.16% tarpaulin / 86.77% llvm-cov lines** |
 | External evidence tooling | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect executed; commercial/licence-only tools are outside the local gate |
 | Windows runtime | **Wine + native Windows leaf subset (branches/loops), normal + constant-time + hardened; MSVC `/guard:cf` and ABI matrix pass** |
-| Windows unwind metadata | **linked `.pdata` merged; `.seh` shim records; handlers/chained fail closed** |
-| Anti-debug/self-code/timing/LFENCE | **safe tier out of scope (ADR-020); opt-in hardened tier adds them; Windows self-code checksum still open** |
+| Windows unwind metadata | **linked `.pdata` merged; `.seh` shim records; `RtlLookupFunctionEntry` runtime probe; handlers/chained fail closed** |
+| Anti-debug/self-code/timing/LFENCE | **safe tier out of scope (ADR-020); opt-in hardened tier adds them, including Linux and Windows text checksums** |
 | Live memory constant secrecy | masked at rest; snapshot scan passes; instruction-local transient may remain |
 | VM constant-time execution | normal profile leaks (dudect max \|t\| = 225); `--constant-time` straight-line/branch/loop/memory cases pass (worst \|t\| = 2.82) |
-| Hardened tier | **opt-in `--hardened`; unsafe allowed; anti-debug, RDTSC/LFENCE, Windows debug-register report, Linux self-code checksum** |
+| Hardened tier | **opt-in `--hardened`; unsafe allowed; anti-debug, RDTSC/LFENCE, Windows debug-register report, Linux/Windows self-code checksum** |
 | Handler-layout mutation | **per-build handler/engine/entry layout preambles; 2.21% segment equality** |
 
 The safe tier remains the default and still forbids unsafe code. The hardened

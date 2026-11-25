@@ -25,6 +25,37 @@ pub fn verify_code(start: usize, end: usize, expected: usize) -> bool {
     code_hash(bytes) == expected
 }
 
+/// Verifies Windows text relative to an entry address and patched statics.
+///
+/// The offset, length, and expected hash are read volatile from read-only
+/// statics because they are patched into the linked PE after code generation.
+#[inline]
+#[must_use]
+pub fn verify_code_windows(
+    entry: usize,
+    offset_address: usize,
+    length_address: usize,
+    expected_address: usize,
+) -> bool {
+    // SAFETY: the generated wrapper passes addresses of aligned u64 statics.
+    let offset = unsafe { core::ptr::read_volatile(offset_address as *const u64) };
+    // SAFETY: same as above.
+    let length = unsafe { core::ptr::read_volatile(length_address as *const u64) };
+    let Ok(offset) = usize::try_from(offset) else {
+        return false;
+    };
+    let Ok(length) = usize::try_from(length) else {
+        return false;
+    };
+    let Some(start) = entry.checked_sub(offset) else {
+        return false;
+    };
+    let Some(end) = start.checked_add(length) else {
+        return false;
+    };
+    verify_code(start, end, expected_address)
+}
+
 /// Word-wise FNV-1a over generated code bytes.
 #[inline]
 fn code_hash(bytes: &[u8]) -> u64 {
@@ -259,6 +290,7 @@ fn windows_debugger_present() -> bool {
 mod tests {
     use super::{
         code_hash, debugger_present, hypervisor_present, lfence, rdtsc, timing_ok, verify_code,
+        verify_code_windows,
     };
 
     #[test]
@@ -290,6 +322,28 @@ mod tests {
             start,
             start + 0x10_0001,
             &expected as *const u64 as usize
+        ));
+    }
+
+    #[test]
+    fn windows_code_integrity_reads_patched_statics() {
+        let bytes = [0x22_u8; 19];
+        let expected = code_hash(&bytes);
+        let offset = 3_u64;
+        let length = u64::try_from(bytes.len()).expect("length");
+        let entry = bytes.as_ptr() as usize + usize::try_from(offset).expect("offset");
+        assert!(verify_code_windows(
+            entry,
+            &offset as *const u64 as usize,
+            &length as *const u64 as usize,
+            &expected as *const u64 as usize,
+        ));
+        let wrong = expected ^ 1;
+        assert!(!verify_code_windows(
+            entry,
+            &offset as *const u64 as usize,
+            &length as *const u64 as usize,
+            &wrong as *const u64 as usize,
         ));
     }
 }

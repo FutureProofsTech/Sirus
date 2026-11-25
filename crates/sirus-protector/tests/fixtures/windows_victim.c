@@ -1,5 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
+#include <windows.h>
 
 #ifdef _MSC_VER
 #define SIRUS_NOINLINE __declspec(noinline)
@@ -41,6 +43,29 @@ SIRUS_NOINLINE uint64_t sirus_abi_large(uint64_t a, uint64_t b) {
     return value ^ buffer[12346] ^ buffer[(a & 0x3ffu)];
 }
 
+static int sirus_unwind_probe(void) {
+    typedef PRUNTIME_FUNCTION(WINAPI * lookup_fn)(DWORD64, PDWORD64, PVOID);
+    HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+    if (ntdll == NULL) {
+        return 0;
+    }
+    lookup_fn lookup =
+        (lookup_fn)(void *)GetProcAddress(ntdll, "RtlLookupFunctionEntry");
+    if (lookup == NULL) {
+        return 0;
+    }
+    const uint8_t *code = (const uint8_t *)(uintptr_t)&sirus_abi_target;
+    if (code[0] != 0xE9) {
+        return 1;
+    }
+    int32_t displacement = 0;
+    memcpy(&displacement, code + 1, sizeof(displacement));
+    DWORD64 pc = (DWORD64)(uintptr_t)(code + 5 + displacement);
+    DWORD64 image_base = 0;
+    PRUNTIME_FUNCTION entry = lookup(pc, &image_base, NULL);
+    return entry != NULL;
+}
+
 int main(void) {
     const uint64_t pairs[4][2] = {
         {7u, 3u}, {3u, 7u}, {0u, 0u}, {123456789u, 5u}
@@ -60,5 +85,6 @@ int main(void) {
            (unsigned long long)pointer,
            (unsigned long long)xmm,
            (unsigned long long)large);
+    printf("unwind %d\n", sirus_unwind_probe());
     return 0;
 }

@@ -271,8 +271,8 @@ indirect callers, and a 32 KiB stack frame. Linked `.pdata` entries are rebased
 into the section and merged into the target exception directory; handler-bearing
 or chained unwind records fail closed. The strict leaf subset, including
 branches and loops, is verified under Wine, native Windows, and MSVC `/guard:cf`.
-Windows self-code checksum, signing, imports/TLS, and kernel anti-debug are not
-claimed.
+Hardened Windows builds verify a linked text hash; signing, imports/TLS, runtime
+exception propagation, and kernel anti-debug are not claimed.
 
 ### 11.1 Constant-time oblivious execution
 

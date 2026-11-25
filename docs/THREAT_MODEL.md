@@ -90,9 +90,9 @@ protected data in ways that fail downstream if incorrect.
 
 ## 7. Known residuals
 
-1. **Platform-scoped native self-code checksum.** Linux hardened builds hash
-   linker-marked VM text on every entry and reject modifications. Windows hardened
-   builds still rely on payload integrity; their self-checksum is not implemented.
+1. **Native self-code checksum in the hardened tier.** Linux and Windows hardened
+   builds hash linked VM text on every entry and reject modifications. The safe
+   tier still relies on payload integrity.
 2. **Opt-in timing/debug detection only.** The hardened tier adds LFENCE/RDTSC,
    Linux `/proc` tracer checks, Windows PEB checks, and debug-register reporting;
    the safe/default tier does not. Kernel-level DBI detection is not claimed.

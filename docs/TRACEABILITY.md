@@ -99,7 +99,7 @@ under the safe-Rust/no-unsafe constraint.
 
 | Requirement | Status | Evidence |
 |---|---|---|
-| Self-checksumming machine code | implemented for Linux hardened builds; Windows pending | linker-marked text hash + tamper test |
+| Self-checksumming machine code | implemented for Linux and Windows hardened builds | linked text hash + tamper tests |
 | Hash mixed into rolling key | implemented for payload | effective-key binding |
 | Software breakpoint corruption | partial | payload tamper changes key; code breakpoints not detected |
 | Timing drift detection | hardened tier only | LFENCE/RDTSC budget; dudect evidence |

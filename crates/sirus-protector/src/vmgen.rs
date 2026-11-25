@@ -423,21 +423,30 @@ fn generate_source(program: &CompiledProgram, id: &str, vm_base: u64) -> Result<
              static SIRUS_TEXT_END_{id}: u8 = 0x5a;\n\
              #[cfg(target_os = \"linux\")]\n\
              #[used]\n\
-             static SIRUS_CODE_HASH_{id}: u64 = 0;\n\n"
+             static SIRUS_CODE_HASH_{id}: u64 = 0;\n"
         );
+        emit!(
+            source,
+            "#[cfg(target_os = \"windows\")]\n\
+             #[used]\n\
+             #[no_mangle]\n\
+             pub static SIRUS_TEXT_LEN_{id}: u64 = 0x5a5a_5a5a_5a5a_5a5a;\n\
+             #[cfg(target_os = \"windows\")]\n\
+             #[used]\n\
+             #[no_mangle]\n\
+             pub static SIRUS_CODE_HASH_{id}: u64 = 0x5a5a_5a5a_5a5a_5a5a;\n"
+        );
+        for index in 0..program.entry_states().len() {
+            emit!(
+                source,
+                "#[cfg(target_os = \"windows\")]\n\
+                 #[used]\n\
+                 #[no_mangle]\n\
+                 pub static SIRUS_ENTRY_OFFSET_{id}_{index}: u64 = 0x5a5a_5a5a_5a5a_5a5a;\n"
+            );
+        }
+        emit!(source, "\n");
     }
-    let integrity_check = if program.hardened() {
-        format!(
-            "#[cfg(target_os = \"linux\")]\n\
-             if !hardened::verify_code(\n\
-             \x20   core::ptr::addr_of!(SIRUS_TEXT_START_{id}) as usize + 1,\n\
-             \x20   core::ptr::addr_of!(SIRUS_TEXT_END_{id}) as usize,\n\
-             \x20   core::ptr::addr_of!(SIRUS_CODE_HASH_{id}) as usize,\n\
-             ) {{ return 0; }}\n"
-        )
-    } else {
-        String::new()
-    };
 
     emit!(
         source,
@@ -463,6 +472,26 @@ fn generate_source(program: &CompiledProgram, id: &str, vm_base: u64) -> Result<
     };
     for (index, _) in program.entry_states().iter().enumerate() {
         let entry_name = format!("sirus_entry_{id}_{index}");
+        let integrity_check = if program.hardened() {
+            format!(
+                "#[cfg(target_os = \"linux\")]\n\
+                 if !hardened::verify_code(\n\
+                 \x20   core::ptr::addr_of!(SIRUS_TEXT_START_{id}) as usize + 1,\n\
+                 \x20   core::ptr::addr_of!(SIRUS_TEXT_END_{id}) as usize,\n\
+                 \x20   core::ptr::addr_of!(SIRUS_CODE_HASH_{id}) as usize,\n\
+                 ) {{ return 0; }}\n\
+                 #[cfg(target_os = \"windows\")]\n\
+                 if !hardened::verify_code_windows(\n\
+                 \x20   sirus_entry_{id}_{index} as extern \"C\" fn(u64, u64, u64, u64, u64, u64) -> u64 as usize,\n\
+                 \x20   core::ptr::addr_of!(SIRUS_ENTRY_OFFSET_{id}_{index}) as usize,\n\
+                 \x20   core::ptr::addr_of!(SIRUS_TEXT_LEN_{id}) as usize,\n\
+                 \x20   core::ptr::addr_of!(SIRUS_CODE_HASH_{id}) as usize,\n\
+                 ) {{ return 0; }}\n"
+            )
+        } else {
+            String::new()
+        };
+
         let keep_name = format!("sirus_keep_{id}_{index}");
         let entry_layout = layout_preamble(
             program.seed(),
@@ -1129,18 +1158,7 @@ pub fn build_windows_vm(program: &CompiledProgram, keep_temp: bool) -> Result<Wi
     let mut entry_offsets = Vec::with_capacity(program.entry_states().len());
     for index in 0..program.entry_states().len() {
         let needle = format!("sirus_shim_{id}_{index}");
-        let entry_address = map_text
-            .lines()
-            .find(|line| line.contains(&needle))
-            .and_then(|line| {
-                line.split_whitespace()
-                    .find(|token| token.len() >= 16 && token.starts_with("00000001"))
-            })
-            .and_then(|token| u64::from_str_radix(token, 16).ok())
-            .ok_or_else(|| ProtectError::internal("Windows VM entry symbol missing"))?;
-        let entry_rva = entry_address
-            .checked_sub(image_base)
-            .ok_or_else(|| ProtectError::internal("Windows VM entry base"))?;
+        let entry_rva = windows_map_symbol_rva(&map_text, image_base, &needle)?;
         let entry_offset = entry_rva
             .checked_sub(u64::from(section_text.virtual_address))
             .and_then(|value| usize::try_from(value).ok())
@@ -1152,6 +1170,36 @@ pub fn build_windows_vm(program: &CompiledProgram, keep_temp: bool) -> Result<Wi
             return Err(ProtectError::internal("Windows VM entry outside text"));
         }
         entry_offsets.push(entry_offset);
+    }
+    if program.hardened() {
+        let text_length = usize::try_from(section_text.virtual_size)
+            .map_err(|_| ProtectError::internal("Windows VM text length"))?;
+        let text_bytes = text
+            .get(..text_length)
+            .ok_or_else(|| ProtectError::internal("Windows VM hashed text range"))?;
+        let hash = code_hash(text_bytes);
+        let length_name = format!("SIRUS_TEXT_LEN_{id}");
+        let hash_name = format!("SIRUS_CODE_HASH_{id}");
+        let length_rva = windows_map_symbol_rva(&map_text, image_base, &length_name)?;
+        let hash_rva = windows_map_symbol_rva(&map_text, image_base, &hash_name)?;
+        patch_windows_rdata(
+            &mut blob,
+            relative,
+            section_rdata,
+            length_rva,
+            u64::try_from(text_length)
+                .map_err(|_| ProtectError::internal("Windows VM text len"))?,
+        )?;
+        patch_windows_rdata(&mut blob, relative, section_rdata, hash_rva, hash)?;
+        for (index, symbol) in entry_symbols.iter().enumerate() {
+            let entry_rva = windows_map_symbol_rva(&map_text, image_base, symbol)?;
+            let entry_offset = entry_rva
+                .checked_sub(u64::from(section_text.virtual_address))
+                .ok_or_else(|| ProtectError::internal("Windows VM integrity entry"))?;
+            let needle = format!("SIRUS_ENTRY_OFFSET_{id}_{index}");
+            let rva = windows_map_symbol_rva(&map_text, image_base, &needle)?;
+            patch_windows_rdata(&mut blob, relative, section_rdata, rva, entry_offset)?;
+        }
     }
     let unwind = windows_unwind_functions(&image, &pe, section_text)?;
     if !keep_temp {
@@ -1241,6 +1289,47 @@ fn read_section(image: &[u8], section: Section) -> Result<&[u8]> {
                     .ok_or_else(|| ProtectError::internal("Windows VM raw range"))?,
         )
         .ok_or_else(|| ProtectError::internal("Windows VM raw bytes"))
+}
+
+/// Resolves one symbol from an `lld-link` map to an RVA.
+fn windows_map_symbol_rva(map: &str, image_base: u64, needle: &str) -> Result<u64> {
+    let address = map
+        .lines()
+        .find(|line| line.contains(needle))
+        .and_then(|line| {
+            line.split_whitespace()
+                .find(|token| token.len() >= 16 && token.starts_with("00000001"))
+        })
+        .and_then(|token| u64::from_str_radix(token, 16).ok())
+        .ok_or_else(|| ProtectError::internal("Windows VM map symbol missing"))?;
+    address
+        .checked_sub(image_base)
+        .ok_or_else(|| ProtectError::internal("Windows VM map symbol base"))
+}
+
+/// Patches one u64 inside the extracted `.rdata` bytes.
+fn patch_windows_rdata(
+    blob: &mut [u8],
+    relative: usize,
+    section: Section,
+    rva: u64,
+    value: u64,
+) -> Result<()> {
+    let offset = rva
+        .checked_sub(u64::from(section.virtual_address))
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| ProtectError::internal("Windows VM data symbol outside rdata"))?;
+    let start = relative
+        .checked_add(offset)
+        .ok_or_else(|| ProtectError::internal("Windows VM data patch start"))?;
+    let end = start
+        .checked_add(8)
+        .ok_or_else(|| ProtectError::internal("Windows VM data patch end"))?;
+    let slot = blob
+        .get_mut(start..end)
+        .ok_or_else(|| ProtectError::internal("Windows VM data patch outside blob"))?;
+    slot.copy_from_slice(&value.to_le_bytes());
+    Ok(())
 }
 
 /// Extracts exact x64 unwind records for the copied VM text.
@@ -1350,9 +1439,9 @@ pub fn ensure_readable(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ENGINE_SOURCE, code_hash, ensure_readable, permute_handler_layout, read_le_u16,
-        read_le_u32, source_for_audit, validate_blob, validate_relocation_ranges,
-        windows_entry_symbol,
+        ENGINE_SOURCE, code_hash, ensure_readable, patch_windows_rdata, permute_handler_layout,
+        read_le_u16, read_le_u32, source_for_audit, validate_blob, validate_relocation_ranges,
+        windows_entry_symbol, windows_map_symbol_rva, windows_unwind_functions,
     };
     use sirus_core::lifter::lift_function;
     use sirus_core::program::{CompileOptions, CompiledProgram, compile};
@@ -1362,6 +1451,92 @@ mod tests {
     fn program() -> CompiledProgram {
         let function = lift_function(&[0x48, 0x89, 0xf8, 0xc3], 0x1000).expect("lift");
         compile(&[function], [0x55_u8; 32], CompileOptions::new()).expect("compile")
+    }
+
+    fn synthetic_linked_pe(pdata_size: u32, flags: u8) -> Vec<u8> {
+        let mut data = vec![0_u8; 0xC00];
+        data[0..2].copy_from_slice(b"MZ");
+        data[0x3c..0x40].copy_from_slice(&0x80_u32.to_le_bytes());
+        data[0x80..0x84].copy_from_slice(b"PE\0\0");
+        let coff = 0x84_usize;
+        data[coff..coff + 2].copy_from_slice(&0x8664_u16.to_le_bytes());
+        data[coff + 2..coff + 4].copy_from_slice(&3_u16.to_le_bytes());
+        data[coff + 16..coff + 18].copy_from_slice(&240_u16.to_le_bytes());
+        let optional = coff + 20;
+        data[optional..optional + 2].copy_from_slice(&0x20b_u16.to_le_bytes());
+        data[optional + 24..optional + 32].copy_from_slice(&0x1_4000_0000_u64.to_le_bytes());
+        data[optional + 32..optional + 36].copy_from_slice(&0x1000_u32.to_le_bytes());
+        data[optional + 36..optional + 40].copy_from_slice(&0x200_u32.to_le_bytes());
+        data[optional + 56..optional + 60].copy_from_slice(&0x4000_u32.to_le_bytes());
+        data[optional + 60..optional + 64].copy_from_slice(&0x200_u32.to_le_bytes());
+        let table = optional + 240;
+        let sections = [
+            (b".text\0\0\0", 0x200_u32, 0x1000_u32, 0x400_u32),
+            (b".rdata\0\0", 0x200, 0x2000, 0x600),
+            (b".pdata\0\0", pdata_size, 0x3000, 0x800),
+        ];
+        for (index, (name, virtual_size, virtual_address, raw_offset)) in
+            sections.iter().enumerate()
+        {
+            let header = table + index * 40;
+            data[header..header + 8].copy_from_slice(*name);
+            data[header + 8..header + 12].copy_from_slice(&virtual_size.to_le_bytes());
+            data[header + 12..header + 16].copy_from_slice(&virtual_address.to_le_bytes());
+            data[header + 16..header + 20].copy_from_slice(&0x200_u32.to_le_bytes());
+            data[header + 20..header + 24].copy_from_slice(&raw_offset.to_le_bytes());
+            data[header + 36..header + 40].copy_from_slice(&0x6000_0020_u32.to_le_bytes());
+        }
+        data[0x800..0x80c].copy_from_slice(&[
+            0x00, 0x10, 0x00, 0x00, 0x10, 0x10, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00,
+        ]);
+        data[0x80c..0x818].copy_from_slice(&[
+            0x20, 0x10, 0x00, 0x00, 0x30, 0x10, 0x00, 0x00, 0x08, 0x20, 0x00, 0x00,
+        ]);
+        data[0x600..0x604].copy_from_slice(&[1, 0, 0, 0]);
+        data[0x608..0x60c].copy_from_slice(&[1 | (flags << 3), 0, 2, 0]);
+        data
+    }
+
+    #[test]
+    fn windows_unwind_extraction_parses_and_rejects() {
+        let data = synthetic_linked_pe(0x18, 0);
+        let pe = sirus_binfmt::pe::Pe64::parse(&data).expect("pe");
+        let text = pe.find_section(".text").expect("text").1;
+        let unwind = windows_unwind_functions(&data, &pe, text).expect("unwind");
+        assert_eq!(unwind.len(), 2);
+        assert_eq!(unwind.first().map(|value| value.begin), Some(0));
+        assert_eq!(unwind.first().map(|value| value.unwind.len()), Some(4));
+        assert_eq!(unwind.get(1).map(|value| value.begin), Some(0x20));
+        assert_eq!(unwind.get(1).map(|value| value.unwind.len()), Some(8));
+
+        let bad = synthetic_linked_pe(0x19, 0);
+        let pe = sirus_binfmt::pe::Pe64::parse(&bad).expect("pe");
+        let text = pe.find_section(".text").expect("text").1;
+        assert!(windows_unwind_functions(&bad, &pe, text).is_err());
+
+        let handler = synthetic_linked_pe(0x18, 1);
+        let pe = sirus_binfmt::pe::Pe64::parse(&handler).expect("pe");
+        let text = pe.find_section(".text").expect("text").1;
+        assert!(windows_unwind_functions(&handler, &pe, text).is_err());
+    }
+
+    #[test]
+    fn windows_map_and_rdata_patch_helpers_are_bounded() {
+        let map = " 0001:00000144 sirus_shim_dead_0 0000000180001144\n";
+        assert_eq!(
+            windows_map_symbol_rva(map, 0x1_8000_0000, "sirus_shim_dead_0").expect("rva"),
+            0x1144
+        );
+        assert!(windows_map_symbol_rva(map, 0x1_8000_0000, "missing").is_err());
+        let data = synthetic_linked_pe(0x18, 0);
+        let pe = sirus_binfmt::pe::Pe64::parse(&data).expect("pe");
+        let rdata = pe.find_section(".rdata").expect("rdata").1;
+        let mut blob = vec![0_u8; 0x20];
+        patch_windows_rdata(&mut blob, 0x4, rdata, 0x2008, 0xdead).expect("patch");
+        let expected = 0xdead_u64.to_le_bytes();
+        assert_eq!(blob.get(0xc..0x14), Some(expected.as_slice()));
+        assert!(patch_windows_rdata(&mut blob, 0x4, rdata, 0x3000, 1).is_err());
+        assert!(patch_windows_rdata(&mut blob, 0x0, rdata, 0x2200, 1).is_err());
     }
 
     #[test]

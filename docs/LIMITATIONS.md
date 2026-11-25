@@ -65,7 +65,7 @@ protected results as data so a wrong value causes a downstream failure.
 
 No hidden unsafe path exists in the default safe tier. The optional
 `sirus-hardened` crate and `--hardened` generated entries contain explicit unsafe
-code and are not mixed into the default runtime. Linux hardened builds now verify a linker-marked text hash on every entry; hypervisor and debug-register reporting are available in the hardened tier. Windows self-checksum remains unimplemented.
+code and are not mixed into the default runtime. Both Linux and Windows hardened builds now verify a linked text hash on every entry; hypervisor and debug-register reporting are available in the hardened tier.
 
 ---
 
@@ -92,8 +92,9 @@ code and are not mixed into the default runtime. Linux hardened builds now verif
 - The leaf subset with branches and loops is verified under Wine 11.20 via
   `scripts/windows-wine-check.sh`.
 - Windows loader/CFG execution, guard-page-safe stack probing, linked unwind
-  metadata, and an ABI matrix are now covered by native CI. Windows self-code
-  checksum, signing, imports/TLS, and kernel-level anti-debug remain out of scope.
+  metadata, an ABI matrix, and hardened text checksum are now covered by native
+  CI. Signing, imports/TLS, runtime exception propagation, and kernel-level
+  anti-debug remain out of scope.
 - Native Windows CI passed as the `pe32-native` job and
   `scripts/windows-native-check.sh`; Wine and native Windows both execute the
   normal/constant-time/hardened fixture.

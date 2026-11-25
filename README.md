@@ -2,7 +2,7 @@
 
 **Zero-dependency polymorphic code virtualizer in Safe Rust.**
 
-**Release:** `1.5.1-hardened` — see [`RELEASE.md`](RELEASE.md) and [`CHANGELOG.md`](CHANGELOG.md).
+**Release:** `1.5.2-hardened` — see [`RELEASE.md`](RELEASE.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 Sirus takes a compiled Linux x86-64 ELF, lifts a selected function into an
 internal IR, flattens its control flow, expands sensitive arithmetic through
@@ -35,13 +35,13 @@ commercial/open-source positioning is in
 | Safe Rust / no external crates | safe tier enforced; `sirus-hardened` is opt-in unsafe |
 | Kani, Miri, libFuzzer, differential/tamper/bypass, Ghidra, radare2 | run locally |
 | angr, KLEE, Creusot, dudect-bencher | run locally; bounded/model results stated |
-| Coverage floor (85%) | **met: 85.05% tarpaulin / 86.14% llvm-cov lines** |
+| Coverage floor (85%) | **met: 85.16% tarpaulin / 86.77% llvm-cov lines** |
 | Constant-time VM execution | `--constant-time` oblivious branch/loop/memory mode below dudect threshold; normal profile leaks |
 | Live memory state | virtual registers/private stack masked at rest; snapshot constant scan passes |
 | Constant-time scope | fixed pass budget; branches, loops, and oblivious private-memory scan supported |
 | Per-call overhead (benchmark leaf function) | default ~78.7 µs / hardened ~76.7 µs / constant-time ~214 µs / hardened CT ~217 µs / balanced ~56.6 µs / minimal ~14.7 µs; VMProtect 3.11 demo ~8.5 µs |
 | Cold startup | ~0.6 ms (no packer); VMProtect demo ~2.6 s |
-| Hardened tier | opt-in `--hardened`: anti-debug, RDTSC/LFENCE, Windows DR report, Linux self-code checksum |
+| Hardened tier | opt-in `--hardened`: anti-debug, RDTSC/LFENCE, Windows DR report, Linux/Windows self-code checksum |
 
 ---
 

@@ -34,6 +34,10 @@
   ABI shims carry `.seh_proc` unwind directives, and the target exception
   directory is merged and its checksum refreshed. Unwind records with exception
   handlers or chained info are rejected until their RVAs are rebased.
+- The fixture resolves the patched entry's `RUNTIME_FUNCTION` through
+  `RtlLookupFunctionEntry` at runtime in normal and protected binaries.
+- Hardened Windows builds verify the linked `.text` hash on every entry, with
+  the expected value and per-entry offset patched into `.rdata` after linking.
 - Wine execution of the protected PE32+ binary in normal, constant-time, and
   hardened modes.
 
@@ -46,6 +50,7 @@ Verified locally:
 ```text
 PASS Windows/Wine PE32+ runtime (normal + constant-time + hardened)
 PASS Windows/Wine C ABI matrix (XMM6-15, indirect, large frame)
+PASS Windows/Wine hardened self-code checksum
 ```
 
 The C ABI matrix covers direct and indirect callers, a 32 KiB stack-probed
@@ -105,12 +110,11 @@ the native output. The CFG job also exercises the indirect caller path under
 
 ## 4. What is still not claimed
 
-- Windows native self-code checksum (the Linux hardened tier implements one).
 - Windows anti-debug/anti-tamper beyond the existing PEB/debug-register reports.
 - Runtime exception propagation through a protected leaf: the lifter does not
   support calls, so no test can throw from inside the lifted function. The
-  unwind metadata is structurally merged and validated with handler-free
-  records.
+  fixture instead validates the patched entry's runtime-function lookup.
+- Unwind records with exception handlers or chained info; these fail closed.
 - Production signing, resources, DLL exports, TLS callbacks, and imports.
 - Full x86-64 or ARM64 Windows instruction coverage.
 

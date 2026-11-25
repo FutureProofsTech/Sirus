@@ -90,6 +90,18 @@ for variant in protected constant hardened; do
         exit 1
     fi
 done
+
+python3 scripts/pe-tamper.py "$work/hardened.exe" "$work/tampered.exe"
+chmod +x "$work/tampered.exe"
+set +e
+"$work/tampered.exe" >"$work/tampered.out" 2>"$work/tampered.err"
+set -e
+if cmp -s "$work/native.out" "$work/tampered.out"; then
+    echo "Windows hardened VM accepted modified machine code" >&2
+    exit 1
+fi
+echo "PASS native Windows hardened self-code checksum"
+
 ./target/release/sirus.exe inspect "$work/protected.exe" | tee "$work/inspect.out" >/dev/null
 grep -q 'protected=true' "$work/inspect.out"
 grep -q '\.sirus' "$work/inspect.out"

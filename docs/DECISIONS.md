@@ -281,8 +281,9 @@ without weakening the safe-Rust runtime. Wine provides a repeatable local
 execution gate alongside the native Windows CI that now executes this path.
 
 **Boundary:** Windows loader/CFG execution, linked unwind metadata, and an ABI
-matrix are now covered by native CI. Windows self-code checksum, signing,
-imports/TLS, and kernel-level anti-debug are not claimed. This line does not
+matrix are now covered by native CI, including the hardened Windows text
+checksum. Signing, imports/TLS, runtime exception propagation, and kernel-level
+anti-debug are not claimed. This line does not
 change the primary Linux ELF release gate.
 
 ---
@@ -334,6 +335,6 @@ while providing the requested controls.
 
 **Boundary:** Linux user mode cannot read debug registers without a ptrace
 relationship; `harden-check` reports `unsupported`. Windows debug registers are
-reported through `GetThreadContext`. Linux hardened builds add a linker-marked
-text checksum; Windows builds do not yet. No DBI/kernel anti-debug or formal
+reported through `GetThreadContext`. Linux and Windows hardened builds add a linked
+text checksum with a per-platform tamper test. No DBI/kernel anti-debug or formal
 Spectre guarantee is added.

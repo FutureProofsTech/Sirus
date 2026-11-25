@@ -2,6 +2,22 @@
 
 All notable changes to Sirus.
 
+## [1.5.2-hardened] — 2026-11-25
+
+### Added
+
+- Windows hardened self-code checksum: the linked `.text` hash, text length, and
+  per-entry offsets are patched into `.rdata` and verified on every entry.
+- Windows hardened tamper gate in both Wine and native CI scripts.
+- Runtime `RtlLookupFunctionEntry` probe for the patched entry's merged
+  `RUNTIME_FUNCTION` record.
+
+### Evidence
+
+- `pe32-wine`, `pe32-native`, and `pe32-msvc-cfg` pass with the new ABI, unwind,
+  and checksum probes.
+- 194 tests; 85.16% tarpaulin / 86.77% llvm-cov lines.
+
 ## [1.5.1-hardened] — 2026-11-25
 
 ### Added
