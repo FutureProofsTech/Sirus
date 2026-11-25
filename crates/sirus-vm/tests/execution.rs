@@ -414,6 +414,39 @@ fn multiple_functions_share_one_payload_and_engine() {
 }
 
 #[test]
+fn constant_time_raises_fuel_for_multiple_entries() {
+    let check = lift_function(&DEMO_CHECK, 0x3000).expect("check");
+    let looping = lift_function(&DEMO_LOOP, 0x4000).expect("loop");
+    let straight =
+        lift_function(&[0x48, 0x89, 0xf8, 0x48, 0x01, 0xf0, 0xc3], 0x5000).expect("straight");
+    let mut options = options();
+    options.constant_time = true;
+    options.fuel = 1;
+    options.mba_depth = 0;
+    options.mba_budget = 0;
+    let program = compile(&[check, looping, straight], [0x5a_u8; 32], options).expect("compile");
+    assert!(program.fuel() > 1);
+    let passes = usize::from(program.constant_time_passes());
+    for index in 0..3_usize {
+        let result = execute_oblivious(
+            VmInput::new(
+                program.payload(),
+                program.seed(),
+                program.expected_hash(),
+                program.base_a(),
+                program.base_b(),
+                program.entry_states(),
+                program.fuel(),
+            ),
+            index,
+            [13, 5, 0, 0, 0, 0],
+            passes,
+        );
+        assert_eq!(result.status, Status::Returned, "entry {index}");
+    }
+}
+
+#[test]
 fn executes_private_virtual_stack_memory() {
     // sub rsp,16; mov [rsp],rdi; mov [rsp+8],rsi; mov rax,[rsp];
     // add rax,[rsp+8]; add rsp,16; ret

@@ -39,6 +39,9 @@ pub struct CompileOptions {
     /// Maximum elapsed TSC cycles accepted by the hardened entry.
     pub hardened_timing_cycles: u64,
     /// Instruction budget for one runtime invocation.
+    ///
+    /// Constant-time builds raise the effective budget to cover the fixed-pass
+    /// worst case, so a small explicit value cannot truncate oblivious work.
     pub fuel: u64,
 }
 
@@ -422,6 +425,20 @@ fn finalize(
     let base = base_key(seed);
     let base_a = manifest_rng.next_u64();
     let base_b = base_a ^ base;
+    let fuel = if constant_time {
+        // Oblivious execution decodes every body on every fixed pass. Each
+        // encoded instruction is at least one byte, so this is a safe upper
+        // bound on the charged steps for one invocation.
+        let per_pass = u64::try_from(bodies.len())
+            .unwrap_or(u64::MAX)
+            .saturating_add(u64::try_from(count).unwrap_or(0));
+        let bound = u64::from(constant_time_passes)
+            .saturating_mul(per_pass)
+            .saturating_add(u64::try_from(count).unwrap_or(0));
+        fuel.max(bound)
+    } else {
+        fuel
+    };
     let final_stats = ProgramStats {
         payload_bytes: payload.len(),
         ..stats
