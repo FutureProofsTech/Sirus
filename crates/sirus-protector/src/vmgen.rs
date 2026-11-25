@@ -578,21 +578,34 @@ fn rustc_path() -> PathBuf {
     std::env::var_os("SIRUS_RUSTC").map_or_else(|| PathBuf::from("rustc"), PathBuf::from)
 }
 
-fn compile_source(source: &str, vm_base: u64, keep_temp: bool) -> Result<PathBuf> {
+#[allow(
+    clippy::too_many_lines,
+    reason = "VM toolchain orchestration and ELF object symbol parsing are linear external-format transactions"
+)]
+fn compile_source(
+    source: &str,
+    vm_base: u64,
+    keep_temp: bool,
+    id: &str,
+    entry_count: usize,
+) -> Result<PathBuf> {
     let directory = unique_temp_directory()?;
     let source_path = directory.join("vm.rs");
     let script_path = directory.join("vm.ld");
+    let object_path = directory.join("vm.o");
+    let shim_path = directory.join("shim.S");
+    let shim_object = directory.join("shim.o");
     let output_path = directory.join("vm.elf");
     fs::write(&source_path, source)
         .map_err(|error| ProtectError::io("write generated VM source", &error))?;
     fs::write(&script_path, linker_script(vm_base))
         .map_err(|error| ProtectError::io("write linker script", &error))?;
-    let linker_argument = format!("link-arg=-Wl,-T,{}", script_path.display());
     let output = Command::new(rustc_path())
         .arg("--edition=2021")
         .arg("--crate-type=bin")
         .arg("--crate-name")
         .arg("sirus_generated_vm")
+        .arg("--emit=obj")
         .arg("-C")
         .arg("panic=abort")
         .arg("-C")
@@ -609,22 +622,8 @@ fn compile_source(source: &str, vm_base: u64, keep_temp: bool) -> Result<PathBuf
         .arg("strip=none")
         .arg("-C")
         .arg("relocation-model=pic")
-        .arg("-C")
-        .arg("link-arg=-nostdlib")
-        .arg("-C")
-        .arg("link-arg=-static")
-        .arg("-C")
-        .arg("link-arg=-no-pie")
-        .arg("-C")
-        .arg("link-arg=-Wl,--build-id=none")
-        .arg("-C")
-        .arg("link-arg=-Wl,--no-gc-sections")
-        .arg("-C")
-        .arg("link-arg=-Wl,-e,0")
-        .arg("-C")
-        .arg(linker_argument)
         .arg("-o")
-        .arg(&output_path)
+        .arg(&object_path)
         .arg(&source_path)
         .output()
         .map_err(|error| ProtectError::io("execute rustc", &error))?;
@@ -634,10 +633,220 @@ fn compile_source(source: &str, vm_base: u64, keep_temp: bool) -> Result<PathBuf
             drop(fs::remove_dir_all(&directory));
         }
         return Err(ProtectError::tool(format!(
-            "rustc failed while building the VM blob:\n{stderr}"
+            "rustc failed while building the VM object:\n{stderr}"
+        )));
+    }
+    let object = fs::read(&object_path)
+        .map_err(|error| ProtectError::io("read generated VM object", &error))?;
+    let entry_symbols = elf_entry_symbols(&object, id, entry_count)?;
+    let globalized_path = directory.join("vm-global.o");
+    let mut objcopy = Command::new("objcopy");
+    for symbol in &entry_symbols {
+        objcopy.arg(format!("--globalize-symbol={symbol}"));
+    }
+    let objcopy = objcopy
+        .arg(&object_path)
+        .arg(&globalized_path)
+        .output()
+        .map_err(|error| ProtectError::io("execute objcopy", &error))?;
+    if !objcopy.status.success() {
+        let stderr = String::from_utf8_lossy(&objcopy.stderr);
+        if !keep_temp {
+            drop(fs::remove_dir_all(&directory));
+        }
+        return Err(ProtectError::tool(format!(
+            "objcopy failed while globalizing VM entries:\n{stderr}"
+        )));
+    }
+    let mut shim_source = String::from(".text\n");
+    for (index, symbol) in entry_symbols.iter().enumerate() {
+        let shim = format!(
+            ".globl sirus_shim_{id}_{index}\n.type sirus_shim_{id}_{index}, @function\nsirus_shim_{id}_{index}:\n    pushq %rcx\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    pushq %r8\n    pushq %r9\n    pushq %r10\n    pushq %r11\n    subq $264, %rsp\n    movdqu %xmm0, 0(%rsp)\n    movdqu %xmm1, 16(%rsp)\n    movdqu %xmm2, 32(%rsp)\n    movdqu %xmm3, 48(%rsp)\n    movdqu %xmm4, 64(%rsp)\n    movdqu %xmm5, 80(%rsp)\n    movdqu %xmm6, 96(%rsp)\n    movdqu %xmm7, 112(%rsp)\n    movdqu %xmm8, 128(%rsp)\n    movdqu %xmm9, 144(%rsp)\n    movdqu %xmm10, 160(%rsp)\n    movdqu %xmm11, 176(%rsp)\n    movdqu %xmm12, 192(%rsp)\n    movdqu %xmm13, 208(%rsp)\n    movdqu %xmm14, 224(%rsp)\n    movdqu %xmm15, 240(%rsp)\n    call {symbol}\n    movdqu 0(%rsp), %xmm0\n    movdqu 16(%rsp), %xmm1\n    movdqu 32(%rsp), %xmm2\n    movdqu 48(%rsp), %xmm3\n    movdqu 64(%rsp), %xmm4\n    movdqu 80(%rsp), %xmm5\n    movdqu 96(%rsp), %xmm6\n    movdqu 112(%rsp), %xmm7\n    movdqu 128(%rsp), %xmm8\n    movdqu 144(%rsp), %xmm9\n    movdqu 160(%rsp), %xmm10\n    movdqu 176(%rsp), %xmm11\n    movdqu 192(%rsp), %xmm12\n    movdqu 208(%rsp), %xmm13\n    movdqu 224(%rsp), %xmm14\n    movdqu 240(%rsp), %xmm15\n    addq $264, %rsp\n    popq %r11\n    popq %r10\n    popq %r9\n    popq %r8\n    popq %rdi\n    popq %rsi\n    popq %rdx\n    popq %rcx\n    ret\n.size sirus_shim_{id}_{index}, .-sirus_shim_{id}_{index}\n"
+        );
+        shim_source.push_str(&shim);
+    }
+    shim_source.push_str(".section .note.GNU-stack,\"\",@progbits\n");
+    fs::write(&shim_path, shim_source)
+        .map_err(|error| ProtectError::io("write Linux ABI shim", &error))?;
+    let assembler = Command::new("cc")
+        .arg("-c")
+        .arg(&shim_path)
+        .arg("-o")
+        .arg(&shim_object)
+        .output()
+        .map_err(|error| ProtectError::io("execute Linux ABI assembler", &error))?;
+    if !assembler.status.success() {
+        let stderr = String::from_utf8_lossy(&assembler.stderr);
+        if !keep_temp {
+            drop(fs::remove_dir_all(&directory));
+        }
+        return Err(ProtectError::tool(format!(
+            "Linux ABI assembler failed:\n{stderr}"
+        )));
+    }
+    let link = Command::new("cc")
+        .arg("-fuse-ld=lld")
+        .arg("-nostdlib")
+        .arg("-static")
+        .arg("-no-pie")
+        .arg("-Wl,-T,".to_owned() + &script_path.display().to_string())
+        .arg("-Wl,--build-id=none")
+        .arg("-Wl,--no-gc-sections")
+        .arg("-Wl,-e,0")
+        .arg("-Wl,-z,noexecstack")
+        .arg("-o")
+        .arg(&output_path)
+        .arg(&globalized_path)
+        .arg(&shim_object)
+        .output()
+        .map_err(|error| ProtectError::io("execute Linux VM linker", &error))?;
+    if !link.status.success() {
+        let stderr = String::from_utf8_lossy(&link.stderr);
+        if !keep_temp {
+            drop(fs::remove_dir_all(&directory));
+        }
+        return Err(ProtectError::tool(format!(
+            "Linux VM link failed:\n{stderr}"
         )));
     }
     Ok(output_path)
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "VM toolchain orchestration and ELF object symbol parsing are linear external-format transactions"
+)]
+fn elf_entry_symbols(object: &[u8], id: &str, entry_count: usize) -> Result<Vec<String>> {
+    let section_offset = read_le_u64(object, 0x28)?;
+    let section_size = u64::from(read_le_u16(object, 0x3a)?);
+    let section_count = u64::from(read_le_u16(object, 0x3c)?);
+    let mut symbols = Vec::new();
+    let mut section = 0_u64;
+    while section < section_count {
+        let header = usize::try_from(
+            section_offset
+                .checked_add(section.saturating_mul(section_size))
+                .ok_or_else(|| ProtectError::internal("ELF object section cursor"))?,
+        )
+        .map_err(|_| ProtectError::internal("ELF object section offset"))?;
+        let kind = read_le_u32(
+            object,
+            header
+                .checked_add(4)
+                .ok_or_else(|| ProtectError::internal("ELF object section type"))?,
+        )?;
+        if kind != 2 {
+            section = section.saturating_add(1);
+            continue;
+        }
+        let file_offset = read_le_u64(
+            object,
+            header
+                .checked_add(24)
+                .ok_or_else(|| ProtectError::internal("ELF object symbol offset"))?,
+        )?;
+        let file_size = read_le_u64(
+            object,
+            header
+                .checked_add(32)
+                .ok_or_else(|| ProtectError::internal("ELF object symbol size"))?,
+        )?;
+        let link = usize::try_from(read_le_u32(
+            object,
+            header
+                .checked_add(40)
+                .ok_or_else(|| ProtectError::internal("ELF object string link"))?,
+        )?)
+        .map_err(|_| ProtectError::internal("ELF object string link"))?;
+        if u64::try_from(link).unwrap_or(u64::MAX) >= section_count {
+            return Err(ProtectError::internal("ELF object string section"));
+        }
+        let string_header = usize::try_from(
+            section_offset
+                .checked_add(
+                    u64::try_from(link)
+                        .unwrap_or(0)
+                        .saturating_mul(section_size),
+                )
+                .ok_or_else(|| ProtectError::internal("ELF object string header"))?,
+        )
+        .map_err(|_| ProtectError::internal("ELF object string header"))?;
+        let string_offset = read_le_u64(
+            object,
+            string_header
+                .checked_add(24)
+                .ok_or_else(|| ProtectError::internal("ELF object string offset"))?,
+        )?;
+        let string_size = read_le_u64(
+            object,
+            string_header
+                .checked_add(32)
+                .ok_or_else(|| ProtectError::internal("ELF object string size"))?,
+        )?;
+        let string_start = usize::try_from(string_offset)
+            .map_err(|_| ProtectError::internal("ELF object string base"))?;
+        let string_end = usize::try_from(string_offset.saturating_add(string_size))
+            .map_err(|_| ProtectError::internal("ELF object string end"))?;
+        let strings = object
+            .get(string_start..string_end)
+            .ok_or_else(|| ProtectError::internal("ELF object string bytes"))?;
+        let mut offset = 0_u64;
+        while offset < file_size {
+            let entry = usize::try_from(
+                file_offset
+                    .checked_add(offset)
+                    .ok_or_else(|| ProtectError::internal("ELF object symbol cursor"))?,
+            )
+            .map_err(|_| ProtectError::internal("ELF object symbol offset"))?;
+            let name_offset = usize::try_from(read_le_u32(object, entry)?)
+                .map_err(|_| ProtectError::internal("ELF object symbol name"))?;
+            let info = object
+                .get(entry.saturating_add(4))
+                .copied()
+                .ok_or_else(|| ProtectError::internal("ELF object symbol info"))?;
+            let section_index = read_le_u16(
+                object,
+                entry
+                    .checked_add(6)
+                    .ok_or_else(|| ProtectError::internal("ELF object symbol section"))?,
+            )?;
+            let size = read_le_u64(
+                object,
+                entry
+                    .checked_add(16)
+                    .ok_or_else(|| ProtectError::internal("ELF object symbol size"))?,
+            )?;
+            if info & 0x0f == 2 && section_index != 0 && size != 0 {
+                let name = strings
+                    .get(name_offset..)
+                    .and_then(|bytes| bytes.split(|byte| *byte == 0).next())
+                    .and_then(|bytes| core::str::from_utf8(bytes).ok())
+                    .unwrap_or("");
+                if !name.is_empty() && name.contains(&format!("sirus_entry_{id}_")) {
+                    symbols.push(name.to_owned());
+                }
+            }
+            offset = offset.saturating_add(24);
+        }
+        break;
+    }
+    let mut ordered = Vec::with_capacity(entry_count);
+    for index in 0..entry_count {
+        let suffix = format!("sirus_entry_{id}_{index}");
+        let matches: Vec<&String> = symbols
+            .iter()
+            .filter(|symbol| symbol.ends_with(&suffix))
+            .collect();
+        if matches.len() != 1 {
+            return Err(ProtectError::internal(
+                "generated VM entry symbol ambiguity",
+            ));
+        }
+        if let Some(symbol) = matches.first() {
+            ordered.push((*symbol).clone());
+        }
+    }
+    Ok(ordered)
 }
 
 fn find_unique_symbol<'a>(
@@ -763,7 +972,7 @@ fn validate_blob(blob: &[u8], program: &CompiledProgram, id: &str) -> Result<VmB
     }
     let mut entry_vas = Vec::with_capacity(program.entry_states().len());
     for index in 0..program.entry_states().len() {
-        let needle = format!("sirus_entry_{id}_{index}");
+        let needle = format!("sirus_shim_{id}_{index}");
         let symbol = find_unique_symbol(&elf, &needle, STT_FUNC)?;
         let address = symbol.value;
         let relative = address
@@ -851,7 +1060,13 @@ pub fn build_vm(program: &CompiledProgram, vm_base: u64, keep_temp: bool) -> Res
         program.payload().len(),
     );
     let source = generate_source(program, &id, vm_base)?;
-    let blob_path = compile_source(&source, vm_base, keep_temp)?;
+    let blob_path = compile_source(
+        &source,
+        vm_base,
+        keep_temp,
+        &id,
+        program.entry_states().len(),
+    )?;
     let blob =
         fs::read(&blob_path).map_err(|error| ProtectError::io("read generated VM blob", &error))?;
     let result = validate_blob(&blob, program, &id);
@@ -873,6 +1088,18 @@ fn read_le_u16(data: &[u8], offset: usize) -> Result<u16> {
     let array =
         <[u8; 2]>::try_from(bytes).map_err(|_| ProtectError::internal("COFF object width"))?;
     Ok(u16::from_le_bytes(array))
+}
+
+fn read_le_u64(data: &[u8], offset: usize) -> Result<u64> {
+    let end = offset
+        .checked_add(8)
+        .ok_or_else(|| ProtectError::internal("COFF object offset"))?;
+    let bytes = data
+        .get(offset..end)
+        .ok_or_else(|| ProtectError::internal("COFF object bounds"))?;
+    let array =
+        <[u8; 8]>::try_from(bytes).map_err(|_| ProtectError::internal("COFF object width"))?;
+    Ok(u64::from_le_bytes(array))
 }
 
 fn read_le_u32(data: &[u8], offset: usize) -> Result<u32> {

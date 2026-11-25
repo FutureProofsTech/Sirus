@@ -48,6 +48,9 @@ fi
 echo "== red-team harness =="
 ./scripts/red-team.sh
 
+echo "== Linux caller-saved ABI =="
+./scripts/linux-abi-check.sh
+
 echo "== constant-time cachegrind =="
 ./scripts/cachegrind-check.sh
 

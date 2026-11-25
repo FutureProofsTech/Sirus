@@ -264,9 +264,10 @@ function, and overwrites the original body with keyed junk.
 
 The Win64 runtime is generated with `rustc --target x86_64-pc-windows-gnu`, linked
 with `lld-link` and a guard-page-safe stack-probe shim, then its `.text`/`.rdata`
-bytes are embedded as one RX section. Function arguments are translated from the
-Windows x64 ABI to the VM's internal array at the entry thunk; an assembly shim
-preserves volatile GPRs and `XMM0`–`XMM5`, and the ABI matrix covers `XMM6`–`XMM15`,
+bytes are embedded as one RX section. The Linux entry is wrapped by an assembly shim that preserves caller-saved GPRs
+and `XMM0`–`XMM15`; this matches the Windows shim's IPA-safe behavior. Function
+arguments are translated from the Windows x64 ABI to the VM's internal array at
+the entry thunk; the Windows shim preserves volatile GPRs and `XMM0`–`XMM5`, and the ABI matrix covers `XMM6`–`XMM15`,
 indirect callers, and a 32 KiB stack frame. Linked `.pdata` entries are rebased
 into the section and merged into the target exception directory; handler-bearing
 or chained unwind records fail closed. The strict leaf subset, including

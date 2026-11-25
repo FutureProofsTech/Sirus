@@ -91,6 +91,8 @@ code and are not mixed into the default runtime. Both Linux and Windows hardened
   scrubbing are implemented.
 - The leaf subset with branches and loops is verified under Wine 11.20 via
   `scripts/windows-wine-check.sh`.
+- Linux entries are wrapped by an assembly shim that preserves all caller-saved
+  GPRs and `XMM0`–`XMM15`, matching the Windows shim's IPA-safe behavior.
 - Windows loader/CFG execution, guard-page-safe stack probing, linked unwind
   metadata, an ABI matrix, and hardened text checksum are now covered by native
   CI. Signing, imports/TLS, runtime exception propagation, and kernel-level
@@ -136,10 +138,6 @@ code and are not mixed into the default runtime. Both Linux and Windows hardened
   unlimited local adversary.
 - Tampering can produce deterministic wrong outputs rather than a visible crash;
   this is intentional deep binding behavior.
-- **Known correctness guard:** a cyclic lifted function containing a
-  `Select`/`cmov` operation is rejected with `unsupported instruction pattern`.
-  A minimized C loop followed by `cmovae` hung after protection before this
-  guard. This is fail-closed behavior; cmov-inside-loop support is future work.
 - The project is not a substitute for formal audit, hardware security, or
   anti-cheat kernel design.
 

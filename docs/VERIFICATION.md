@@ -5,7 +5,7 @@
 **Nightly toolchain:** 2026-08-03 / 2026-08-21 family for Miri and fuzzing
 **Kani:** 0.68.0
 **Project state:** all features described in `README.md` implemented and tested
-**Last evidenced run:** final 1.5.3-hardened tree, tag `v1.5.3-hardened`
+**Last evidenced run:** final 1.5.4-hardened tree, tag `v1.5.4-hardened`
 
 This file records commands actually executed. Anything not executed is listed as
 an external evidence gap or a documented boundary, never inferred.
@@ -36,12 +36,12 @@ Result: **exit 0**. The script runs:
 
 ## 2. Test inventory
 
-`cargo test --workspace` now runs **196 tests**, all passing; the MBA corpus and
+`cargo test --workspace` now runs **195 tests**, all passing; the MBA corpus and
 statistical timing tests are `#[ignore]` measurement hooks and are not part of
 the normal count.
 
 ```text
-196 passed, 0 failed
+195 passed, 0 failed
 ```
 
 Breakdown:
@@ -50,7 +50,7 @@ Breakdown:
 |---|---:|
 | `sirus-binfmt` unit tests | 25 |
 | `sirus-binfmt` real-loader test | 1 |
-| `sirus-core` unit tests | 83 |
+| `sirus-core` unit tests | 82 |
 | `sirus-protector` unit tests | 39 |
 | `sirus-hardened` runtime checks | 3 |
 | `sirus-protector` end-to-end | 1 |
@@ -189,7 +189,7 @@ cargo tarpaulin --workspace --all-targets --engine Llvm \
   --exclude-files 'target/*' --exclude-files 'bench/*' --timeout 120
 ```
 
-Result: **87.12% line coverage (6424 / 7374 lines)** with
+Result: **87.14% line coverage (6553 / 7520 lines)** with
 `--exclude-files 'target/*' --exclude-files 'bench/*'`. This is above the agreed
 85% floor.
 
@@ -214,9 +214,9 @@ cargo llvm-cov --workspace --all-targets --summary-only
 ```
 
 ```text
-TOTAL regions 84.03% (3824 missed of 23943)
-TOTAL functions 74.95% (238 missed of 950)
-TOTAL lines 88.53% (1468 missed of 12798)
+TOTAL regions 83.74% (3952 missed of 24301)
+TOTAL functions 72.91% (266 missed of 982)
+TOTAL lines 88.23% (1529 missed of 12993)
 ```
 
 The two tools instrument differently; both are above the 85% floor and show the
@@ -531,6 +531,25 @@ jobs pass. The CFG binary also exercises the indirect call path under
 
 ---
 
+## 8i-a. Linux caller-saved ABI
+
+```sh
+./scripts/linux-abi-check.sh
+```
+
+A GCC `-O2` caller keeps its loop bound in `R10` across the protected call. The
+Linux entry shim saves and restores all caller-saved GPRs and `XMM0`–`XMM15`, so
+the caller sees the same register state as an ordinary callee.
+
+```text
+PASS Linux caller-saved ABI regression (normal + hardened + constant-time)
+```
+
+Without the shim this fixture loops after protection because the VM clobbers
+`R10`. The previous cyclic `Select` fail-closed guard was removed after this fix.
+
+---
+
 ## 8i-b. Hardened self-code checksum
 
 Linux `--hardened` builds place linker markers around `.text`, hash the marked
@@ -592,10 +611,10 @@ Cachegrind, after one warm-up run. The four measured runs are stable and the
 two inputs produce identical counts.
 
 ```text
-I refs=15202501
-D refs=5284936
-D1 misses=4783
-LLd misses=2792
+I refs=15202709
+D refs=5285136
+D1 misses=4784
+LLd misses=2798
 Branches=1438216
 Mispredicts=120703
 PASS constant-time cachegrind counts are input-independent
@@ -657,14 +676,14 @@ cargo asm -p sirus-core --lib 1
 
 | Item | Status |
 |---|---|
-| Coverage floor (85%) | **met**: 87.12% tarpaulin / 88.53% llvm-cov lines |
+| Coverage floor (85%) | **met**: 87.14% tarpaulin / 88.23% llvm-cov lines |
 | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect | executed; evidence recorded |
 | live process memory dump scan | pass; masked VM state, constant not observed |
 | Windows PE runtime execution | Wine and native Windows; normal, constant-time, hardened; `/guard:cf`, ABI matrix, unwind lookup, and text-checksum tamper tests pass |
 | Windows unwind metadata | linked `.pdata` merged, shim `.seh` records emitted, handler/chained records fail closed |
 | handler-layout mutation | layout preambles applied; `.sirus` equality 2.21% residual |
 | Linux hardened self-code checksum | implemented; tamper test rejects modified VM text |
-| cyclic `Select`/`cmov` lifted pattern | fail-closed; minimized C reproducer rejected |
+| Linux caller-saved ABI | assembly shim preserves GPRs + XMM0–XMM15; C regression passes |
 | Windows hardening / self-code checksum | debugger/PEB/TSC/LFENCE, debug-register reports, and linked text hash with tamper test |
 | native self-code checksum in the safe tier / kernel anti-debug | out of scope (ADR-020) |
 

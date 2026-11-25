@@ -1,7 +1,7 @@
-# Sirus 1.5.3-hardened — Release Notes
+# Sirus 1.5.4-hardened — Release Notes
 
 **Release type:** safe-tier prototype plus optional hardened tier
-**Tag:** `v1.5.3-hardened`
+**Tag:** `v1.5.4-hardened`
 **Platform:** Linux x86-64 end-to-end; Win64 PE32+ runtime verified under Wine in normal, constant-time, and hardened modes; native Windows CI passed
 **Dependency policy:** zero external crates in shipped code
 **Unsafe policy:** `forbid(unsafe_code)` in the safe tier; the opt-in `sirus-hardened` crate and `--hardened` generated entries allow unsafe code
@@ -25,6 +25,8 @@
   Windows, including indirect callers.
 - XMM6–XMM15 preservation, indirect callers, and a 32 KiB stack-probed caller
   are covered by the Win64 ABI matrix.
+- Linux caller-saved registers and `XMM0`–`XMM15` are preserved across protected
+  calls; an optimized C caller regression is executed.
 - Branchy, looping, and private-memory functions can run in fixed-pass oblivious constant-time
   mode; private memory uses an oblivious full-stack scan and longer loops report `LoopBound`.
 - Optional `--hardened` entries add Linux `/proc` debugger detection, Windows
@@ -79,7 +81,7 @@
 
 ### Verification
 
-- 196 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
+- 195 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
   statistical-timing measurement hooks.
 - Real victim compilation and execution differential matrix.
 - Differential two-seed builds.
@@ -103,7 +105,7 @@
 ./scripts/verify.sh
 ```
 
-Passes formatting, Clippy (`-D warnings`, all targets), 196 tests, rustdoc,
+Passes formatting, Clippy (`-D warnings`, all targets), 195 tests, rustdoc,
 audit, deny, Kani, red-team, and memory-dump diagnostic.
 
 ```sh
@@ -126,8 +128,8 @@ Recorded evidence:
 - Release artifacts: `scripts/release-artifacts.sh` emits a binary copy,
   SHA-256 manifest, CycloneDX SBOM, and optional GPG signature when
   `SIRUS_SIGNING_KEY` is set.
-- Tarpaulin: 87.12% lines (6424/7374).
-- llvm-cov: 88.53% lines, 84.03% regions.
+- Tarpaulin: 87.14% lines (6553/7520).
+- llvm-cov: 88.23% lines, 83.74% regions.
 - Payload differential: 0.40% equal bytes.
 - Handler arms are permuted per build; full VM segment differential remains
   2.21% equal bytes (a metric, not a uniqueness proof).
@@ -138,6 +140,8 @@ Recorded evidence:
 - Cold startup: Sirus ~0.6 ms; VMProtect demo ~2.6 s (packed).
 - Constant-time Cachegrind: two inputs produce identical I/D refs, D1/LLd
   misses, branches, and mispredicts for the branch-only protected leaf.
+- Linux caller-saved ABI regression: an optimized C caller relying on `R10`
+  matches native after protection in normal, hardened, and constant-time modes.
 - No obvious strings in `.sirus`.
 - Original bodies absent from protected file and live memory.
 - Tamper/forced-return alter results; valgrind clean.
@@ -190,17 +194,18 @@ leak threshold, the normal VM branch far above it, and the straight-line,
 branchy, and looping `--constant-time` cases below it. Commercial/licence-gated
 tools are outside the local gate and are not release blockers.
 
-### Known correctness guard
+### Linux caller-saved ABI
 
-A cyclic lifted function containing `Select`/`cmov` is rejected with
-`unsupported instruction pattern`. A minimized C loop followed by `cmovae` hung
-after protection in both normal and constant-time modes; the guard prevents
-that hang until the runtime interaction is fixed.
+The Linux entry shim saves and restores all caller-saved GPRs and `XMM0`–`XMM15`
+around the injected VM. This fixes a caller/IPA assumption where an optimized C
+caller kept its loop bound in `R10`; the VM previously clobbered it and the
+caller looped. `scripts/linux-abi-check.sh` covers normal, hardened, and
+constant-time modes.
 
 ### Coverage
 
 The agreed prototype target is **above 85%**. This release measures
-**87.12% tarpaulin lines / 88.53% llvm-cov lines**. 100% is not claimed, but the
+**87.14% tarpaulin lines / 88.23% llvm-cov lines**. 100% is not claimed, but the
 85% floor is met and enforced by the proof script.
 
 ---
@@ -238,6 +243,7 @@ scripts/memory-dump.sh        live memory diagnostic
 scripts/install-tools.sh      tool bootstrap
 scripts/release-artifacts.sh  release binary, checksums, SBOM, optional signature
 scripts/cachegrind-check.sh   constant-time cachegrind gate
+scripts/linux-abi-check.sh    Linux caller-saved ABI regression
 verification/creusot          Creusot/Why3 boundary proofs
 verification/dudect           official dudect-bencher harness
 docs/                          architecture, format, threat, proof, traceability
@@ -259,7 +265,7 @@ docs/                          architecture, format, threat, proof, traceability
 | Miri | pass |
 | libFuzzer | pass |
 | fmt/clippy/doc/audit/deny | pass |
-| Coverage floor 85% | **pass — 87.12% tarpaulin / 88.53% llvm-cov lines** |
+| Coverage floor 85% | **pass — 87.14% tarpaulin / 88.23% llvm-cov lines** |
 | External evidence tooling | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect executed; commercial/licence-only tools are outside the local gate |
 | Windows runtime | **Wine + native Windows leaf subset (branches/loops), normal + constant-time + hardened; MSVC `/guard:cf` and ABI matrix pass** |
 | Windows unwind metadata | **linked `.pdata` merged; `.seh` shim records; `RtlLookupFunctionEntry` runtime probe; handlers/chained fail closed** |

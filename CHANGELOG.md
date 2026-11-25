@@ -2,6 +2,23 @@
 
 All notable changes to Sirus.
 
+## [1.5.4-hardened] — 2026-11-25
+
+### Fixed
+
+- Linux protection now links an assembly entry shim that saves and restores all
+  caller-saved GPRs and `XMM0`–`XMM15` around the injected VM. This fixes a real
+  caller-saved ABI bug: an optimized C caller kept its loop bound in `R10`, the
+  VM clobbered it, and the caller looped indefinitely. The previous cyclic
+  `Select`/`cmov` fail-closed guard is removed.
+- Added `scripts/linux-abi-check.sh`, which protects a loop-plus-`cmov` C fixture
+  and checks normal, hardened, and constant-time behavior.
+
+### Evidence
+
+- 195 tests; 87.14% tarpaulin / 88.23% llvm-cov lines.
+- Linux caller-saved ABI regression passes in all three modes.
+
 ## [1.5.3-hardened] — 2026-11-25
 
 ### Fixed
