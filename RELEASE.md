@@ -27,6 +27,7 @@
   are covered by the Win64 ABI matrix.
 - Windows DLL exports are protected and loaded through a host
   `LoadLibrary`/`GetProcAddress` test.
+- Windows TLS callbacks and `RCDATA` resources survive protection.
 - Linux caller-saved registers and `XMM0`–`XMM15` are preserved across protected
   calls; an optimized C caller regression is executed.
 - Branchy, looping, and private-memory functions can run in fixed-pass oblivious constant-time

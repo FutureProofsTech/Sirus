@@ -528,7 +528,8 @@ fixture with MSVC `/guard:cf`, resolves function sizes from the PDB plus linker
 map, protects it with explicit `--range` selectors, and compares outputs. Both
 jobs pass. The CFG binary also exercises the indirect call path under
 `/GUARD:CF`. The shared fixture also protects a DLL export and loads it through
-a host using `LoadLibrary`/`GetProcAddress`.
+a host using `LoadLibrary`/`GetProcAddress`, and a second fixture verifies a TLS
+callback plus `RCDATA` resource after protection.
 
 ---
 

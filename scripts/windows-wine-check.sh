@@ -161,3 +161,24 @@ if ! cmp -s "$work/dll.native.out" "$work/dll.protected.out"; then
     exit 1
 fi
 echo "PASS Windows/Wine DLL export protection"
+
+echo "== TLS callback and resource =="
+x86_64-w64-mingw32-windres "$fixtures/windows_tls_resource.rc" \
+    -O coff -o "$work/tls_resource.o"
+x86_64-w64-mingw32-gcc -O2 "$fixtures/windows_tls_resource.c" \
+    "$work/tls_resource.o" -o "$work/tls_resource.exe"
+./target/release/sirus protect \
+    --input "$work/tls_resource.exe" \
+    --output "$work/tls_resource.protected.exe" \
+    --function sirus_tls_target \
+    --seed 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff \
+    >"$work/tls_resource.protect.out"
+(cd "$work" && WINEDEBUG=-all wine tls_resource.exe >tls_resource.native.out)
+(cd "$work" && WINEDEBUG=-all wine tls_resource.protected.exe >tls_resource.protected.out)
+if ! cmp -s "$work/tls_resource.native.out" "$work/tls_resource.protected.out"; then
+    echo "Windows/Wine TLS/resource mismatch" >&2
+    exit 1
+fi
+grep -q '^tls-attach' "$work/tls_resource.protected.out"
+grep -q '^resource=SIRUSRESOURCE' "$work/tls_resource.protected.out"
+echo "PASS Windows/Wine TLS callback and resource preservation"

@@ -14,6 +14,8 @@
   COFF function symbols.
 - DLL export protection: an exported leaf is patched through the export RVA and
   loaded by a host with `LoadLibrary`/`GetProcAddress`.
+- TLS callbacks and resources survive injection; the fixture runs a TLS callback
+  and loads an `RCDATA` resource after protection.
 - MSVC CFG fixture targeting via PDB `S_GPROC32` sizes plus linker-map RVAs.
 - x86-64 subset lifting from the PE image.
 - The same encrypted VM payload builder used by the ELF path.
@@ -119,7 +121,7 @@ the native output. The CFG job also exercises the indirect caller path under
   support calls, so no test can throw from inside the lifted function. The
   fixture instead validates the patched entry's runtime-function lookup.
 - Unwind records with exception handlers or chained info; these fail closed.
-- Production signing, resources, TLS callbacks, and imports.
+- Production signing and full import/TLS edge-case coverage beyond the fixtures.
 - Full x86-64 or ARM64 Windows instruction coverage.
 
 These are separate-version work; the Linux ELF product remains the primary
