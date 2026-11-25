@@ -33,6 +33,18 @@ def coff_name(data, entry, strings, string_size):
     return raw.split(b"\0", 1)[0].decode("utf-8", "replace")
 
 
+def section_size(data, section):
+    if section == 0:
+        return 0
+    count = u16(data, 2)
+    if section > count:
+        return 0
+    header = 20 + (section - 1) * 40
+    virtual = u32(data, header + 8)
+    raw = u32(data, header + 16)
+    return raw if raw != 0 else virtual
+
+
 def object_sizes(path):
     data = Path(path).read_bytes()
     symbol_table = u32(data, 8)
@@ -55,8 +67,6 @@ def object_sizes(path):
             aux_entry = entry + 18
             sizes[canonical] = u32(data, aux_entry + 4)
         index += 1 + aux
-    if not sizes:
-        print(f"object debug first symbols: {debug}", file=sys.stderr)
     return sizes
 
 
