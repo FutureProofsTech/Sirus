@@ -126,7 +126,12 @@ fi
 echo "PASS native Windows DLL export protection"
 
 echo "== TLS callback and resource =="
-x86_64-w64-mingw32-windres \
+windres_tool="$(command -v x86_64-w64-mingw32-windres || command -v windres)"
+if [[ -z "$windres_tool" ]]; then
+    echo "missing windres" >&2
+    exit 1
+fi
+"$windres_tool" \
     crates/sirus-protector/tests/fixtures/windows_tls_resource.rc \
     -O coff -o "$work/tls_resource.o"
 x86_64-w64-mingw32-gcc -O2 \
