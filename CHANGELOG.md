@@ -13,6 +13,7 @@ All notable changes to Sirus.
   `Select`/`cmov` fail-closed guard is removed.
 - Added `scripts/linux-abi-check.sh`, which protects a loop-plus-`cmov` C fixture
   and checks normal, hardened, and constant-time behavior.
+- Added a Windows DLL export fixture and host load test to the Wine/native gates.
 
 ### Evidence
 

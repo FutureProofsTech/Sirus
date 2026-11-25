@@ -102,6 +102,29 @@ if cmp -s "$work/native.out" "$work/tampered.out"; then
 fi
 echo "PASS native Windows hardened self-code checksum"
 
+echo "== DLL export =="
+x86_64-w64-mingw32-gcc -O2 -shared \
+    crates/sirus-protector/tests/fixtures/windows_dll.c \
+    -o "$work/dll.dll"
+x86_64-w64-mingw32-gcc -O2 \
+    crates/sirus-protector/tests/fixtures/windows_dll_host.c \
+    -o "$work/dllhost.exe"
+cp "$work/dll.dll" "$work/dll.native.dll"
+(cd "$work" && ./dllhost.exe >dll.native.out)
+./target/release/sirus.exe protect \
+    --input "$work/dll.native.dll" \
+    --output "$work/dll.protected.dll" \
+    --function sirus_dll_fn \
+    --seed 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff \
+    >"$work/dll.protect.out"
+cp "$work/dll.protected.dll" "$work/dll.dll"
+(cd "$work" && ./dllhost.exe >dll.protected.out)
+if ! cmp -s "$work/dll.native.out" "$work/dll.protected.out"; then
+    echo "Windows DLL runtime mismatch" >&2
+    exit 1
+fi
+echo "PASS native Windows DLL export protection"
+
 ./target/release/sirus.exe inspect "$work/protected.exe" | tee "$work/inspect.out" >/dev/null
 grep -q 'protected=true' "$work/inspect.out"
 grep -q '\.sirus' "$work/inspect.out"

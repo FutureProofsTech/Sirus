@@ -527,7 +527,8 @@ Native Windows CI is executed by the `pe32-native` job through
 fixture with MSVC `/guard:cf`, resolves function sizes from the PDB plus linker
 map, protects it with explicit `--range` selectors, and compares outputs. Both
 jobs pass. The CFG binary also exercises the indirect call path under
-`/GUARD:CF`.
+`/GUARD:CF`. The shared fixture also protects a DLL export and loads it through
+a host using `LoadLibrary`/`GetProcAddress`.
 
 ---
 

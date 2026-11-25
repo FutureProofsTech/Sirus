@@ -142,3 +142,22 @@ if cmp -s "$work/cvictim.native.out" "$work/cvictim.tampered.out"; then
     exit 1
 fi
 echo "PASS Windows/Wine hardened self-code checksum"
+
+echo "== DLL export =="
+x86_64-w64-mingw32-gcc -O2 -shared "$fixtures/windows_dll.c" -o "$work/dll.dll"
+x86_64-w64-mingw32-gcc -O2 "$fixtures/windows_dll_host.c" -o "$work/dllhost.exe"
+cp "$work/dll.dll" "$work/dll.native.dll"
+(cd "$work" && WINEDEBUG=-all wine dllhost.exe >dll.native.out)
+./target/release/sirus protect \
+    --input "$work/dll.native.dll" \
+    --output "$work/dll.protected.dll" \
+    --function sirus_dll_fn \
+    --seed 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff \
+    >"$work/dll.protect.out"
+cp "$work/dll.protected.dll" "$work/dll.dll"
+(cd "$work" && WINEDEBUG=-all wine dllhost.exe >dll.protected.out)
+if ! cmp -s "$work/dll.native.out" "$work/dll.protected.out"; then
+    echo "Windows/Wine DLL runtime mismatch" >&2
+    exit 1
+fi
+echo "PASS Windows/Wine DLL export protection"

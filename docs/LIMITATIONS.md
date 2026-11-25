@@ -94,9 +94,9 @@ code and are not mixed into the default runtime. Both Linux and Windows hardened
 - Linux entries are wrapped by an assembly shim that preserves all caller-saved
   GPRs and `XMM0`–`XMM15`, matching the Windows shim's IPA-safe behavior.
 - Windows loader/CFG execution, guard-page-safe stack probing, linked unwind
-  metadata, an ABI matrix, and hardened text checksum are now covered by native
-  CI. Signing, imports/TLS, runtime exception propagation, and kernel-level
-  anti-debug remain out of scope.
+  metadata, an ABI matrix, hardened text checksum, and DLL export loading are
+  covered by native CI. Signing, imports/TLS, runtime exception propagation, and
+  kernel-level anti-debug remain out of scope.
 - Native Windows CI passed as the `pe32-native` job and
   `scripts/windows-native-check.sh`; Wine and native Windows both execute the
   normal/constant-time/hardened fixture.
