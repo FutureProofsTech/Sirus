@@ -4,7 +4,8 @@
 use crate::encode::{encode_block, encode_block_with_nonlinear};
 use crate::error::{CoreError, Result};
 use crate::ir::{
-    BoundedVec, ByteBuf, IrOp, LiftedFunction, MAX_BLOCKS, MAX_FUNCTIONS, MAX_PAYLOAD, Terminator,
+    BoundedVec, ByteBuf, IrOp, LiftedFunction, MAX_BLOCKS, MAX_DATA_BYTES, MAX_FUNCTIONS,
+    MAX_PAYLOAD, Terminator,
 };
 use crate::mba::BuildRng;
 use crate::shared::cipher::{
@@ -106,6 +107,7 @@ pub struct ProgramStats {
 #[derive(Clone, Debug)]
 pub struct CompiledProgram {
     payload: ByteBuf<MAX_PAYLOAD>,
+    data: ByteBuf<MAX_DATA_BYTES>,
     seed: Seed,
     entry_states: BoundedVec<[u64; 2], MAX_FUNCTIONS>,
     expected_hash: u64,
@@ -116,6 +118,7 @@ pub struct CompiledProgram {
     constant_time_passes: u16,
     hardened: bool,
     hardened_timing_cycles: u64,
+    stack_args: u8,
     stats: ProgramStats,
 }
 
@@ -125,6 +128,13 @@ impl CompiledProgram {
     #[must_use]
     pub fn payload(&self) -> &[u8] {
         self.payload.as_slice()
+    }
+
+    /// Returns the read-only data blob copied into private VM memory.
+    #[inline]
+    #[must_use]
+    pub fn data(&self) -> &[u8] {
+        self.data.as_slice()
     }
 
     /// Returns the build seed.
@@ -195,6 +205,13 @@ impl CompiledProgram {
     #[must_use]
     pub const fn hardened_timing_cycles(&self) -> u64 {
         self.hardened_timing_cycles
+    }
+
+    /// Returns the maximum stack-argument count across all protected functions.
+    #[inline]
+    #[must_use]
+    pub const fn stack_args(&self) -> u8 {
+        self.stack_args
     }
 
     /// Returns compilation statistics.
@@ -306,6 +323,8 @@ fn finalize(
     bodies: &ByteBuf<MAX_PAYLOAD>,
     entries: &BoundedVec<ManifestEntry, MAX_BLOCKS>,
     entry_states: BoundedVec<[u64; 2], MAX_FUNCTIONS>,
+    data: ByteBuf<MAX_DATA_BYTES>,
+    stack_args: u8,
     stats: ProgramStats,
 ) -> Result<CompiledProgram> {
     let count = entries.len();
@@ -445,6 +464,7 @@ fn finalize(
     };
     Ok(CompiledProgram {
         payload,
+        data,
         seed: *seed,
         entry_states,
         expected_hash,
@@ -455,6 +475,7 @@ fn finalize(
         constant_time_passes,
         hardened,
         hardened_timing_cycles,
+        stack_args,
         stats: final_stats,
     })
 }
@@ -919,6 +940,22 @@ pub fn compile(
     } else {
         options.constant_time_passes
     };
+    let mut data = ByteBuf::<MAX_DATA_BYTES>::new();
+    let mut expected_data_base = 0_usize;
+    let mut stack_args = 0_u8;
+    for function in functions {
+        stack_args = stack_args.max(function.stack_args);
+        if function.data_base != expected_data_base {
+            return Err(CoreError::InvalidPlan);
+        }
+        data.extend_from_slice(function.data.as_slice())?;
+        expected_data_base = expected_data_base
+            .checked_add(function.data.len())
+            .ok_or(CoreError::ArithmeticOverflow)?;
+        if expected_data_base > MAX_DATA_BYTES {
+            return Err(CoreError::PayloadTooLarge);
+        }
+    }
     finalize(
         &seed,
         options.fuel,
@@ -930,6 +967,8 @@ pub fn compile(
         &bodies,
         &entries,
         entry_states,
+        data,
+        stack_args,
         summary_stats,
     )
 }

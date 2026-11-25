@@ -4,15 +4,15 @@
 //! control flow, never guess a semantic, and reset flag knowledge at every basic
 //! block boundary so cross-block flag liveness fails closed.
 
-use crate::decode::{Condition, Instruction, MemoryOperand, Mnemonic, Operand, decode};
+use crate::decode::{Condition, Instruction, MemoryOperand, Mnemonic, Operand, SseOp, decode};
 use crate::error::{CoreError, DecodeError, DecodeReason, Result};
 use crate::ir::{
-    Block, BoundedVec, IrOp, LiftedFunction, MAX_BLOCKS, MAX_FUNCTION_BYTES, MAX_IR_OPS,
-    Terminator, Width,
+    Block, BoundedVec, ByteBuf, IrOp, LiftedFunction, MAX_BLOCKS, MAX_DATA_BYTES,
+    MAX_FUNCTION_BYTES, MAX_IR_OPS, MAX_STACK_ARGS, Terminator, Width,
 };
 use crate::shared::format::{
     REG_CF, REG_OF, REG_ONE, REG_RAX, REG_RBP, REG_RSP, REG_SF, REG_TMP0, REG_TMP1, REG_TMP2,
-    REG_TMP3, REG_ZERO, REG_ZF,
+    REG_TMP3, REG_XMM_BASE, REG_ZERO, REG_ZF,
 };
 
 const FLAG_ZF: u8 = 1;
@@ -22,6 +22,31 @@ const FLAG_OF: u8 = 8;
 const FLAG_ALL: u8 = FLAG_ZF | FLAG_CF | FLAG_SF | FLAG_OF;
 const MAX_QUEUE: usize = 1024;
 const INSTRUCTION_LIMIT: usize = MAX_FUNCTION_BYTES;
+const MAX_DATA_REFS: usize = 64;
+const RIP_WINDOW: usize = 256;
+
+/// Resolves read-only bytes from the input image for RIP-relative operands.
+pub trait BinaryData {
+    /// Returns `len` bytes at virtual address `va`, or `None` when the address
+    /// is not readable read-only data.
+    fn read_readonly(&self, va: u64, len: usize) -> Option<&[u8]>;
+}
+
+struct EmptyData;
+
+impl BinaryData for EmptyData {
+    #[inline]
+    fn read_readonly(&self, _va: u64, _len: usize) -> Option<&[u8]> {
+        None
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct DataRef {
+    va: u64,
+    offset: usize,
+    len: usize,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FlagKind {
@@ -33,17 +58,24 @@ enum FlagKind {
     Dec,
 }
 
-struct Lifter {
+struct Lifter<'a> {
     code_len: usize,
     base_va: u64,
     leaders: BoundedVec<u32, MAX_BLOCKS>,
     blocks: BoundedVec<Block, MAX_BLOCKS>,
     ops: BoundedVec<IrOp, MAX_IR_OPS>,
     error_offset: u64,
+    reader: &'a dyn BinaryData,
+    data: ByteBuf<MAX_DATA_BYTES>,
+    data_refs: BoundedVec<DataRef, MAX_DATA_REFS>,
+    data_base: usize,
+    current_va: u64,
+    current_len: u8,
+    max_stack_args: u8,
 }
 
-impl Lifter {
-    fn new(code_len: usize, base_va: u64) -> Self {
+impl<'a> Lifter<'a> {
+    fn new(code_len: usize, base_va: u64, reader: &'a dyn BinaryData, data_base: usize) -> Self {
         Self {
             code_len,
             base_va,
@@ -51,6 +83,13 @@ impl Lifter {
             blocks: BoundedVec::new(),
             ops: BoundedVec::new(),
             error_offset: base_va,
+            reader,
+            data: ByteBuf::new(),
+            data_refs: BoundedVec::new(),
+            data_base,
+            current_va: base_va,
+            current_len: 0,
+            max_stack_args: 0,
         }
     }
 
@@ -157,12 +196,126 @@ impl Lifter {
         self.shr_s_imm(register, u64::from(shift))
     }
 
-    fn compute_address(&mut self, memory: &MemoryOperand) -> Result<()> {
-        if memory.rip_relative {
+    fn resolve_rip_data(&mut self, va: u64, width: usize) -> Result<usize> {
+        for reference in &self.data_refs {
+            let end = reference
+                .va
+                .checked_add(u64::try_from(reference.len).unwrap_or(u64::MAX))
+                .ok_or(CoreError::ArithmeticOverflow)?;
+            let requested_end = va
+                .checked_add(u64::try_from(width).unwrap_or(u64::MAX))
+                .ok_or(CoreError::ArithmeticOverflow)?;
+            if va >= reference.va && requested_end <= end {
+                let delta = usize::try_from(va.saturating_sub(reference.va))
+                    .map_err(|_| CoreError::ArithmeticOverflow)?;
+                return reference
+                    .offset
+                    .checked_add(delta)
+                    .ok_or(CoreError::ArithmeticOverflow);
+            }
+        }
+        let start = va & !0x0f;
+        let lead =
+            usize::try_from(va.saturating_sub(start)).map_err(|_| CoreError::ArithmeticOverflow)?;
+        let needed = lead
+            .checked_add(width)
+            .ok_or(CoreError::ArithmeticOverflow)?;
+        let mut selected = None;
+        for length in [RIP_WINDOW, 128, 64, 32, 16, 8] {
+            if length < needed {
+                continue;
+            }
+            if let Some(bytes) = self.reader.read_readonly(start, length) {
+                selected = Some(bytes);
+                break;
+            }
+        }
+        let Some(bytes) = selected else {
             return Err(CoreError::Decode(DecodeError {
                 offset: self.error_offset,
                 reason: DecodeReason::RipRelativeMemory,
             }));
+        };
+        if bytes.len() < needed {
+            return Err(CoreError::Decode(DecodeError {
+                offset: self.error_offset,
+                reason: DecodeReason::RipRelativeMemory,
+            }));
+        }
+        let offset = self.data.len();
+        self.data.extend_from_slice(bytes)?;
+        self.data_refs.push(DataRef {
+            va: start,
+            offset,
+            len: bytes.len(),
+        })?;
+        offset
+            .checked_add(lead)
+            .ok_or(CoreError::ArithmeticOverflow)
+    }
+
+    fn note_stack_access(&mut self, memory: &MemoryOperand) -> Result<()> {
+        if memory.rip_relative {
+            return Ok(());
+        }
+        let Some(base) = memory.base else {
+            return Ok(());
+        };
+        let (threshold, bias) = if base == REG_RBP {
+            (16_i64, 16_i64)
+        } else if base == REG_RSP {
+            (8_i64, 8_i64)
+        } else {
+            return Ok(());
+        };
+        if memory.disp < threshold {
+            return Ok(());
+        }
+        let relative = usize::try_from(memory.disp.saturating_sub(bias))
+            .map_err(|_| CoreError::ArithmeticOverflow)?;
+        let count = relative / 8 + 1;
+        if count > MAX_STACK_ARGS {
+            return Err(CoreError::Decode(DecodeError {
+                offset: self.error_offset,
+                reason: DecodeReason::UnsupportedForm,
+            }));
+        }
+        self.max_stack_args = self
+            .max_stack_args
+            .max(u8::try_from(count).map_err(|_| CoreError::ArithmeticOverflow)?);
+        Ok(())
+    }
+
+    fn compute_address(&mut self, memory: &MemoryOperand, load_width: Option<u8>) -> Result<()> {
+        self.note_stack_access(memory)?;
+        if memory.rip_relative {
+            if memory.base.is_some() || memory.index.is_some() {
+                return Err(CoreError::Decode(DecodeError {
+                    offset: self.error_offset,
+                    reason: DecodeReason::UnsupportedAddressing,
+                }));
+            }
+            let next = self
+                .current_va
+                .checked_add(u64::from(self.current_len))
+                .ok_or(CoreError::ArithmeticOverflow)?;
+            let target = next
+                .checked_add_signed(memory.disp)
+                .ok_or(CoreError::Decode(DecodeError {
+                    offset: self.error_offset,
+                    reason: DecodeReason::RipRelativeMemory,
+                }))?;
+            let width = usize::from(load_width.unwrap_or(8).max(1));
+            let offset = self.resolve_rip_data(target, width)?;
+            let address = self
+                .data_base
+                .checked_add(offset)
+                .ok_or(CoreError::ArithmeticOverflow)?;
+            self.mov_imm(
+                REG_TMP3,
+                u64::try_from(address).map_err(|_| CoreError::ArithmeticOverflow)?,
+            )?;
+            return Ok(());
         }
         let Some(base) = memory.base else {
             return Err(CoreError::Decode(DecodeError {
@@ -201,7 +354,7 @@ impl Lifter {
             }
             Operand::Imm { value, .. } => self.mov_imm(target, value & width.mask()),
             Operand::Mem(memory) => {
-                self.compute_address(&memory)?;
+                self.compute_address(&memory, Some(width.bytes()))?;
                 self.emit(IrOp::Load {
                     dst: target,
                     addr: REG_TMP3,
@@ -247,10 +400,16 @@ impl Lifter {
         match operand {
             Operand::Reg { index, .. } => self.write_register(index, width, value),
             Operand::Mem(memory) => {
+                if memory.rip_relative {
+                    return Err(CoreError::Decode(DecodeError {
+                        offset: self.error_offset,
+                        reason: DecodeReason::RipRelativeMemory,
+                    }));
+                }
                 if value != REG_TMP0 {
                     self.mov(REG_TMP0, value)?;
                 }
-                self.compute_address(&memory)?;
+                self.compute_address(&memory, None)?;
                 self.emit(IrOp::Store {
                     addr: REG_TMP3,
                     src: REG_TMP0,
@@ -433,6 +592,437 @@ impl Lifter {
         self.write_operand(instruction.dst, width, REG_TMP2)
     }
 
+    const fn xmm_low(index: u8) -> u8 {
+        REG_XMM_BASE.saturating_add(index.saturating_mul(2))
+    }
+
+    const fn xmm_high(index: u8) -> u8 {
+        Self::xmm_low(index).saturating_add(1)
+    }
+
+    fn read_sse_scratch(&mut self, operand: Operand) -> Result<()> {
+        match operand {
+            Operand::Xmm { index } => {
+                self.mov(REG_TMP0, Self::xmm_low(index))?;
+                self.mov(REG_TMP1, Self::xmm_high(index))
+            }
+            Operand::Mem(memory) => {
+                self.compute_address(&memory, Some(16))?;
+                self.emit(IrOp::Load {
+                    dst: REG_TMP0,
+                    addr: REG_TMP3,
+                    width: Width::W64,
+                })?;
+                self.add_imm(REG_TMP3, 8)?;
+                self.emit(IrOp::Load {
+                    dst: REG_TMP1,
+                    addr: REG_TMP3,
+                    width: Width::W64,
+                })
+            }
+            _ => Err(CoreError::Decode(DecodeError {
+                offset: self.error_offset,
+                reason: DecodeReason::UnsupportedForm,
+            })),
+        }
+    }
+
+    fn write_sse_value(&mut self, operand: Operand, index: u8) -> Result<()> {
+        match operand {
+            Operand::Xmm { index: target } => {
+                self.mov(Self::xmm_low(target), Self::xmm_low(index))?;
+                self.mov(Self::xmm_high(target), Self::xmm_high(index))
+            }
+            Operand::Mem(memory) => {
+                if memory.rip_relative {
+                    return Err(CoreError::Decode(DecodeError {
+                        offset: self.error_offset,
+                        reason: DecodeReason::RipRelativeMemory,
+                    }));
+                }
+                self.compute_address(&memory, None)?;
+                self.emit(IrOp::Store {
+                    addr: REG_TMP3,
+                    src: Self::xmm_low(index),
+                    width: Width::W64,
+                })?;
+                self.add_imm(REG_TMP3, 8)?;
+                self.emit(IrOp::Store {
+                    addr: REG_TMP3,
+                    src: Self::xmm_high(index),
+                    width: Width::W64,
+                })
+            }
+            _ => Err(CoreError::Decode(DecodeError {
+                offset: self.error_offset,
+                reason: DecodeReason::UnsupportedForm,
+            })),
+        }
+    }
+
+    fn lower_sse_lane32(&mut self, index: u8, subtract: bool) -> Result<()> {
+        let halves = [Self::xmm_low(index), Self::xmm_high(index)];
+        let sources = [REG_TMP0, REG_TMP1];
+        for (half, source) in halves.into_iter().zip(sources) {
+            self.mov(REG_TMP2, half)?;
+            self.and_imm(REG_TMP2, 0xffff_ffff)?;
+            self.mov(REG_TMP3, source)?;
+            self.and_imm(REG_TMP3, 0xffff_ffff)?;
+            if subtract {
+                self.sub(REG_TMP2, REG_TMP3)?;
+            } else {
+                self.add(REG_TMP2, REG_TMP3)?;
+            }
+            self.and_imm(REG_TMP2, 0xffff_ffff)?;
+            self.mov(REG_TMP3, half)?;
+            self.shr_u_imm(REG_TMP3, 32)?;
+            self.and_imm(REG_TMP3, 0xffff_ffff)?;
+            self.shr_u_imm(source, 32)?;
+            self.and_imm(source, 0xffff_ffff)?;
+            if subtract {
+                self.sub(REG_TMP3, source)?;
+            } else {
+                self.add(REG_TMP3, source)?;
+            }
+            self.and_imm(REG_TMP3, 0xffff_ffff)?;
+            self.shl_imm(REG_TMP3, 32)?;
+            self.or(REG_TMP2, REG_TMP3)?;
+            self.mov(half, REG_TMP2)?;
+        }
+        Ok(())
+    }
+
+    fn lower_sse_pmuludq(&mut self, index: u8) -> Result<()> {
+        let halves = [Self::xmm_low(index), Self::xmm_high(index)];
+        let sources = [REG_TMP0, REG_TMP1];
+        for (half, source) in halves.into_iter().zip(sources) {
+            self.mov(REG_TMP2, half)?;
+            self.and_imm(REG_TMP2, 0xffff_ffff)?;
+            self.mov(REG_TMP3, source)?;
+            self.and_imm(REG_TMP3, 0xffff_ffff)?;
+            self.emit(IrOp::Mul {
+                dst: REG_TMP2,
+                src: REG_TMP3,
+            })?;
+            self.mov(half, REG_TMP2)?;
+        }
+        Ok(())
+    }
+
+    fn lower_sse_punpck(&mut self, index: u8, high: bool) -> Result<()> {
+        let low = Self::xmm_low(index);
+        let top = Self::xmm_high(index);
+        if high {
+            self.mov(REG_TMP2, top)?;
+            self.mov(low, REG_TMP2)?;
+            self.mov(top, REG_TMP1)
+        } else {
+            self.mov(top, REG_TMP0)
+        }
+    }
+
+    fn lower_sse_movq_load(&mut self, instruction: &Instruction) -> Result<()> {
+        let Operand::Xmm { index } = instruction.dst else {
+            return Err(CoreError::Decode(DecodeError {
+                offset: self.error_offset,
+                reason: DecodeReason::UnsupportedForm,
+            }));
+        };
+        let low = Self::xmm_low(index);
+        let top = Self::xmm_high(index);
+        match instruction.src {
+            Operand::Xmm { index: source } => {
+                self.mov(low, Self::xmm_low(source))?;
+                self.mov_imm(top, 0)
+            }
+            Operand::Mem(memory) => {
+                self.compute_address(&memory, Some(8))?;
+                self.emit(IrOp::Load {
+                    dst: low,
+                    addr: REG_TMP3,
+                    width: Width::W64,
+                })?;
+                self.mov_imm(top, 0)
+            }
+            _ => Err(CoreError::Decode(DecodeError {
+                offset: self.error_offset,
+                reason: DecodeReason::UnsupportedForm,
+            })),
+        }
+    }
+
+    fn lower_sse_movq_store(&mut self, instruction: &Instruction) -> Result<()> {
+        let Operand::Xmm { index } = instruction.src else {
+            return Err(CoreError::Decode(DecodeError {
+                offset: self.error_offset,
+                reason: DecodeReason::UnsupportedForm,
+            }));
+        };
+        let low = Self::xmm_low(index);
+        match instruction.dst {
+            Operand::Xmm { index: target } => {
+                self.mov(Self::xmm_low(target), low)?;
+                self.mov_imm(Self::xmm_high(target), 0)
+            }
+            Operand::Mem(memory) => {
+                if memory.rip_relative {
+                    return Err(CoreError::Decode(DecodeError {
+                        offset: self.error_offset,
+                        reason: DecodeReason::RipRelativeMemory,
+                    }));
+                }
+                self.compute_address(&memory, None)?;
+                self.emit(IrOp::Store {
+                    addr: REG_TMP3,
+                    src: low,
+                    width: Width::W64,
+                })
+            }
+            _ => Err(CoreError::Decode(DecodeError {
+                offset: self.error_offset,
+                reason: DecodeReason::UnsupportedForm,
+            })),
+        }
+    }
+
+    fn lower_sse_shift(&mut self, index: u8, shift: u8, left: bool) -> Result<()> {
+        let low = Self::xmm_low(index);
+        let high = Self::xmm_high(index);
+        if shift >= 16 {
+            self.mov_imm(low, 0)?;
+            self.mov_imm(high, 0)?;
+            return Ok(());
+        }
+        if shift == 0 {
+            return Ok(());
+        }
+        let bits = u64::from(shift).saturating_mul(8);
+        if left {
+            if shift < 8 {
+                self.mov(REG_TMP0, high)?;
+                self.shl_imm(REG_TMP0, bits)?;
+                self.mov(REG_TMP1, low)?;
+                self.shr_u_imm(REG_TMP1, 64_u64.saturating_sub(bits))?;
+                self.or(REG_TMP0, REG_TMP1)?;
+                self.shl_imm(low, bits)?;
+            } else {
+                self.mov(REG_TMP0, low)?;
+                self.shl_imm(
+                    REG_TMP0,
+                    u64::from(shift.saturating_sub(8)).saturating_mul(8),
+                )?;
+                self.mov_imm(low, 0)?;
+            }
+            self.mov(high, REG_TMP0)
+        } else if shift < 8 {
+            self.mov(REG_TMP0, low)?;
+            self.shr_u_imm(REG_TMP0, bits)?;
+            self.mov(REG_TMP1, high)?;
+            self.shl_imm(REG_TMP1, 64_u64.saturating_sub(bits))?;
+            self.or(REG_TMP0, REG_TMP1)?;
+            self.shr_u_imm(high, bits)?;
+            self.mov(low, REG_TMP0)
+        } else {
+            self.mov(REG_TMP0, high)?;
+            self.shr_u_imm(
+                REG_TMP0,
+                u64::from(shift.saturating_sub(8)).saturating_mul(8),
+            )?;
+            self.mov(low, REG_TMP0)?;
+            self.mov_imm(high, 0)
+        }
+    }
+
+    fn lower_sse_movq_to_gpr(&mut self, instruction: &Instruction) -> Result<()> {
+        let Operand::Xmm { index } = instruction.src else {
+            return Err(CoreError::Decode(DecodeError {
+                offset: self.error_offset,
+                reason: DecodeReason::UnsupportedForm,
+            }));
+        };
+        self.mov(REG_TMP0, Self::xmm_low(index))?;
+        match instruction.dst {
+            Operand::Reg { index: dst, .. } => {
+                self.write_register(dst, instruction.width, REG_TMP0)
+            }
+            Operand::Mem(_) => self.write_operand(instruction.dst, instruction.width, REG_TMP0),
+            _ => Err(CoreError::Decode(DecodeError {
+                offset: self.error_offset,
+                reason: DecodeReason::UnsupportedForm,
+            })),
+        }
+    }
+
+    fn lower_sse_movq_from_gpr(&mut self, instruction: &Instruction) -> Result<()> {
+        let Operand::Xmm { index } = instruction.dst else {
+            return Err(CoreError::Decode(DecodeError {
+                offset: self.error_offset,
+                reason: DecodeReason::UnsupportedForm,
+            }));
+        };
+        self.read_operand_into(instruction.src, instruction.width, REG_TMP0)?;
+        self.mov(Self::xmm_low(index), REG_TMP0)?;
+        self.mov_imm(Self::xmm_high(index), 0)
+    }
+
+    fn lower_sse(
+        &mut self,
+        instruction: &Instruction,
+        operation: SseOp,
+    ) -> Result<Option<Terminator>> {
+        match operation {
+            SseOp::MovdquLoad | SseOp::MovdqaLoad => {
+                let Operand::Xmm { index } = instruction.dst else {
+                    return Err(CoreError::Decode(DecodeError {
+                        offset: self.error_offset,
+                        reason: DecodeReason::UnsupportedForm,
+                    }));
+                };
+                match instruction.src {
+                    Operand::Xmm { index: source } => {
+                        self.mov(Self::xmm_low(index), Self::xmm_low(source))?;
+                        self.mov(Self::xmm_high(index), Self::xmm_high(source))?;
+                    }
+                    Operand::Mem(memory) => {
+                        self.compute_address(&memory, Some(16))?;
+                        self.emit(IrOp::Load {
+                            dst: Self::xmm_low(index),
+                            addr: REG_TMP3,
+                            width: Width::W64,
+                        })?;
+                        self.add_imm(REG_TMP3, 8)?;
+                        self.emit(IrOp::Load {
+                            dst: Self::xmm_high(index),
+                            addr: REG_TMP3,
+                            width: Width::W64,
+                        })?;
+                    }
+                    _ => {
+                        return Err(CoreError::Decode(DecodeError {
+                            offset: self.error_offset,
+                            reason: DecodeReason::UnsupportedForm,
+                        }));
+                    }
+                }
+            }
+            SseOp::MovdquStore | SseOp::MovdqaStore => {
+                let Operand::Xmm { index } = instruction.src else {
+                    return Err(CoreError::Decode(DecodeError {
+                        offset: self.error_offset,
+                        reason: DecodeReason::UnsupportedForm,
+                    }));
+                };
+                self.write_sse_value(instruction.dst, index)?;
+            }
+            SseOp::Pxor | SseOp::Pand | SseOp::Por | SseOp::Paddq | SseOp::Psubq => {
+                let Operand::Xmm { index } = instruction.dst else {
+                    return Err(CoreError::Decode(DecodeError {
+                        offset: self.error_offset,
+                        reason: DecodeReason::UnsupportedForm,
+                    }));
+                };
+                self.read_sse_scratch(instruction.src)?;
+                let low = Self::xmm_low(index);
+                let high = Self::xmm_high(index);
+                match operation {
+                    SseOp::Pxor => {
+                        self.xor(low, REG_TMP0)?;
+                        self.xor(high, REG_TMP1)?;
+                    }
+                    SseOp::Pand => {
+                        self.and(low, REG_TMP0)?;
+                        self.and(high, REG_TMP1)?;
+                    }
+                    SseOp::Por => {
+                        self.or(low, REG_TMP0)?;
+                        self.or(high, REG_TMP1)?;
+                    }
+                    SseOp::Paddq => {
+                        self.add(low, REG_TMP0)?;
+                        self.add(high, REG_TMP1)?;
+                    }
+                    SseOp::Psubq => {
+                        self.sub(low, REG_TMP0)?;
+                        self.sub(high, REG_TMP1)?;
+                    }
+                    SseOp::MovdquLoad
+                    | SseOp::MovdquStore
+                    | SseOp::MovdqaLoad
+                    | SseOp::MovdqaStore
+                    | SseOp::Psrldq { .. }
+                    | SseOp::Pslldq { .. }
+                    | SseOp::MovqToGpr
+                    | SseOp::MovqFromGpr
+                    | SseOp::Paddd
+                    | SseOp::Psubd
+                    | SseOp::Pmuludq
+                    | SseOp::Punpcklqdq
+                    | SseOp::Punpckhqdq
+                    | SseOp::MovqLoad
+                    | SseOp::MovqStore => {
+                        return Err(CoreError::Decode(DecodeError {
+                            offset: self.error_offset,
+                            reason: DecodeReason::UnsupportedForm,
+                        }));
+                    }
+                }
+            }
+            SseOp::Paddd | SseOp::Psubd => {
+                let Operand::Xmm { index } = instruction.dst else {
+                    return Err(CoreError::Decode(DecodeError {
+                        offset: self.error_offset,
+                        reason: DecodeReason::UnsupportedForm,
+                    }));
+                };
+                self.read_sse_scratch(instruction.src)?;
+                self.lower_sse_lane32(index, matches!(operation, SseOp::Psubd))?;
+            }
+            SseOp::Pmuludq => {
+                let Operand::Xmm { index } = instruction.dst else {
+                    return Err(CoreError::Decode(DecodeError {
+                        offset: self.error_offset,
+                        reason: DecodeReason::UnsupportedForm,
+                    }));
+                };
+                self.read_sse_scratch(instruction.src)?;
+                self.lower_sse_pmuludq(index)?;
+            }
+            SseOp::Punpcklqdq | SseOp::Punpckhqdq => {
+                let Operand::Xmm { index } = instruction.dst else {
+                    return Err(CoreError::Decode(DecodeError {
+                        offset: self.error_offset,
+                        reason: DecodeReason::UnsupportedForm,
+                    }));
+                };
+                self.read_sse_scratch(instruction.src)?;
+                self.lower_sse_punpck(index, matches!(operation, SseOp::Punpckhqdq))?;
+            }
+            SseOp::MovqLoad => self.lower_sse_movq_load(instruction)?,
+            SseOp::MovqStore => self.lower_sse_movq_store(instruction)?,
+            SseOp::Psrldq { shift } => {
+                let Operand::Xmm { index } = instruction.dst else {
+                    return Err(CoreError::Decode(DecodeError {
+                        offset: self.error_offset,
+                        reason: DecodeReason::UnsupportedForm,
+                    }));
+                };
+                self.lower_sse_shift(index, shift, false)?;
+            }
+            SseOp::Pslldq { shift } => {
+                let Operand::Xmm { index } = instruction.dst else {
+                    return Err(CoreError::Decode(DecodeError {
+                        offset: self.error_offset,
+                        reason: DecodeReason::UnsupportedForm,
+                    }));
+                };
+                self.lower_sse_shift(index, shift, true)?;
+            }
+            SseOp::MovqToGpr => self.lower_sse_movq_to_gpr(instruction)?,
+            SseOp::MovqFromGpr => self.lower_sse_movq_from_gpr(instruction)?,
+        }
+        Ok(None)
+    }
+
     fn lower_instruction(
         &mut self,
         instruction: &Instruction,
@@ -441,6 +1031,7 @@ impl Lifter {
         self.error_offset = instruction.offset;
         match instruction.mnemonic {
             Mnemonic::Nop | Mnemonic::Endbr => Ok(None),
+            Mnemonic::Sse(operation) => self.lower_sse(instruction, operation),
             Mnemonic::Mov => {
                 let width = instruction.width;
                 self.read_operand_into(instruction.src, width, REG_TMP0)?;
@@ -475,7 +1066,7 @@ impl Lifter {
                         reason: DecodeReason::UnsupportedForm,
                     }));
                 };
-                self.compute_address(&memory)?;
+                self.compute_address(&memory, None)?;
                 match instruction.dst {
                     Operand::Reg { index, .. } => {
                         self.write_register(index, instruction.width, REG_TMP3)?;
@@ -853,6 +1444,8 @@ impl Lifter {
                     self.base_va
                         .wrapping_add(u64::try_from(cursor).unwrap_or(u64::MAX)),
                 )?;
+                self.current_va = instruction.offset;
+                self.current_len = instruction.length;
                 let length = usize::from(instruction.length);
                 let end = cursor
                     .checked_add(length)
@@ -1002,6 +1595,8 @@ impl Lifter {
                     self.base_va
                         .wrapping_add(u64::try_from(cursor).unwrap_or(u64::MAX)),
                 )?;
+                self.current_va = instruction.offset;
+                self.current_len = instruction.length;
                 let length = usize::from(instruction.length);
                 let end = cursor
                     .checked_add(length)
@@ -1045,7 +1640,7 @@ const fn operand_width(operand: Operand) -> Option<Width> {
     }
 }
 
-/// Lifts one bounded native function.
+/// Lifts one bounded native function without embedded read-only data.
 ///
 /// Returns a fully validated CFG. Any unsupported, ambiguous, overlapping, or
 /// out-of-range instruction rejects the whole function.
@@ -1057,12 +1652,33 @@ const fn operand_width(operand: Operand) -> Option<Width> {
 /// unknown flags, and fixed-capacity exhaustion.
 #[inline]
 pub fn lift_function(code: &[u8], base_va: u64) -> Result<LiftedFunction> {
+    lift_function_with_data(code, base_va, &EmptyData, 0)
+}
+
+/// Lifts one bounded native function and resolves read-only RIP-relative data.
+///
+/// `data_base` is the program-wide private-memory offset assigned to this
+/// function's embedded data. The caller must lay out functions in the same
+/// order when concatenating their data.
+///
+/// # Errors
+///
+/// Returns a typed error for empty or oversized functions, malformed or
+/// unsupported instructions, overlapping decode paths, invalid branch targets,
+/// unknown flags, unreadable RIP-relative data, and fixed-capacity exhaustion.
+#[inline]
+pub fn lift_function_with_data(
+    code: &[u8],
+    base_va: u64,
+    reader: &dyn BinaryData,
+    data_base: usize,
+) -> Result<LiftedFunction> {
     if code.is_empty() || code.len() > MAX_FUNCTION_BYTES {
         return Err(CoreError::InvalidFunctionSize {
             size: u64::try_from(code.len()).unwrap_or(u64::MAX),
         });
     }
-    let mut lifter = Lifter::new(code.len(), base_va);
+    let mut lifter = Lifter::new(code.len(), base_va, reader, data_base);
     lifter.discover(code)?;
     lifter.build(code)?;
     if lifter.blocks.is_empty() {
@@ -1073,12 +1689,15 @@ pub fn lift_function(code: &[u8], base_va: u64) -> Result<LiftedFunction> {
         blocks: lifter.blocks,
         ops: lifter.ops,
         byte_len: u64::try_from(code.len()).unwrap_or(u64::MAX),
+        data: lifter.data,
+        data_base: lifter.data_base,
+        stack_args: lifter.max_stack_args,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{FlagKind, Lifter, lift_function};
+    use super::{BinaryData, EmptyData, FlagKind, Lifter, lift_function, lift_function_with_data};
     use crate::error::CoreError;
     use crate::ir::Terminator;
     use crate::shared::format::{REG_RAX, REG_RDI, REG_RSI};
@@ -1098,7 +1717,12 @@ mod tests {
                 assert!(block.ops_len > 0);
             }
         }
-        let _ = (REG_RDI, REG_RSI, FlagKind::Add, Lifter::new(1, 0));
+        let _ = (
+            REG_RDI,
+            REG_RSI,
+            FlagKind::Add,
+            Lifter::new(1, 0, &EmptyData, 0),
+        );
     }
 
     #[test]
@@ -1167,6 +1791,99 @@ mod tests {
     fn rejects_empty_function() {
         assert!(lift_function(&[], 0).is_err());
     }
+    struct TestData<'a> {
+        base: u64,
+        bytes: &'a [u8],
+    }
+
+    impl BinaryData for TestData<'_> {
+        fn read_readonly(&self, va: u64, len: usize) -> Option<&[u8]> {
+            if va != self.base || len > self.bytes.len() {
+                return None;
+            }
+            self.bytes.get(..len)
+        }
+    }
+
+    #[test]
+    fn lifts_sse2_register_and_memory_forms() {
+        let code = [0x66, 0x0f, 0xef, 0xc0, 0x66, 0x0f, 0xd4, 0xc0, 0xc3];
+        let function = lift_function(&code, 0x1000).expect("sse lift");
+        assert!(
+            function
+                .ops
+                .as_slice()
+                .iter()
+                .any(|operation| { matches!(operation, crate::ir::IrOp::Xor { dst: 64, .. }) })
+        );
+        assert!(
+            function
+                .ops
+                .as_slice()
+                .iter()
+                .any(|operation| { matches!(operation, crate::ir::IrOp::Add { dst: 64, .. }) })
+        );
+        assert!(
+            function
+                .ops
+                .as_slice()
+                .iter()
+                .any(|operation| { matches!(operation, crate::ir::IrOp::Xor { dst: 65, .. }) })
+        );
+    }
+
+    #[test]
+    fn lifts_rip_relative_read_only_load() {
+        let bytes = [
+            0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
+        ];
+        let reader = TestData {
+            base: 0x2000,
+            bytes: &bytes,
+        };
+        let code = [0x48, 0x8b, 0x05, 0xf9, 0x0f, 0x00, 0x00, 0xc3];
+        let function = lift_function_with_data(&code, 0x1000, &reader, 0).expect("rip load");
+        assert_eq!(function.data.len(), 16);
+        assert_eq!(
+            function.data.as_slice().get(..8),
+            Some(bytes.get(..8).unwrap_or(&[]))
+        );
+        assert!(
+            function
+                .ops
+                .as_slice()
+                .iter()
+                .any(|operation| { matches!(operation, crate::ir::IrOp::MovImm { value: 0, .. }) })
+        );
+        assert!(
+            function
+                .ops
+                .as_slice()
+                .iter()
+                .any(|operation| matches!(operation, crate::ir::IrOp::Load { .. }))
+        );
+    }
+
+    #[test]
+    fn lifts_rip_relative_lea_and_rejects_store() {
+        let bytes = [0xaa_u8; 16];
+        let reader = TestData {
+            base: 0x3000,
+            bytes: &bytes,
+        };
+        let lea = [0x48, 0x8d, 0x05, 0xf9, 0x1f, 0x00, 0x00, 0xc3];
+        let function = lift_function_with_data(&lea, 0x1000, &reader, 16).expect("rip lea");
+        assert_eq!(function.data.len(), 16);
+        assert!(
+            function.ops.as_slice().iter().any(|operation| {
+                matches!(operation, crate::ir::IrOp::MovImm { value: 16, .. })
+            })
+        );
+        let store = [0x48, 0x89, 0x05, 0xf9, 0x1f, 0x00, 0x00, 0xc3];
+        assert!(lift_function_with_data(&store, 0x1000, &reader, 0).is_err());
+    }
+
     #[test]
     fn lifts_stack_frame_and_leave() {
         let code = [

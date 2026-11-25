@@ -37,6 +37,8 @@ pub const PF_W: u32 = 2;
 pub const PF_R: u32 = 4;
 /// Allocated section.
 pub const SHF_ALLOC: u64 = 2;
+/// Section is writable.
+pub const SHF_WRITE: u64 = 1;
 /// Executable section.
 pub const SHF_EXECINSTR: u64 = 4;
 /// Progbits section type.

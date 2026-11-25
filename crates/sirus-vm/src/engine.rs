@@ -19,7 +19,8 @@ use crate::shared::format::{
     SEM_OR_RI, SEM_OR_RR, SEM_RET, SEM_ROTL_RI, SEM_ROTL_RR, SEM_ROTR_RI, SEM_ROTR_RR, SEM_SAR_RI,
     SEM_SAR_RR, SEM_SELECT_RRRR, SEM_SHL_RI, SEM_SHL_RR, SEM_SHR_RI, SEM_SHR_RR, SEM_STORE8,
     SEM_STORE16, SEM_STORE32, SEM_STORE64, SEM_SUB_RI, SEM_SUB_RR, SEM_TRAP, SEM_XOR_RI,
-    SEM_XOR_RR, VM_MEMORY_SIZE, VM_REGISTERS, VM_STACK_TOP, format,
+    SEM_XOR_RR, VM_DATA_LIMIT, VM_MEMORY_SIZE, VM_REGISTERS, VM_STACK_ARG_BASE, VM_STACK_ARG_SLOTS,
+    format,
 };
 
 /// Deterministic VM outcome.
@@ -57,6 +58,8 @@ pub struct Run {
 pub struct VmInput<'a> {
     /// Complete encrypted payload.
     pub payload: &'a [u8],
+    /// Read-only data installed into private memory at startup.
+    pub data: &'a [u8],
     /// Per-build plan seed.
     pub seed: &'a Seed,
     /// Integrity hash expected by the build.
@@ -84,8 +87,38 @@ impl<'a> VmInput<'a> {
         entry_states: &'a [[u64; 2]],
         fuel: u64,
     ) -> Self {
+        Self::with_data(
+            payload,
+            &[],
+            seed,
+            expected_hash,
+            base_a,
+            base_b,
+            entry_states,
+            fuel,
+        )
+    }
+
+    /// Constructs the runtime input with read-only data for RIP-relative operands.
+    #[inline]
+    #[must_use]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "runtime input is a flat fixed-shape descriptor"
+    )]
+    pub const fn with_data(
+        payload: &'a [u8],
+        data: &'a [u8],
+        seed: &'a Seed,
+        expected_hash: u64,
+        base_a: u64,
+        base_b: u64,
+        entry_states: &'a [[u64; 2]],
+        fuel: u64,
+    ) -> Self {
         Self {
             payload,
+            data,
             seed,
             expected_hash,
             base_a,
@@ -351,6 +384,53 @@ fn store_memory_with_key(
 }
 
 #[inline]
+fn install_stack_arguments(memory: &mut [u8], memory_key: u64, args: [u64; 6]) -> bool {
+    let base = usize::try_from(VM_STACK_ARG_BASE).unwrap_or(usize::MAX);
+    let mut slot = 0_usize;
+    while slot < VM_STACK_ARG_SLOTS.saturating_add(1) {
+        let value = if slot == 0 {
+            0_u64
+        } else {
+            args.get(slot.saturating_sub(1)).copied().unwrap_or(0)
+        };
+        let bytes = value.to_le_bytes();
+        let Some(offset) = base.checked_add(slot.saturating_mul(8)) else {
+            return false;
+        };
+        let mut index = 0_usize;
+        while index < 8 {
+            let Some(byte) = bytes.get(index).copied() else {
+                return false;
+            };
+            let Some(slot_byte) = memory.get_mut(offset.saturating_add(index)) else {
+                return false;
+            };
+            *slot_byte = byte ^ memory_mask(memory_key, offset.saturating_add(index));
+            index = index.saturating_add(1);
+        }
+        slot = slot.saturating_add(1);
+    }
+    true
+}
+
+fn install_data(memory: &mut [u8], memory_key: u64, data: &[u8]) -> bool {
+    if data.len() > VM_DATA_LIMIT || data.len() > memory.len() {
+        return false;
+    }
+    let mut index = 0_usize;
+    while index < data.len() {
+        let Some(byte) = data.get(index).copied() else {
+            return false;
+        };
+        let Some(slot) = memory.get_mut(index) else {
+            return false;
+        };
+        *slot = byte ^ memory_mask(memory_key, index);
+        index = index.saturating_add(1);
+    }
+    true
+}
+
 fn memory_mask(key: u64, address: usize) -> u8 {
     let mut value = key
         ^ u64::try_from(address)
@@ -804,6 +884,16 @@ pub fn execute_with_tables(
     args: [u64; 6],
     tables: &DecodeTables,
 ) -> Run {
+    execute_with_tables_and_stack(input, entry_index, args, [0_u64; 6], tables)
+}
+
+fn execute_with_tables_and_stack(
+    input: VmInput<'_>,
+    entry_index: usize,
+    args: [u64; 6],
+    stack_args: [u64; 6],
+    tables: &DecodeTables,
+) -> Run {
     let mut steps = 0_u64;
     let mut fuel = input.fuel;
     let actual_hash = payload_hash(input.seed, input.payload);
@@ -839,12 +929,18 @@ pub fn execute_with_tables(
     let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_RCX, argument3);
     let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_R8, argument4);
     let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_R9, argument5);
-    let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_RSP, VM_STACK_TOP);
+    let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_RSP, VM_STACK_ARG_BASE);
     let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_RAX, 0);
     let fill_byte = u8::try_from(fill_key & 0xff).unwrap_or(0);
     let mut memory: [u8; VM_MEMORY_SIZE] = core::array::from_fn(|index| {
         (u8::try_from(index & 0xff).unwrap_or(0) ^ fill_byte) ^ memory_mask(memory_key, index)
     });
+    if !install_data(&mut memory, memory_key, input.data) {
+        return halt(Status::BadPayload, steps);
+    }
+    if !install_stack_arguments(&mut memory, memory_key, stack_args) {
+        return halt(Status::BadPayload, steps);
+    }
 
     let mut tags = [0_u64; MAX_PAYLOAD_BLOCKS];
     let mut offsets = [0_u32; MAX_PAYLOAD_BLOCKS];
@@ -968,6 +1064,32 @@ pub fn execute_entry(
     }
 }
 
+/// Dispatches to normal or oblivious execution with stack arguments.
+#[inline]
+#[must_use]
+pub fn execute_entry_with_stack(
+    input: VmInput<'_>,
+    entry_index: usize,
+    args: [u64; 6],
+    stack_args: [u64; 6],
+    tables: &DecodeTables,
+    constant_time: bool,
+    passes: usize,
+) -> Run {
+    if constant_time {
+        execute_oblivious_with_tables_and_stack(
+            input,
+            entry_index,
+            args,
+            stack_args,
+            tables,
+            passes,
+        )
+    } else {
+        execute_with_tables_and_stack(input, entry_index, args, stack_args, tables)
+    }
+}
+
 /// Default fixed pass budget for oblivious execution.
 pub const DEFAULT_OBLIVIOUS_PASSES: usize = 256;
 
@@ -987,6 +1109,17 @@ pub fn execute_oblivious_with_tables(
     input: VmInput<'_>,
     entry_index: usize,
     args: [u64; 6],
+    tables: &DecodeTables,
+    passes: usize,
+) -> Run {
+    execute_oblivious_with_tables_and_stack(input, entry_index, args, [0_u64; 6], tables, passes)
+}
+
+fn execute_oblivious_with_tables_and_stack(
+    input: VmInput<'_>,
+    entry_index: usize,
+    args: [u64; 6],
+    stack_args: [u64; 6],
     tables: &DecodeTables,
     passes: usize,
 ) -> Run {
@@ -1025,12 +1158,18 @@ pub fn execute_oblivious_with_tables(
     let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_RCX, argument3);
     let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_R8, argument4);
     let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_R9, argument5);
-    let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_RSP, VM_STACK_TOP);
+    let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_RSP, VM_STACK_ARG_BASE);
     let _ = set_reg_value_raw(&mut registers, Some(&masks), REG_RAX, 0);
     let fill_byte = u8::try_from(fill_key & 0xff).unwrap_or(0);
     let mut memory: [u8; VM_MEMORY_SIZE] = core::array::from_fn(|index| {
         (u8::try_from(index & 0xff).unwrap_or(0) ^ fill_byte) ^ memory_mask(memory_key, index)
     });
+    if !install_data(&mut memory, memory_key, input.data) {
+        return halt(Status::BadPayload, steps);
+    }
+    if !install_stack_arguments(&mut memory, memory_key, stack_args) {
+        return halt(Status::BadPayload, steps);
+    }
 
     let Some(count_value) = read_manifest_u64_at(input.payload, key, 0, tables.manifest_big_endian)
     else {

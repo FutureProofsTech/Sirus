@@ -6,15 +6,16 @@ use std::io::Write;
 use std::path::Path;
 
 use sirus_binfmt::elf::{
-    Elf64, Injection, PF_X, PT_LOAD, STT_OBJECT, inject, overwrite_vaddr, patch_relative_jump,
+    Elf64, Injection, PF_X, PT_LOAD, SHF_WRITE, STT_OBJECT, inject, overwrite_vaddr,
+    patch_relative_jump,
 };
 use sirus_binfmt::pe::{
-    IMAGE_DIRECTORY_ENTRY_EXCEPTION, IMAGE_SCN_MEM_EXECUTE, Pe64, append_exception_table,
-    append_executable_section as append_pe_section, patch_relative_jump_rva, refresh_checksum,
-    write_data_directory,
+    IMAGE_DIRECTORY_ENTRY_EXCEPTION, IMAGE_SCN_MEM_EXECUTE, IMAGE_SCN_MEM_WRITE, Pe64,
+    append_exception_table, append_executable_section as append_pe_section,
+    patch_relative_jump_rva, refresh_checksum, write_data_directory,
 };
 use sirus_core::ir::MAX_FUNCTION_BYTES;
-use sirus_core::lifter::lift_function;
+use sirus_core::lifter::{BinaryData, lift_function_with_data};
 use sirus_core::program::{ProgramStats, compile};
 use sirus_core::shared::derive::Seed;
 
@@ -28,6 +29,55 @@ struct Target {
     name: String,
     va: u64,
     size: u64,
+}
+
+struct ElfReadOnly<'a> {
+    elf: &'a Elf64<'a>,
+}
+
+impl BinaryData for ElfReadOnly<'_> {
+    #[inline]
+    fn read_readonly(&self, va: u64, len: usize) -> Option<&[u8]> {
+        let size = u64::try_from(len).ok()?;
+        let end = va.checked_add(size)?;
+        let mut index = 0_usize;
+        while index < self.elf.section_headers().len() {
+            let section = self.elf.section_headers().get(index)?;
+            let section_end = section.sh_addr.checked_add(section.sh_size)?;
+            let contains = va >= section.sh_addr && end <= section_end;
+            if contains {
+                let writable = section.sh_flags & SHF_WRITE != 0;
+                let relro = self
+                    .elf
+                    .section_name(index)
+                    .is_some_and(|name| name.contains(".data.rel.ro"));
+                if writable && !relro {
+                    return None;
+                }
+                return self.elf.read_vaddr(va, size);
+            }
+            index = index.saturating_add(1);
+        }
+        None
+    }
+}
+
+struct PeReadOnly<'a> {
+    pe: &'a Pe64<'a>,
+    image_base: u64,
+}
+
+impl BinaryData for PeReadOnly<'_> {
+    #[inline]
+    fn read_readonly(&self, va: u64, len: usize) -> Option<&[u8]> {
+        let rva = u32::try_from(va.checked_sub(self.image_base)?).ok()?;
+        let size = u32::try_from(len).ok()?;
+        let section = self.pe.section_for_rva(rva, size)?;
+        if section.characteristics & IMAGE_SCN_MEM_WRITE != 0 {
+            return None;
+        }
+        self.pe.read_rva(rva, size)
+    }
 }
 
 /// Successful protection report.
@@ -235,13 +285,19 @@ pub fn protect(arguments: &ProtectArgs) -> Result<ProtectReport> {
         seed()
     };
     let mut lifted = Vec::with_capacity(targets.len());
+    let reader = ElfReadOnly { elf: &elf };
+    let mut data_base = 0_usize;
     for target in &targets {
         let code = elf
             .read_vaddr(target.va, target.size)
             .ok_or(ProtectError::Format(sirus_binfmt::FormatError::Bounds))?;
-        let function = lift_function(code, target.va).map_err(|error| {
-            ProtectError::context(format!("lift function {}", target.name), error.into())
-        })?;
+        let function =
+            lift_function_with_data(code, target.va, &reader, data_base).map_err(|error| {
+                ProtectError::context(format!("lift function {}", target.name), error.into())
+            })?;
+        data_base = data_base
+            .checked_add(function.data.len())
+            .ok_or_else(|| ProtectError::internal("ELF data layout overflow"))?;
         lifted.push(function);
     }
     let program = compile(&lifted, build_seed, arguments.options)
@@ -442,7 +498,8 @@ fn attach_windows_exceptions(
 
 #[allow(
     clippy::large_stack_frames,
-    reason = "PE protection owns the bounded lifted-program state"
+    clippy::too_many_lines,
+    reason = "PE protection owns the bounded lifted-program state and one linear injection transaction"
 )]
 fn protect_pe(arguments: &ProtectArgs, input: &[u8]) -> Result<ProtectReport> {
     let pe = Pe64::parse(input)?;
@@ -477,6 +534,11 @@ fn protect_pe(arguments: &ProtectArgs, input: &[u8]) -> Result<ProtectReport> {
         targets.push(target);
     }
     let mut functions = Vec::with_capacity(targets.len());
+    let reader = PeReadOnly {
+        pe: &pe,
+        image_base: pe.optional_header().image_base,
+    };
+    let mut data_base = 0_usize;
     for target in &targets {
         let rva = u32::try_from(target.va).map_err(|_| ProtectError::internal("PE target RVA"))?;
         let size =
@@ -489,7 +551,10 @@ fn protect_pe(arguments: &ProtectArgs, input: &[u8]) -> Result<ProtectReport> {
             .image_base
             .checked_add(u64::from(rva))
             .ok_or_else(|| ProtectError::internal("PE lift base"))?;
-        let function = lift_function(bytes, base)?;
+        let function = lift_function_with_data(bytes, base, &reader, data_base)?;
+        data_base = data_base
+            .checked_add(function.data.len())
+            .ok_or_else(|| ProtectError::internal("PE data layout overflow"))?;
         functions.push(function);
     }
     let build_seed = match arguments.seed.as_deref() {

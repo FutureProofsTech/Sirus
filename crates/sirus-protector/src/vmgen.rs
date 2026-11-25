@@ -339,6 +339,7 @@ fn permute_handler_layout(source: &str, seed: &Seed) -> Result<String> {
 )]
 fn generate_source(program: &CompiledProgram, id: &str, vm_base: u64) -> Result<String> {
     let payload_name = format!("SIRUS_PAYLOAD_{id}");
+    let data_name = format!("SIRUS_DATA_{id}");
     let seed_name = format!("SIRUS_SEED_{id}");
     let states_name = format!("SIRUS_ENTRY_STATES_{id}");
     let table_name = format!("SIRUS_DECODE_TABLE_{id}");
@@ -382,6 +383,7 @@ fn generate_source(program: &CompiledProgram, id: &str, vm_base: u64) -> Result<
     }
 
     append_u8_array(&mut source, &payload_name, program.payload())?;
+    append_u8_array(&mut source, &data_name, program.data())?;
     append_u8_array(&mut source, &seed_name, program.seed())?;
     let tables = Tables::derive(program.seed());
     let decode_key = table_key(program.seed());
@@ -450,11 +452,14 @@ fn generate_source(program: &CompiledProgram, id: &str, vm_base: u64) -> Result<
 
     emit!(
         source,
-        "#[inline]\nfn sirus_args(a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> [u64; 6] {{\n\
+        "#[inline]\nfn sirus_args(\n\
+         \x20   a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64,\n\
+         \x20   a6: u64, a7: u64, a8: u64, a9: u64, a10: u64, a11: u64,\n\
+         ) -> ([u64; 6], [u64; 6]) {{\n\
          #[cfg(target_os = \"windows\")]\n\
-         {{ let _ = (a4, a5); [0, 0, a1, a0, a2, a3] }}\n\
+         {{ let _ = (a4, a5, a6, a7, a8, a9, a10, a11); ([0, 0, a1, a0, a2, a3], [0; 6]) }}\n\
          #[cfg(not(target_os = \"windows\"))]\n\
-         {{ [a0, a1, a2, a3, a4, a5] }}\n\
+         {{ ([a0, a1, a2, a3, a4, a5], [a6, a7, a8, a9, a10, a11]) }}\n\
          }}\n\n"
     );
     let hardened_begin = if program.hardened() {
@@ -482,7 +487,10 @@ fn generate_source(program: &CompiledProgram, id: &str, vm_base: u64) -> Result<
                  ) {{ return 0; }}\n\
                  #[cfg(target_os = \"windows\")]\n\
                  if !hardened::verify_code_windows(\n\
-                 \x20   sirus_entry_{id}_{index} as extern \"C\" fn(u64, u64, u64, u64, u64, u64) -> u64 as usize,\n\
+                 \x20   sirus_entry_{id}_{index} as extern \"C\" fn(\n\
+                 \x20   u64, u64, u64, u64, u64, u64,\n\
+                 \x20   u64, u64, u64, u64, u64, u64,\n\
+                 ) -> u64 as usize,\n\
                  \x20   core::ptr::addr_of!(SIRUS_ENTRY_OFFSET_{id}_{index}) as usize,\n\
                  \x20   core::ptr::addr_of!(SIRUS_TEXT_LEN_{id}) as usize,\n\
                  \x20   core::ptr::addr_of!(SIRUS_CODE_HASH_{id}) as usize,\n\
@@ -502,7 +510,10 @@ fn generate_source(program: &CompiledProgram, id: &str, vm_base: u64) -> Result<
         emit!(
             source,
             "#[inline(never)]\n\
-             pub extern \"C\" fn {entry_name}(a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> u64 {{\n\
+             pub extern \"C\" fn {entry_name}(\n\
+             \x20   a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64,\n\
+             \x20   a6: u64, a7: u64, a8: u64, a9: u64, a10: u64, a11: u64,\n\
+             ) -> u64 {{\n\
              {entry_layout}\
              {integrity_check}\
              {hardened_begin}\x20   let Some(tables) = shared::derive::DecodeTables::from_encrypted(\n\
@@ -511,9 +522,11 @@ fn generate_source(program: &CompiledProgram, id: &str, vm_base: u64) -> Result<
              \x20   ) else {{\n\
              \x20       return 0;\n\
              \x20   }};\n\
-             \x20   let value = engine::execute_entry(\n\
-             \x20       engine::VmInput::new(\n\
+             \x20   let (args, stack_args) = sirus_args(a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11);\n\
+             \x20   let value = engine::execute_entry_with_stack(\n\
+             \x20       engine::VmInput::with_data(\n\
              \x20           &{payload_name},\n\
+             \x20           &{data_name},\n\
              \x20           &{seed_name},\n\
              \x20           {hash_name},\n\
              \x20           {key_a_name},\n\
@@ -522,7 +535,8 @@ fn generate_source(program: &CompiledProgram, id: &str, vm_base: u64) -> Result<
              \x20           {fuel_name},\n\
              \x20       ),\n\
              \x20       {index},\n\
-             \x20       sirus_args(a0, a1, a2, a3, a4, a5),\n\
+             \x20       args,\n\
+             \x20       stack_args,\n\
              \x20       &tables,\n\
              \x20       SIRUS_CONSTANT_TIME_{id},\n\
              \x20       SIRUS_OBLIVIOUS_PASSES_{id},\n\
@@ -531,7 +545,10 @@ fn generate_source(program: &CompiledProgram, id: &str, vm_base: u64) -> Result<
              }}\n\n\
              #[cfg(not(target_os = \"windows\"))]\n\
              #[used]\n\
-             static {keep_name}: extern \"C\" fn(u64, u64, u64, u64, u64, u64) -> u64 = {entry_name};\n\n"
+             static {keep_name}: extern \"C\" fn(\n\
+             \x20   u64, u64, u64, u64, u64, u64,\n\
+             \x20   u64, u64, u64, u64, u64, u64,\n\
+             ) -> u64 = {entry_name};\n\n"
         );
     }
     emit!(
@@ -580,6 +597,7 @@ fn rustc_path() -> PathBuf {
 
 #[allow(
     clippy::too_many_lines,
+    clippy::format_push_string,
     reason = "VM toolchain orchestration and ELF object symbol parsing are linear external-format transactions"
 )]
 fn compile_source(
@@ -588,6 +606,7 @@ fn compile_source(
     keep_temp: bool,
     id: &str,
     entry_count: usize,
+    stack_args: u8,
 ) -> Result<PathBuf> {
     let directory = unique_temp_directory()?;
     let source_path = directory.join("vm.rs");
@@ -658,10 +677,21 @@ fn compile_source(
             "objcopy failed while globalizing VM entries:\n{stderr}"
         )));
     }
+    let mut stack_copy = String::from("    subq $48, %rsp\n");
+    for slot in 0..6_usize {
+        stack_copy.push_str(&format!("    movq $0, {}(%rsp)\n", slot.saturating_mul(8)));
+    }
+    for slot in 0..usize::from(stack_args) {
+        stack_copy.push_str(&format!(
+            "    movq {}(%rsp), %rax\n    movq %rax, {}(%rsp)\n",
+            384_usize.saturating_add(slot.saturating_mul(8)),
+            slot.saturating_mul(8)
+        ));
+    }
     let mut shim_source = String::from(".text\n");
     for (index, symbol) in entry_symbols.iter().enumerate() {
         let shim = format!(
-            ".globl sirus_shim_{id}_{index}\n.type sirus_shim_{id}_{index}, @function\nsirus_shim_{id}_{index}:\n    pushq %rcx\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    pushq %r8\n    pushq %r9\n    pushq %r10\n    pushq %r11\n    subq $264, %rsp\n    movdqu %xmm0, 0(%rsp)\n    movdqu %xmm1, 16(%rsp)\n    movdqu %xmm2, 32(%rsp)\n    movdqu %xmm3, 48(%rsp)\n    movdqu %xmm4, 64(%rsp)\n    movdqu %xmm5, 80(%rsp)\n    movdqu %xmm6, 96(%rsp)\n    movdqu %xmm7, 112(%rsp)\n    movdqu %xmm8, 128(%rsp)\n    movdqu %xmm9, 144(%rsp)\n    movdqu %xmm10, 160(%rsp)\n    movdqu %xmm11, 176(%rsp)\n    movdqu %xmm12, 192(%rsp)\n    movdqu %xmm13, 208(%rsp)\n    movdqu %xmm14, 224(%rsp)\n    movdqu %xmm15, 240(%rsp)\n    call {symbol}\n    movdqu 0(%rsp), %xmm0\n    movdqu 16(%rsp), %xmm1\n    movdqu 32(%rsp), %xmm2\n    movdqu 48(%rsp), %xmm3\n    movdqu 64(%rsp), %xmm4\n    movdqu 80(%rsp), %xmm5\n    movdqu 96(%rsp), %xmm6\n    movdqu 112(%rsp), %xmm7\n    movdqu 128(%rsp), %xmm8\n    movdqu 144(%rsp), %xmm9\n    movdqu 160(%rsp), %xmm10\n    movdqu 176(%rsp), %xmm11\n    movdqu 192(%rsp), %xmm12\n    movdqu 208(%rsp), %xmm13\n    movdqu 224(%rsp), %xmm14\n    movdqu 240(%rsp), %xmm15\n    addq $264, %rsp\n    popq %r11\n    popq %r10\n    popq %r9\n    popq %r8\n    popq %rdi\n    popq %rsi\n    popq %rdx\n    popq %rcx\n    ret\n.size sirus_shim_{id}_{index}, .-sirus_shim_{id}_{index}\n"
+            ".globl sirus_shim_{id}_{index}\n.type sirus_shim_{id}_{index}, @function\nsirus_shim_{id}_{index}:\n    pushq %rcx\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    pushq %r8\n    pushq %r9\n    pushq %r10\n    pushq %r11\n    subq $264, %rsp\n    movdqu %xmm0, 0(%rsp)\n    movdqu %xmm1, 16(%rsp)\n    movdqu %xmm2, 32(%rsp)\n    movdqu %xmm3, 48(%rsp)\n    movdqu %xmm4, 64(%rsp)\n    movdqu %xmm5, 80(%rsp)\n    movdqu %xmm6, 96(%rsp)\n    movdqu %xmm7, 112(%rsp)\n    movdqu %xmm8, 128(%rsp)\n    movdqu %xmm9, 144(%rsp)\n    movdqu %xmm10, 160(%rsp)\n    movdqu %xmm11, 176(%rsp)\n    movdqu %xmm12, 192(%rsp)\n    movdqu %xmm13, 208(%rsp)\n    movdqu %xmm14, 224(%rsp)\n    movdqu %xmm15, 240(%rsp)\n{stack_copy}    call {symbol}\n    addq $48, %rsp\n    movdqu 0(%rsp), %xmm0\n    movdqu 16(%rsp), %xmm1\n    movdqu 32(%rsp), %xmm2\n    movdqu 48(%rsp), %xmm3\n    movdqu 64(%rsp), %xmm4\n    movdqu 80(%rsp), %xmm5\n    movdqu 96(%rsp), %xmm6\n    movdqu 112(%rsp), %xmm7\n    movdqu 128(%rsp), %xmm8\n    movdqu 144(%rsp), %xmm9\n    movdqu 160(%rsp), %xmm10\n    movdqu 176(%rsp), %xmm11\n    movdqu 192(%rsp), %xmm12\n    movdqu 208(%rsp), %xmm13\n    movdqu 224(%rsp), %xmm14\n    movdqu 240(%rsp), %xmm15\n    addq $264, %rsp\n    popq %r11\n    popq %r10\n    popq %r9\n    popq %r8\n    popq %rdi\n    popq %rsi\n    popq %rdx\n    popq %rcx\n    ret\n.size sirus_shim_{id}_{index}, .-sirus_shim_{id}_{index}\n"
         );
         shim_source.push_str(&shim);
     }
@@ -1066,6 +1096,7 @@ pub fn build_vm(program: &CompiledProgram, vm_base: u64, keep_temp: bool) -> Res
         keep_temp,
         &id,
         program.entry_states().len(),
+        program.stack_args(),
     )?;
     let blob =
         fs::read(&blob_path).map_err(|error| ProtectError::io("read generated VM blob", &error))?;
@@ -1898,7 +1929,7 @@ mod tests {
         let source_b = source_for_audit(&second, 0x10_000).expect("source b");
         assert!(source_a.contains("_sirus_layout_0_"));
         assert!(source_a.contains("_sirus_entry_layout_0_"));
-        assert!(source_a.contains("engine::execute_entry("));
+        assert!(source_a.contains("engine::execute_entry_with_stack("));
         assert!(source_a.contains("SIRUS_CONSTANT_TIME_"));
         assert_ne!(source_a, source_b);
     }

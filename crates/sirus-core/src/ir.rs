@@ -16,6 +16,10 @@ pub const MAX_FUNCTIONS: usize = 8;
 pub const MAX_PAYLOAD: usize = 65_536;
 /// Maximum size of one native function in bytes.
 pub const MAX_FUNCTION_BYTES: usize = 16_384;
+/// Maximum read-only data embedded for one protected program.
+pub const MAX_DATA_BYTES: usize = 2_048;
+/// Maximum number of stack arguments copied into the private VM stack.
+pub const MAX_STACK_ARGS: usize = 6;
 
 /// Operand width in bits.
 #[non_exhaustive]
@@ -830,6 +834,12 @@ pub struct LiftedFunction {
     pub ops: BoundedVec<IrOp, MAX_IR_OPS>,
     /// Native byte length that was lifted.
     pub byte_len: u64,
+    /// Read-only data referenced by RIP-relative operands.
+    pub data: ByteBuf<MAX_DATA_BYTES>,
+    /// Program-wide base offset of `data` in private VM memory.
+    pub data_base: usize,
+    /// Number of stack arguments referenced by this function.
+    pub stack_args: u8,
 }
 
 impl LiftedFunction {
@@ -981,6 +991,9 @@ mod tests {
             blocks: BoundedVec::new(),
             ops: BoundedVec::new(),
             byte_len: 0,
+            data: super::ByteBuf::new(),
+            data_base: 0,
+            stack_args: 0,
         };
         let block = super::Block {
             start_va: 0,
