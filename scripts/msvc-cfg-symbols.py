@@ -40,16 +40,23 @@ def object_sizes(path):
     strings = symbol_table + symbol_count * 18
     string_size = u32(data, strings)
     sizes = {}
+    debug = []
     index = 0
     while index < symbol_count:
         entry = symbol_table + index * 18
         name = coff_name(data, entry, strings, string_size)
         canonical = name.lstrip("_")
+        if len(debug) < 8:
+            debug.append((name, data[entry + 17]))
+        if canonical in NAMES:
+            print(f"object debug: {name} aux={data[entry + 17]} type={u16(data, entry + 14)} section={u16(data, entry + 12)}", file=sys.stderr)
         aux = data[entry + 17]
         if canonical in NAMES and aux >= 1:
             aux_entry = entry + 18
             sizes[canonical] = u32(data, aux_entry + 4)
         index += 1 + aux
+    if not sizes:
+        print(f"object debug first symbols: {debug}", file=sys.stderr)
     return sizes
 
 
