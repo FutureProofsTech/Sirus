@@ -66,7 +66,7 @@ jobs:
           set -euo pipefail
           mkdir -p target/cfg
           cmd //c "cl /nologo /O2 /Zi /guard:cf /c crates\\sirus-protector\\tests\\fixtures\\windows_victim.c /Fo:target\\cfg\\victim.obj"
-          cmd //c "link /nologo /DEBUG /GUARD:CF /MAP:target\\cfg\\victim.map /OUT:target\\cfg\\victim.exe target\\cfg\\victim.obj"
+          cmd //c "cl /nologo /DEBUG /guard:cf target\\cfg\\victim.obj /Fe:target\\cfg\\victim.exe /link /GUARD:CF /MAP:target\\cfg\\victim.map"
           python scripts/msvc-cfg-symbols.py target/cfg/victim.obj target/cfg/victim.map | tee target/cfg/ranges.txt
           args=()
           while IFS='=' read -r name range; do
