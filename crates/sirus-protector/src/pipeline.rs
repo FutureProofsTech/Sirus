@@ -77,6 +77,11 @@ fn resolve_selector(elf: &Elf64<'_>, selector: &Selector) -> Result<Target> {
                 size: function.size,
             })
         }
+        Selector::Range { start, size } => Ok(Target {
+            name: format!("range@{start:#x}"),
+            va: *start,
+            size: *size,
+        }),
         Selector::Markers { begin, end } => {
             let begin_offset = elf.find_pattern_unique(begin)?;
             let end_offset = elf.find_pattern_unique(end)?;
@@ -323,6 +328,11 @@ pub fn protect(arguments: &ProtectArgs) -> Result<ProtectReport> {
 
 fn resolve_pe_selector(pe: &Pe64<'_>, selector: &Selector) -> Result<Target> {
     match selector {
+        Selector::Range { start, size } => Ok(Target {
+            name: format!("range@{start:#x}"),
+            va: *start,
+            size: *size,
+        }),
         Selector::Exact(name) => {
             let function = pe.find_function(name)?;
             Ok(Target {

@@ -36,12 +36,12 @@ Result: **exit 0**. The script runs:
 
 ## 2. Test inventory
 
-`cargo test --workspace` now runs **183 tests**, all passing; the MBA corpus and
+`cargo test --workspace` now runs **184 tests**, all passing; the MBA corpus and
 statistical timing tests are `#[ignore]` measurement hooks and are not part of
 the normal count.
 
 ```text
-183 passed, 0 failed
+184 passed, 0 failed
 ```
 
 Breakdown:
@@ -51,7 +51,7 @@ Breakdown:
 | `sirus-binfmt` unit tests | 21 |
 | `sirus-binfmt` real-loader test | 1 |
 | `sirus-core` unit tests | 82 |
-| `sirus-protector` unit tests | 34 |
+| `sirus-protector` unit tests | 35 |
 | `sirus-hardened` runtime checks | 1 |
 | `sirus-protector` end-to-end | 1 |
 | `sirus-protector` pipeline errors | 1 |
@@ -178,7 +178,7 @@ cargo tarpaulin --workspace --all-targets --engine Llvm \
   --exclude-files 'target/*' --exclude-files 'bench/*' --timeout 120
 ```
 
-Result: **86.17% line coverage (6001 / 6964 lines)** with
+Result: **86.08% line coverage (6017 / 6990 lines)** with
 `--exclude-files 'target/*' --exclude-files 'bench/*'`. This is above the agreed
 85% floor.
 
@@ -203,9 +203,9 @@ cargo llvm-cov --workspace --all-targets --summary-only
 ```
 
 ```text
-TOTAL regions 82.74% (3835 missed of 22223)
-TOTAL functions 75.23% (218 missed of 880)
-TOTAL lines 87.05% (1542 missed of 11909)
+TOTAL regions 82.70% (3855 missed of 22285)
+TOTAL functions 74.92% (222 missed of 885)
+TOTAL lines 86.96% (1559 missed of 11960)
 ```
 
 The two tools instrument differently; both are above the 85% floor and show the
@@ -563,7 +563,7 @@ cargo asm -p sirus-core --lib 1
 
 | Item | Status |
 |---|---|
-| Coverage floor (85%) | **met**: 86.17% tarpaulin / 87.05% llvm-cov lines |
+| Coverage floor (85%) | **met**: 86.08% tarpaulin / 86.96% llvm-cov lines |
 | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect | executed; evidence recorded |
 | live process memory dump scan | pass; masked VM state, constant not observed |
 | Windows PE runtime execution | Wine-tested leaf subset (branches/loops), normal and constant-time; native `pe32-native` CI passed |

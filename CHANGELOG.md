@@ -110,7 +110,7 @@ All notable changes to Sirus.
   masked at rest.
 - Full `.sirus` segment equality is 10.95% between two seeds; payload equality is
   0.40%; entropy is 7.996 Shannon / 7.751 min-entropy.
-- Coverage on the final tree: 86.17% tarpaulin lines (6001/6964); llvm-cov 87.05% lines.
+- Coverage on the final tree: 86.08% tarpaulin lines (6017/6990); llvm-cov 86.96% lines.
 
 ### Known limitations
 

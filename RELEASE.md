@@ -70,7 +70,7 @@
 
 ### Verification
 
-- 183 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
+- 184 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
   statistical-timing measurement hooks.
 - Real victim compilation and execution differential matrix.
 - Differential two-seed builds.
@@ -94,7 +94,7 @@
 ./scripts/verify.sh
 ```
 
-Passes formatting, Clippy (`-D warnings`, all targets), 183 tests, rustdoc,
+Passes formatting, Clippy (`-D warnings`, all targets), 184 tests, rustdoc,
 audit, deny, Kani, red-team, and memory-dump diagnostic.
 
 ```sh
@@ -113,8 +113,8 @@ Recorded evidence:
 - libFuzzer formats: 17,482,146 PE and 15,055,973 ELF runs, no crash.
 - Reproducible output: identical normal, hardened, and constant-time binaries
   for a fixed input and seed.
-- Tarpaulin: 86.17% lines (6001/6964).
-- llvm-cov: 87.05% lines, 82.74% regions.
+- Tarpaulin: 86.08% lines (6017/6990).
+- llvm-cov: 86.96% lines, 82.70% regions.
 - Payload differential: 0.40% equal bytes.
 - Handler arms are permuted per build; full VM segment differential remains
   2.21% equal bytes (a metric, not a uniqueness proof).
@@ -173,7 +173,7 @@ tools are outside the local gate and are not release blockers.
 ### Coverage
 
 The agreed prototype target is **above 85%**. This release measures
-**86.17% tarpaulin lines / 87.05% llvm-cov lines**. 100% is not claimed, but the
+**86.08% tarpaulin lines / 86.96% llvm-cov lines**. 100% is not claimed, but the
 85% floor is met and enforced by the proof script.
 
 ---
@@ -228,7 +228,7 @@ docs/                          architecture, format, threat, proof, traceability
 | Miri | pass |
 | libFuzzer | pass |
 | fmt/clippy/doc/audit/deny | pass |
-| Coverage floor 85% | **pass — 86.17% tarpaulin / 87.05% llvm-cov lines** |
+| Coverage floor 85% | **pass — 86.08% tarpaulin / 86.96% llvm-cov lines** |
 | External evidence tooling | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect executed; commercial/licence-only tools are outside the local gate |
 | Windows runtime | **Wine + native Windows leaf subset (branches/loops), normal + constant-time + hardened** |
 | Anti-debug/self-code/timing/LFENCE | **permanently out of scope for the safe tier (ADR-020)** |

@@ -197,9 +197,9 @@ Implemented exactly in the root `Cargo.toml`:
 | `cargo doc` | stable | executed with `-D warnings`, passing |
 | `cargo-audit` | installed | executed; 0 vulnerabilities |
 | `cargo-deny` | installed | executed; advisories/bans/licenses/sources pass |
-| `cargo-nextest` | installed | executed; 183 tests passing |
-| `cargo-tarpaulin` | installed | executed; 86.17% lines (6001/6964), above 85% floor |
-| `cargo-llvm-cov` | installed | executed; 87.05% lines / 82.74% regions |
+| `cargo-nextest` | installed | executed; 184 tests passing |
+| `cargo-tarpaulin` | installed | executed; 86.08% lines (6017/6990), above 85% floor |
+| `cargo-llvm-cov` | installed | executed; 86.96% lines / 82.70% regions |
 | `cargo-fuzz` | installed | 2,929,049 cumulative runs, no crash |
 | Kani 0.68.0 | installed | 5 core + 4 VM harnesses verified |
 | Miri | nightly | 82 core + 10 VM lib + 20 VM execution tests pass (1 ignored under Miri) |
@@ -218,8 +218,8 @@ Implemented exactly in the root `Cargo.toml`:
 
 ### Residual boundaries (not release blockers)
 
-1. Coverage: the agreed floor is 85%; current measured coverage is 86.17%
-   tarpaulin / 87.05% llvm-cov. 100% is not claimed.
+1. Coverage: the agreed floor is 85%; current measured coverage is 86.08%
+   tarpaulin / 86.96% llvm-cov. 100% is not claimed.
 2. The normal branchy VM profile leaks timing (dudect max |t| = 225). The
    explicit `--constant-time` oblivious mode passes straight-line, branch, and
    loop/memory cases (worst |t| = 2.82) with a fixed pass budget; private memory uses

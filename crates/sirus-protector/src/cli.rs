@@ -17,6 +17,8 @@ pub enum Selector {
     Contains(String),
     /// Byte markers delimiting a native range.
     Markers { begin: Vec<u8>, end: Vec<u8> },
+    /// Explicit RVA/VA and size, used for formats without usable symbols.
+    Range { start: u64, size: u64 },
 }
 
 /// Parsed protect command.
@@ -178,6 +180,32 @@ fn parse_protect(arguments: &[OsString]) -> Result<Action> {
             "--function-contains" => {
                 selectors.push(Selector::Contains(text_value(arguments, &mut index, flag)?));
             }
+            "--range" => {
+                let text = text_value(arguments, &mut index, flag)?;
+                let Some((start_text, size_text)) = text.split_once(':') else {
+                    return Err(ProtectError::usage("--range requires <hex-rva>:<hex-size>"));
+                };
+                let start = u64::from_str_radix(
+                    start_text
+                        .strip_prefix("0x")
+                        .or_else(|| start_text.strip_prefix("0X"))
+                        .unwrap_or(start_text),
+                    16,
+                )
+                .map_err(|_| ProtectError::usage("--range start must be hexadecimal"))?;
+                let size = u64::from_str_radix(
+                    size_text
+                        .strip_prefix("0x")
+                        .or_else(|| size_text.strip_prefix("0X"))
+                        .unwrap_or(size_text),
+                    16,
+                )
+                .map_err(|_| ProtectError::usage("--range size must be hexadecimal"))?;
+                if size == 0 {
+                    return Err(ProtectError::usage("--range size must be nonzero"));
+                }
+                selectors.push(Selector::Range { start, size });
+            }
             "--marker-begin" => {
                 if pending_marker.is_some() {
                     return Err(ProtectError::usage(
@@ -296,7 +324,8 @@ pub const fn help_text() -> &'static str {
      Selectors:\n\
      \x20 --function <exact-symbol>\n\
      \x20 --function-contains <unique-substring>\n\
-     \x20 --marker-begin <hex> --marker-end <hex>\n\n\
+     \x20 --marker-begin <hex> --marker-end <hex>\n\
+     \x20 --range <hex-rva>:<hex-size>  explicit target range\n\n\
      Options:\n\
      \x20 --seed <64-hex>          deterministic build seed\n\
      \x20 --profile <name>         max (default), balanced, or minimal\n\
@@ -587,6 +616,30 @@ mod tests {
         };
         assert!(parsed.options.constant_time);
         assert_eq!(parsed.options.constant_time_passes, 64);
+    }
+
+    #[test]
+    fn parses_explicit_range_selector() {
+        let action = parse_from(arguments(&[
+            "protect",
+            "--input",
+            "in",
+            "--output",
+            "out",
+            "--range",
+            "0x1000:0x20",
+        ]))
+        .expect("range");
+        let Action::Protect(parsed) = action else {
+            panic!("expected protect");
+        };
+        assert_eq!(
+            parsed.selectors.first(),
+            Some(&Selector::Range {
+                start: 0x1000,
+                size: 0x20
+            })
+        );
     }
 
     #[test]
