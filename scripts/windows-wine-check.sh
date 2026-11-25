@@ -93,3 +93,39 @@ cat "$work/protect.out"
 cat "$work/protect-ct.out"
 cat "$work/protect-hardened.out"
 cat "$work/protect-hardened-ct.out"
+
+echo "== C ABI matrix =="
+fixtures="crates/sirus-protector/tests/fixtures"
+x86_64-w64-mingw32-gcc -c "$fixtures/windows_abi_xmm.S" -o "$work/abi_xmm.o"
+x86_64-w64-mingw32-gcc -O2 "$fixtures/windows_victim.c" "$work/abi_xmm.o" \
+    -o "$work/cvictim.exe"
+for variant in normal ct hardened; do
+    extra=()
+    if [[ "$variant" == "ct" ]]; then
+        extra=(--constant-time --constant-time-passes 128)
+    elif [[ "$variant" == "hardened" ]]; then
+        extra=(--hardened)
+    fi
+    ./target/release/sirus protect \
+        --input "$work/cvictim.exe" \
+        --output "$work/cvictim.$variant.exe" \
+        --function sirus_win_check \
+        --function sirus_win_mix \
+        --function sirus_abi_target \
+        --seed 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff \
+        "${extra[@]}" \
+        >"$work/cvictim.$variant.protect"
+    chmod +x "$work/cvictim.$variant.exe"
+done
+WINEDEBUG=-all wine "$work/cvictim.exe" >"$work/cvictim.native.out" 2>"$work/cvictim.native.err"
+for variant in normal ct hardened; do
+    WINEDEBUG=-all wine "$work/cvictim.$variant.exe" \
+        >"$work/cvictim.$variant.out" 2>"$work/cvictim.$variant.err"
+    if ! cmp -s "$work/cvictim.native.out" "$work/cvictim.$variant.out"; then
+        echo "C ABI mismatch ($variant)" >&2
+        diff -u "$work/cvictim.native.out" "$work/cvictim.$variant.out" >&2
+        exit 1
+    fi
+done
+grep -q 'abi 48 48 0 3' "$work/cvictim.native.out"
+echo "PASS Windows/Wine C ABI matrix (XMM6-15, indirect, large frame)"

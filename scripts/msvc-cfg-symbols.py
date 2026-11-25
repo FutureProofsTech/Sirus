@@ -14,7 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-NAMES = {"sirus_win_check", "sirus_win_mix"}
+NAMES = {"sirus_win_check", "sirus_win_mix", "sirus_abi_target"}
 
 
 def u16(data, offset):

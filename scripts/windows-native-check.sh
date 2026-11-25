@@ -29,8 +29,12 @@ echo "== harden-check =="
 grep -q 'debugger_present=false' "$work/harden-check.out"
 grep -q 'debug_registers=0x' "$work/harden-check.out"
 echo "== compile C victim =="
+x86_64-w64-mingw32-gcc -c \
+    crates/sirus-protector/tests/fixtures/windows_abi_xmm.S \
+    -o "$work/abi_xmm.o"
 x86_64-w64-mingw32-gcc -O2 \
     crates/sirus-protector/tests/fixtures/windows_victim.c \
+    "$work/abi_xmm.o" \
     -o "$work/victim.exe"
 
 echo "== protect normal =="
@@ -39,6 +43,7 @@ echo "== protect normal =="
     --output "$work/protected.exe" \
     --function sirus_win_check \
     --function sirus_win_mix \
+    --function sirus_abi_target \
     --seed 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff \
     >"$work/protect.out"
 
@@ -48,6 +53,7 @@ echo "== protect constant-time =="
     --output "$work/constant.exe" \
     --function sirus_win_check \
     --function sirus_win_mix \
+    --function sirus_abi_target \
     --seed 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff \
     --constant-time \
     --constant-time-passes 256 \
@@ -59,6 +65,7 @@ echo "== protect hardened =="
     --output "$work/hardened.exe" \
     --function sirus_win_check \
     --function sirus_win_mix \
+    --function sirus_abi_target \
     --seed 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff \
     --hardened \
     >"$work/protect-hardened.out"

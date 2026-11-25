@@ -47,6 +47,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-lld
+      - name: Add mingw tools to PATH
+        shell: pwsh
+        run: echo "C:\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
       - name: Build protector before the MSVC environment
         shell: bash
         run: cargo build --release -p sirus-protector
@@ -67,8 +77,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p target/cfg
+          x86_64-w64-mingw32-gcc -c \
+            crates/sirus-protector/tests/fixtures/windows_abi_xmm.S \
+            -o target/cfg/abi_xmm.obj
           cmd //c "cl /nologo /O2 /Zi /guard:cf /c crates\\sirus-protector\\tests\\fixtures\\windows_victim.c /Fo:target\\cfg\\victim.obj"
-          cmd //c "cl /nologo /DEBUG /guard:cf target\\cfg\\victim.obj /Fe:target\\cfg\\victim.exe /link /GUARD:CF /MAP:target\\cfg\\victim.map /PDB:target\\cfg\\victim.pdb"
+          cmd //c "cl /nologo /guard:cf target\\cfg\\victim.obj target\\cfg\\abi_xmm.obj /Fe:target\\cfg\\victim.exe /link /DEBUG /GUARD:CF /MAP:target\\cfg\\victim.map /PDB:target\\cfg\\victim.pdb"
           python scripts/msvc-cfg-symbols.py \
             target/cfg/victim.obj target/cfg/victim.map target/cfg/victim.pdb \
             | tee target/cfg/ranges.txt
