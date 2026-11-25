@@ -94,12 +94,14 @@ echo "== protect hardened =="
     >"$work/protect-hardened.out"
 
 echo "== run =="
+set +e
 "$work/victim.exe" >"$work/native.out" 2>"$work/native.err"
 "$work/protected.exe" >"$work/protected.out" 2>"$work/protected.err"
 "$work/constant.exe" >"$work/constant.out" 2>"$work/constant.err"
 "$work/constant-two.exe" >"$work/constant-two.out" 2>"$work/constant-two.err"
 "$work/constant-1024.exe" >"$work/constant-1024.out" 2>"$work/constant-1024.err"
 "$work/hardened.exe" >"$work/hardened.out" 2>"$work/hardened.err"
+set -e
 
 echo "native output:"
 cat "$work/native.out"
