@@ -16,7 +16,7 @@ All notable changes to Sirus.
 
 ### Evidence
 
-- 198 tests; 89.72% tarpaulin / 90.19% llvm-cov lines.
+- 201 tests; 90.13% tarpaulin / 90.61% llvm-cov lines.
 - Linux caller-saved ABI regression passes in all three modes.
 
 ## [1.5.3-hardened] — 2026-11-25

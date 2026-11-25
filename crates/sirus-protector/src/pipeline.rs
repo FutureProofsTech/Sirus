@@ -838,6 +838,50 @@ mod tests {
     }
 
     #[test]
+    fn pipeline_markers_emit_source_and_error_paths() {
+        let directory = sandbox();
+        let victim = compile_fixture(&directory);
+        let bytes = fs::read(&victim).expect("read victim");
+        let elf = sirus_binfmt::elf::Elf64::parse(&bytes).expect("parse victim");
+        let function = elf
+            .find_functions_containing("sirus_demo_check")
+            .expect("find check")
+            .first()
+            .expect("check")
+            .to_owned();
+        let source = directory.join("vm.rs");
+        let mut emit = arguments(
+            &victim,
+            &directory.join("emit"),
+            vec![Selector::Exact(function.name.to_owned())],
+        );
+        emit.emit_source = Some(source.clone());
+        protect(&emit).expect("emit source");
+        assert!(source.is_file());
+
+        let bad = directory.join("bad");
+        fs::write(&bad, b"not an executable").expect("bad input");
+        assert!(
+            protect(&arguments(
+                &bad,
+                &directory.join("bad-out"),
+                vec![Selector::Exact("x".to_owned())],
+            ))
+            .is_err()
+        );
+        let directory_output = directory.join("directory-output");
+        fs::create_dir(&directory_output).expect("directory output");
+        assert!(
+            protect(&arguments(
+                &victim,
+                &directory_output,
+                vec![Selector::Exact("x".to_owned())],
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
     fn pipeline_selectors_and_inspection_are_exercised_in_process() {
         let directory = sandbox();
         let victim = compile_fixture(&directory);

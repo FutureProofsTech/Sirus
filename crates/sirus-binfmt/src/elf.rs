@@ -1430,7 +1430,10 @@ fn serialize_section_headers(sections: &[SectionHeader]) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Elf64, Injection, PT_LOAD, PT_PHDR, inject, overwrite_vaddr, patch_relative_jump};
+    use super::{
+        Elf64, Injection, PT_LOAD, PT_PHDR, inject, overwrite_vaddr, patch_relative_jump,
+        read_vaddr,
+    };
     use crate::FormatError;
     use alloc::vec;
     use alloc::vec::Vec;
@@ -1495,6 +1498,16 @@ mod tests {
         data[0x1000..0x1010]
             .copy_from_slice(b"\x48\x89\xf8\x48\x01\xf0\xc3\x90\x90\x90\x90\x90\x90\x90\x90\x90");
         data
+    }
+
+    #[test]
+    fn exposes_data_and_free_read_vaddr() {
+        let data = synthetic_elf();
+        let elf = Elf64::parse(&data).expect("elf");
+        assert_eq!(elf.data().len(), data.len());
+        assert_eq!(read_vaddr(&data, 0x1000, 4).map(<[u8]>::len), Some(4));
+        assert!(read_vaddr(&data, 0xffff_ffff, 4).is_none());
+        assert!(read_vaddr(b"bad", 0, 1).is_none());
     }
 
     #[test]

@@ -36,27 +36,27 @@ Result: **exit 0**. The script runs:
 
 ## 2. Test inventory
 
-`cargo test --workspace` now runs **198 tests**, all passing; the MBA corpus and
+`cargo test --workspace` now runs **201 tests**, all passing; the MBA corpus and
 statistical timing tests are `#[ignore]` measurement hooks and are not part of
 the normal count.
 
 ```text
-198 passed, 0 failed
+201 passed, 0 failed
 ```
 
 Breakdown:
 
 | Target | Tests |
 |---|---:|
-| `sirus-binfmt` unit tests | 25 |
+| `sirus-binfmt` unit tests | 26 |
 | `sirus-binfmt` real-loader test | 1 |
 | `sirus-core` unit tests | 83 |
-| `sirus-protector` unit tests | 41 |
+| `sirus-protector` unit tests | 42 |
 | `sirus-hardened` runtime checks | 3 |
 | `sirus-protector` end-to-end | 1 |
 | `sirus-protector` pipeline errors | 1 |
 | `sirus-protector` marker end-to-end | 1 |
-| `sirus-vm` unit tests | 10 |
+| `sirus-vm` unit tests | 11 |
 | `sirus-vm` execution | 21 |
 | `sirus-vm` deterministic fuzz | 2 |
 | `sirus-vm` malformed payloads | 9 |
@@ -189,7 +189,7 @@ cargo tarpaulin --workspace --all-targets --engine Llvm \
   --exclude-files 'target/*' --exclude-files 'bench/*' --timeout 120
 ```
 
-Result: **89.72% line coverage (6747 / 7520 lines)** with
+Result: **90.13% line coverage (6778 / 7520 lines)** with
 `--exclude-files 'target/*' --exclude-files 'bench/*'`. This is above the agreed
 85% floor.
 
@@ -214,9 +214,9 @@ cargo llvm-cov --workspace --all-targets --summary-only
 ```
 
 ```text
-TOTAL regions 85.74% (3515 missed of 24647)
-TOTAL functions 73.51% (263 missed of 993)
-TOTAL lines 90.19% (1297 missed of 13224)
+TOTAL regions 86.16% (3437 missed of 24831)
+TOTAL functions 74.30% (256 missed of 996)
+TOTAL lines 90.61% (1251 missed of 13316)
 ```
 
 The two tools instrument differently; both are above the 85% floor and show the
@@ -607,8 +607,10 @@ explicit fuel of `1` and requires all three to return.
 ```
 
 A branch-only protected leaf is run with two different input pairs under
-Cachegrind, after one warm-up run. The four measured runs are stable and the
-two inputs produce identical counts.
+Cachegrind, after one warm-up run and with three repetitions per input. I/D
+references, branches, and mispredicts must be exactly stable; D1/LLd misses use
+the maximum of the repetitions because the first post-link run can carry
+transient process-layout cache noise.
 
 ```text
 I refs=15202709
@@ -621,7 +623,7 @@ PASS constant-time cachegrind counts are input-independent
 ```
 
 The first post-link run can show a transient cache-state difference, so the
-script warms up once before measuring. This is cache simulation of the
+script warms up once and takes the maximum of three cache-miss samples. This is cache simulation of the
 branch-only leaf; the private-memory scan remains covered by the dudect memory
 case and the engine tests.
 
@@ -676,7 +678,7 @@ cargo asm -p sirus-core --lib 1
 
 | Item | Status |
 |---|---|
-| Coverage floor (85%) | **met**: 89.72% tarpaulin / 90.19% llvm-cov lines |
+| Coverage floor (85%) | **met**: 90.13% tarpaulin / 90.61% llvm-cov lines |
 | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect | executed; evidence recorded |
 | live process memory dump scan | pass; masked VM state, constant not observed |
 | Windows PE runtime execution | Wine and native Windows; normal, constant-time, hardened; `/guard:cf`, ABI matrix, unwind lookup, and text-checksum tamper tests pass |

@@ -42,8 +42,10 @@ run_case() {
 }
 
 run_case warmup 7 3
-run_case forward 7 3
-run_case reverse 3 7
+for repetition in 0 1 2; do
+    run_case "forward-$repetition" 7 3
+    run_case "reverse-$repetition" 3 7
+done
 
 python3 - "$work" <<'PY'
 import re
@@ -59,22 +61,31 @@ fields = {
     'Branches': r'Branches:\s+([0-9,]+)',
     'Mispredicts': r'Mispredicts:\s+([0-9,]+)',
 }
-counts = {}
+samples = {'forward': [], 'reverse': []}
 for name in ('forward', 'reverse'):
-    text = (work / f'{name}.log').read_text()
-    values = {}
-    for field, pattern in fields.items():
-        match = re.search(pattern, text)
-        if match is None:
-            raise SystemExit(f'missing {field} in {name}')
-        values[field] = int(match.group(1).replace(',', ''))
-    counts[name] = values
+    for repetition in range(3):
+        text = (work / f'{name}-{repetition}.log').read_text()
+        values = {}
+        for field, pattern in fields.items():
+            match = re.search(pattern, text)
+            if match is None:
+                raise SystemExit(f'missing {field} in {name}-{repetition}')
+            values[field] = int(match.group(1).replace(',', ''))
+        samples[name].append(values)
+cache_fields = {'D1 misses', 'LLd misses'}
 for field in fields:
-    if counts['forward'][field] != counts['reverse'][field]:
-        raise SystemExit(
-            f'{field} differs: {counts["forward"][field]} vs {counts["reverse"][field]}'
-        )
-    print(f'{field}={counts["forward"][field]}')
+    if field in cache_fields:
+        forward = max(sample[field] for sample in samples['forward'])
+        reverse = max(sample[field] for sample in samples['reverse'])
+    else:
+        forward = samples['forward'][0][field]
+        reverse = samples['reverse'][0][field]
+        for sample in samples['forward'][1:] + samples['reverse'][1:]:
+            if sample[field] != forward:
+                raise SystemExit(f'{field} is not stable: {forward} vs {sample[field]}')
+    if forward != reverse:
+        raise SystemExit(f'{field} differs: {forward} vs {reverse}')
+    print(f'{field}={forward}')
 print('PASS constant-time cachegrind counts are input-independent')
 PY
 

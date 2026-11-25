@@ -1292,10 +1292,12 @@ mod tests {
     };
     use crate::shared::format::{
         MAX_OPERANDS, REG_RAX, REG_RBX, REG_RCX, REG_RDX, REG_RSP, SEM_ADD_RI, SEM_ADD_RR,
-        SEM_AND_RR, SEM_CMPEQ_RR, SEM_CMPLES_RR, SEM_CMPLTS_RR, SEM_JCC, SEM_JMP, SEM_LOAD64,
-        SEM_MOV_RI, SEM_MOV_RR, SEM_MUL_RR, SEM_NEG_R, SEM_NOT_R, SEM_OR_RR, SEM_RET, SEM_ROTL_RI,
-        SEM_ROTR_RI, SEM_SAR_RI, SEM_SELECT_RRRR, SEM_SHL_RI, SEM_SHR_RI, SEM_STORE64, SEM_SUB_RR,
-        SEM_XOR_RR, VM_MEMORY_SIZE, VM_REGISTERS,
+        SEM_AND_RI, SEM_AND_RR, SEM_CMPEQ_RR, SEM_CMPLES_RR, SEM_CMPLEU_RR, SEM_CMPLTS_RR, SEM_JCC,
+        SEM_JMP, SEM_LOAD8, SEM_LOAD16, SEM_LOAD32, SEM_LOAD64, SEM_MOV_RI, SEM_MOV_RR, SEM_MUL_RR,
+        SEM_NEG_R, SEM_NOP, SEM_NOT_R, SEM_OR_RI, SEM_OR_RR, SEM_RET, SEM_ROTL_RI, SEM_ROTL_RR,
+        SEM_ROTR_RI, SEM_ROTR_RR, SEM_SAR_RI, SEM_SAR_RR, SEM_SELECT_RRRR, SEM_SHL_RI, SEM_SHL_RR,
+        SEM_SHR_RI, SEM_SHR_RR, SEM_STORE8, SEM_STORE16, SEM_STORE32, SEM_STORE64, SEM_SUB_RI,
+        SEM_SUB_RR, SEM_XOR_RI, SEM_XOR_RR, VM_MEMORY_SIZE, VM_REGISTERS,
     };
 
     fn registers() -> [u64; VM_REGISTERS] {
@@ -1391,6 +1393,57 @@ mod tests {
             Some(Flow::Continue)
         );
         assert_eq!(get(&regs, REG_RAX), 3);
+    }
+
+    #[test]
+    fn remaining_semantic_families_are_covered() {
+        let mut regs = registers();
+        let mut mem = memory();
+        let rax = u64::from(REG_RAX);
+        let rcx = u64::from(REG_RCX);
+        set(&mut regs, REG_RAX, 0x55);
+        set(&mut regs, REG_RCX, 4);
+        for instruction in [
+            decoded(SEM_NOP, [0; 4]),
+            decoded(SEM_SUB_RI, [rax, 5, 0, 0]),
+            decoded(SEM_AND_RI, [rax, 0x0f, 0, 0]),
+            decoded(SEM_OR_RI, [rax, 0x80, 0, 0]),
+            decoded(SEM_XOR_RI, [rax, 0x11, 0, 0]),
+            decoded(SEM_SHL_RR, [rax, rcx, 0, 0]),
+            decoded(SEM_SHR_RR, [rax, rcx, 0, 0]),
+            decoded(SEM_SAR_RR, [rax, rcx, 0, 0]),
+            decoded(SEM_ROTL_RR, [rax, rcx, 0, 0]),
+            decoded(SEM_ROTR_RR, [rax, rcx, 0, 0]),
+            decoded(SEM_CMPLEU_RR, [rax, rcx, 0, 0]),
+            decoded(SEM_CMPLES_RR, [rax, rcx, 0, 0]),
+        ] {
+            assert_eq!(
+                execute_semantic(&instruction, &mut regs, &mut mem),
+                Some(Flow::Continue)
+            );
+        }
+        for instruction in [
+            decoded(SEM_STORE8, [0, rax, 0, 0]),
+            decoded(SEM_STORE16, [0, rax, 0, 0]),
+            decoded(SEM_STORE32, [0, rax, 0, 0]),
+            decoded(SEM_STORE64, [0, rax, 0, 0]),
+        ] {
+            assert_eq!(
+                execute_semantic(&instruction, &mut regs, &mut mem),
+                Some(Flow::Continue)
+            );
+        }
+        let values = [rax, rax, 0, 0];
+        for semantic in [SEM_LOAD8, SEM_LOAD16, SEM_LOAD32, SEM_LOAD64] {
+            assert_eq!(
+                execute_semantic(&decoded(semantic, values), &mut regs, &mut mem),
+                Some(Flow::Continue)
+            );
+        }
+        assert_eq!(
+            execute_semantic(&decoded(255, [0; 4]), &mut regs, &mut mem),
+            None
+        );
     }
 
     #[test]
