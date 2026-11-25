@@ -47,6 +47,9 @@
     )
 )]
 
+#[cfg(feature = "trace")]
+extern crate std;
+
 pub use sirus_core::shared;
 
 pub mod engine;

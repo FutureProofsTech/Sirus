@@ -2,6 +2,36 @@
 
 All notable changes to Sirus.
 
+## [1.5.9-hardened] — 2026-11-26
+
+### Security and correctness
+
+- Align the Linux VM call stack defensively from a saved frame pointer; fixes a
+  pthread/misaligned-caller `SIGSEGV` and adds an eight-thread regression.
+- Constant-time inactive blocks now load from a safe address and do not write
+  memory; fixes `BadPayload` for stack arguments read after a loop and adds
+  loop/stack and branch/store regression tests.
+- Fix the missing `SEM_BSWAP` import that made the release dispatch arm a
+  catch-all; add a real `bswap` fixture and reject the undefined 16-bit form
+  whose hardware behavior varies.
+- Add `build.rs` rerun tracking for every embedded generated-VM source file so
+  release binaries cannot silently use stale engine/wire code.
+- Raise the payload ceiling to 128 KiB; six max-profile functions now compile
+  and match native output in a differential stress fixture.
+- Make constant-time engine tracing an opt-in `sirus-vm` `trace` feature
+  instead of leftover temporary diagnostics.
+
+### Evidence
+
+- 226 tests; 87.07% tarpaulin lines (7607/8737); 88.25% llvm-cov lines.
+- Ghidra, radare2, angr, KLEE, GAMBA/SiMBA/MBA-Blast, Creusot, dudect,
+  cachegrind, concurrency, signal, and signed differential fixtures executed
+  locally.
+- The dudect two-key cipher bench now black-boxes the key: the earlier |t| ~ 19
+  was compiler code-path specialization, not cipher data timing. The controlled
+  run measured cipher |t| = 2.39, constant-time subset worst |t| = 3.19, and
+  normal branchy VM |t| = 204.
+
 ## [1.5.8-hardened] — 2026-11-25
 
 ### Functionality

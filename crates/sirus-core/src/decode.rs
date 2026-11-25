@@ -197,6 +197,8 @@ pub enum Mnemonic {
     RepMovsb,
     /// Repeated qword copy.
     RepMovsq,
+    /// Byte swap.
+    Bswap,
     /// Repeated byte fill.
     RepStosb,
     /// Repeated qword fill.
@@ -1615,6 +1617,34 @@ fn decode_two_byte(
                 target: None,
             })
         }
+        0xc8..=0xcf => {
+            // BSWAP has no defined 16-bit form. Real CPUs disagree on what
+            // `66 0F C8+rd` does, so fail closed instead of inventing a value.
+            if operand_width == Width::W16 {
+                return Err(decode_error(offset, DecodeReason::UnsupportedForm));
+            }
+            let register = register_number(opcode & 0x07, rex_b(rex));
+            let width = if (rex & 0x08) != 0 {
+                Width::W64
+            } else {
+                Width::W32
+            };
+            let length =
+                u8::try_from(*index).map_err(|_| decode_error(offset, DecodeReason::TooLong))?;
+            Ok(Instruction {
+                offset,
+                length,
+                mnemonic: Mnemonic::Bswap,
+                width,
+                dst: Operand::Reg {
+                    index: register,
+                    width,
+                },
+                src: Operand::None,
+                aux: Operand::None,
+                target: None,
+            })
+        }
         0x80..=0x8f => {
             let condition = Condition::from_nibble(opcode & 0x0f)
                 .ok_or_else(|| decode_error(offset, DecodeReason::UnsupportedOpcode))?;
@@ -1818,6 +1848,25 @@ mod tests {
         assert_eq!(nop.length, 5);
         let one = decode_at(&[0x90], 0);
         assert_eq!(one.mnemonic, Mnemonic::Nop);
+    }
+
+    #[test]
+    fn decodes_bswap_widths() {
+        let instruction = decode_at(&[0x0f, 0xc8], 0x1000);
+        assert_eq!(instruction.mnemonic, Mnemonic::Bswap);
+        assert_eq!(instruction.width, Width::W32);
+        let instruction = decode_at(&[0x48, 0x0f, 0xc8], 0x1000);
+        assert_eq!(instruction.mnemonic, Mnemonic::Bswap);
+        assert_eq!(instruction.width, Width::W64);
+        let instruction = decode_at(&[0x66, 0x48, 0x0f, 0xc8], 0x1000);
+        assert_eq!(instruction.mnemonic, Mnemonic::Bswap);
+        assert_eq!(instruction.width, Width::W64);
+    }
+
+    #[test]
+    fn rejects_undefined_16_bit_bswap() {
+        assert!(rejected(&[0x66, 0x0f, 0xc8]));
+        assert!(rejected(&[0x66, 0x0f, 0xcf]));
     }
 
     #[test]

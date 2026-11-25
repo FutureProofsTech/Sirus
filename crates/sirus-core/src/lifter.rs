@@ -1103,6 +1103,19 @@ impl<'a> Lifter<'a> {
         self.error_offset = instruction.offset;
         match instruction.mnemonic {
             Mnemonic::Nop | Mnemonic::Endbr => Ok(None),
+            Mnemonic::Bswap => {
+                let Operand::Reg { index, .. } = instruction.dst else {
+                    return Err(CoreError::Decode(DecodeError {
+                        offset: self.error_offset,
+                        reason: DecodeReason::UnsupportedForm,
+                    }));
+                };
+                self.emit(IrOp::Bswap {
+                    dst: index,
+                    width: instruction.width,
+                })?;
+                Ok(None)
+            }
             Mnemonic::RepMovsb => {
                 self.emit(IrOp::RepMovs { width: Width::W8 })?;
                 Ok(None)
@@ -1987,6 +2000,20 @@ mod tests {
         let code = [0xe8, 0, 0, 0, 0, 0xc3];
         let calls = super::discover_direct_calls(&code, 0x1000).expect("discover");
         assert_eq!(calls.as_slice(), &[0x1005]);
+    }
+
+    #[test]
+    fn lifts_bswap() {
+        let function = lift_function(&[0x48, 0x0f, 0xc8, 0xc3], 0x1000).expect("bswap");
+        assert!(function.ops.as_slice().iter().any(|operation| {
+            matches!(
+                operation,
+                crate::ir::IrOp::Bswap {
+                    width: crate::ir::Width::W64,
+                    ..
+                }
+            )
+        }));
     }
 
     #[test]

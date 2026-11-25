@@ -168,12 +168,12 @@ See `docs/CODE_STANDARD_COMPLIANCE.md` and ADR-001.
 
 | Tool/requirement | Status | Evidence |
 |---|---|---|
-| Kani / SMT | run, 7 harnesses pass | `docs/VERIFICATION.md` |
+| Kani / SMT | run, 5 core + 4 VM harnesses pass | `docs/VERIFICATION.md` |
 | Creusot | run, 3 boundary models proved | `verification/creusot`, `scripts/creusot-check.sh` |
 | AORAI | installed (Frama-C 33.0); C-only, not applicable | `docs/VERIFICATION.md` |
-| cargo-fuzz | run, 1,056,362 final-tree executions (2,929,049 cumulative) | fuzz/ |
+| cargo-fuzz | run, 789,455 VM + 133,973 lifter final-tree executions (4,883,875 / 405,768 cumulative) | fuzz/ |
 | Proptest | external crate prohibited; in-tree property tests implemented | tests |
-| cargo-tarpaulin | run, 85.05% (above 85% floor) | coverage report |
+| cargo-tarpaulin | run, 87.07% (above 85% floor) | coverage report |
 | cargo-llvm-cov | run, independent coverage | `docs/VERIFICATION.md` |
 | Loom | not applicable (no shared mutable runtime state) | ADR/architecture |
 | dudect-bencher | run; cipher below \|t\|=5, VM branch leaks | `verification/dudect` |

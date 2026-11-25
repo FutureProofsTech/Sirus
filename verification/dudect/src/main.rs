@@ -44,9 +44,12 @@ fn crypto(runner: &mut CtRunner, _rng: &mut BenchRng) {
     for _ in 0..200_000 {
         let left = random.next() & 1 == 0;
         let key = if left { first_key } else { second_key };
+        // Keep the key opaque so the compiler cannot specialize two code paths
+        // and turn a data-timing measurement into a branch-layout comparison.
+        let key = std::hint::black_box(key);
         runner.run_one(if left { Class::Left } else { Class::Right }, || {
             let mut output = [0_u8; 64];
-            let mut cipher = ChaCha20::new(key, nonce);
+            let mut cipher = ChaCha20::new(std::hint::black_box(key), nonce);
             cipher.fill(&mut output);
             std::hint::black_box(output);
         });

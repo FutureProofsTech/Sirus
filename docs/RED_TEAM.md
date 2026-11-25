@@ -263,9 +263,14 @@ masked shifts, no division, checked memory, deterministic fuel, no panic path.
 
 - deterministic in-tree fuzz: 20,000 random payloads + 10,000 valid-payload
   mutations, no panic/hang;
-- libFuzzer: **1,056,362 final-tree runs in 61 s; 2,929,049 cumulative across sessions**, no crash;
-- Kani: 5 core + 2 VM bounds harnesses verified;
-- Miri: core and VM unit/full execution suites pass;
+- libFuzzer: **789,455 VM and 133,973 lifter runs in 61 s each on the 1.5.9
+  tree; 4,883,875 VM / 405,768 lifter cumulative across sessions**, no crash;
+- signal reentrancy: SIGALRM handler re-entered the protected function while
+  the main thread was executing it; interrupted and reentrant results matched
+  native;
+- Kani: 5 core + 4 VM bounds harnesses verified;
+- Miri: VM library suite 11/11 on the final tree; the larger execution and
+  core suites are opt-in and slow;
 - malformed-payload suite covers bad count/offset/length/opcode/register/trap/fuel.
 
 ---

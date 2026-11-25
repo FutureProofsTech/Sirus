@@ -683,15 +683,15 @@ fn compile_source(
     }
     for slot in 0..usize::from(stack_args) {
         stack_copy.push_str(&format!(
-            "    movq {}(%rsp), %rax\n    movq %rax, {}(%rsp)\n",
-            384_usize.saturating_add(slot.saturating_mul(8)),
+            "    movq {}(%rbp), %rax\n    movq %rax, {}(%rsp)\n",
+            16_usize.saturating_add(slot.saturating_mul(8)),
             slot.saturating_mul(8)
         ));
     }
     let mut shim_source = String::from(".text\n");
     for (index, symbol) in entry_symbols.iter().enumerate() {
         let shim = format!(
-            ".globl sirus_shim_{id}_{index}\n.type sirus_shim_{id}_{index}, @function\nsirus_shim_{id}_{index}:\n    pushq %rcx\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    pushq %r8\n    pushq %r9\n    pushq %r10\n    pushq %r11\n    subq $264, %rsp\n    movdqu %xmm0, 0(%rsp)\n    movdqu %xmm1, 16(%rsp)\n    movdqu %xmm2, 32(%rsp)\n    movdqu %xmm3, 48(%rsp)\n    movdqu %xmm4, 64(%rsp)\n    movdqu %xmm5, 80(%rsp)\n    movdqu %xmm6, 96(%rsp)\n    movdqu %xmm7, 112(%rsp)\n    movdqu %xmm8, 128(%rsp)\n    movdqu %xmm9, 144(%rsp)\n    movdqu %xmm10, 160(%rsp)\n    movdqu %xmm11, 176(%rsp)\n    movdqu %xmm12, 192(%rsp)\n    movdqu %xmm13, 208(%rsp)\n    movdqu %xmm14, 224(%rsp)\n    movdqu %xmm15, 240(%rsp)\n{stack_copy}    call {symbol}\n    addq $48, %rsp\n    movdqu 0(%rsp), %xmm0\n    movdqu 16(%rsp), %xmm1\n    movdqu 32(%rsp), %xmm2\n    movdqu 48(%rsp), %xmm3\n    movdqu 64(%rsp), %xmm4\n    movdqu 80(%rsp), %xmm5\n    movdqu 96(%rsp), %xmm6\n    movdqu 112(%rsp), %xmm7\n    movdqu 128(%rsp), %xmm8\n    movdqu 144(%rsp), %xmm9\n    movdqu 160(%rsp), %xmm10\n    movdqu 176(%rsp), %xmm11\n    movdqu 192(%rsp), %xmm12\n    movdqu 208(%rsp), %xmm13\n    movdqu 224(%rsp), %xmm14\n    movdqu 240(%rsp), %xmm15\n    addq $264, %rsp\n    popq %r11\n    popq %r10\n    popq %r9\n    popq %r8\n    popq %rdi\n    popq %rsi\n    popq %rdx\n    popq %rcx\n    ret\n.size sirus_shim_{id}_{index}, .-sirus_shim_{id}_{index}\n"
+            ".globl sirus_shim_{id}_{index}\n.type sirus_shim_{id}_{index}, @function\nsirus_shim_{id}_{index}:\n    pushq %rbp\n    movq %rsp, %rbp\n    pushq %rcx\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    pushq %r8\n    pushq %r9\n    pushq %r10\n    pushq %r11\n    subq $264, %rsp\n    movdqu %xmm0, 0(%rsp)\n    movdqu %xmm1, 16(%rsp)\n    movdqu %xmm2, 32(%rsp)\n    movdqu %xmm3, 48(%rsp)\n    movdqu %xmm4, 64(%rsp)\n    movdqu %xmm5, 80(%rsp)\n    movdqu %xmm6, 96(%rsp)\n    movdqu %xmm7, 112(%rsp)\n    movdqu %xmm8, 128(%rsp)\n    movdqu %xmm9, 144(%rsp)\n    movdqu %xmm10, 160(%rsp)\n    movdqu %xmm11, 176(%rsp)\n    movdqu %xmm12, 192(%rsp)\n    movdqu %xmm13, 208(%rsp)\n    movdqu %xmm14, 224(%rsp)\n    movdqu %xmm15, 240(%rsp)\n    andq $-16, %rsp\n{stack_copy}    call {symbol}\n    leaq -328(%rbp), %rsp\n    movdqu 0(%rsp), %xmm0\n    movdqu 16(%rsp), %xmm1\n    movdqu 32(%rsp), %xmm2\n    movdqu 48(%rsp), %xmm3\n    movdqu 64(%rsp), %xmm4\n    movdqu 80(%rsp), %xmm5\n    movdqu 96(%rsp), %xmm6\n    movdqu 112(%rsp), %xmm7\n    movdqu 128(%rsp), %xmm8\n    movdqu 144(%rsp), %xmm9\n    movdqu 160(%rsp), %xmm10\n    movdqu 176(%rsp), %xmm11\n    movdqu 192(%rsp), %xmm12\n    movdqu 208(%rsp), %xmm13\n    movdqu 224(%rsp), %xmm14\n    movdqu 240(%rsp), %xmm15\n    addq $264, %rsp\n    popq %r11\n    popq %r10\n    popq %r9\n    popq %r8\n    popq %rdi\n    popq %rsi\n    popq %rdx\n    popq %rcx\n    popq %rbp\n    ret\n.size sirus_shim_{id}_{index}, .-sirus_shim_{id}_{index}\n"
         );
         shim_source.push_str(&shim);
     }

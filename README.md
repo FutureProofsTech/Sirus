@@ -2,7 +2,7 @@
 
 **Zero-dependency polymorphic code virtualizer in Safe Rust.**
 
-**Release:** `1.5.8-hardened` — see [`RELEASE.md`](RELEASE.md) and [`CHANGELOG.md`](CHANGELOG.md).
+**Release:** `1.5.9-hardened` — see [`RELEASE.md`](RELEASE.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 Sirus takes a compiled Linux x86-64 ELF, lifts a selected function into an
 internal IR, flattens its control flow, expands sensitive arithmetic through
@@ -34,6 +34,7 @@ commercial/open-source positioning is in
 | SSE2 integer subset | **working: moves, bitwise, add/sub, multiply, unpack, byte shifts** |
 | AVX 128-bit VEX subset | **working for the documented integer forms; 256-bit AVX rejected** |
 | Repeated string operations | **`rep movsb`/`movsq`/`stosb`/`stosq` on private memory; constant-time rejected** |
+| Byte swap | **`bswap` 32/64-bit, normal and constant-time** |
 | Automatic callee following | **`--follow-calls` lifts direct local callees; unresolved/external calls fail closed** |
 | Direct protected calls | **working between selected functions; external calls fail closed** |
 | Encrypted per-build decode table + fast ARX body stream | working |
@@ -42,7 +43,7 @@ commercial/open-source positioning is in
 | Safe Rust / no external crates | safe tier enforced; `sirus-hardened` is opt-in unsafe |
 | Kani, Miri, libFuzzer, differential/tamper/bypass, Ghidra, radare2 | run locally |
 | angr, KLEE, Creusot, dudect-bencher | run locally; bounded/model results stated |
-| Coverage floor (85%) | **met: 86.80% tarpaulin / 88.27% llvm-cov lines** |
+| Coverage floor (85%) | **met: 87.07% tarpaulin / 88.25% llvm-cov lines** |
 | Constant-time VM execution | `--constant-time` oblivious branch/loop/memory mode below dudect threshold; normal profile leaks |
 | Live memory state | virtual registers/private stack masked at rest; snapshot constant scan passes |
 | Linux caller-saved ABI | entry shim preserves GPRs + XMM0–XMM15; optimized C caller regression passes |

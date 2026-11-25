@@ -34,11 +34,13 @@ rustc --edition=2021 -C opt-level=2 -C panic=abort \
     --seed 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff \
     --emit-source "$work/vm.rs" >"$work/protect.out"
 
-sed 's/\bconst fn /fn /g' "$work/vm.rs" >"$work/vm-klee.rs"
+sed -e 's/\bconst fn /fn /g' -e '/^[[:space:]]*reason = /d' "$work/vm.rs" >"$work/vm-klee.rs"
 rustc +1.78.0 --edition=2021 --crate-type=lib --emit=llvm-bc \
     -C panic=abort -C opt-level=2 -o "$work/vm.bc" "$work/vm-klee.rs"
 
-symbol=$(llvm-nm "$work/vm.bc" | awk '/ T .*sirus_entry/{print $3; exit}')
+# Read the whole symbol table: `awk ... exit` closes the pipe early enough
+# that llvm-nm can die with SIGPIPE under `set -o pipefail`.
+symbol=$(llvm-nm "$work/vm.bc" | awk '/ T .*sirus_entry/{if (!found) {print $3; found = 1}}')
 if [[ -z "$symbol" ]]; then
     echo "entry symbol not found in LLVM bitcode" >&2
     exit 1
@@ -47,7 +49,9 @@ fi
 cat >"$work/harness.c" <<EOF
 #include <stdint.h>
 #include <klee/klee.h>
-extern uint64_t entry(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t)
+extern uint64_t entry(
+    uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t,
+    uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t)
     __asm__("$symbol");
 volatile uint64_t observed;
 int main(void) {
@@ -55,7 +59,7 @@ int main(void) {
     uint64_t b;
     klee_make_symbolic(&a, sizeof(a), "a");
     klee_make_symbolic(&b, sizeof(b), "b");
-    observed = entry(a, b, 0, 0, 0, 0);
+    observed = entry(a, b, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
     return 0;
 }
 EOF

@@ -13,7 +13,7 @@ pub const MAX_IR_OPS: usize = 8192;
 /// Maximum number of protected functions sharing one payload.
 pub const MAX_FUNCTIONS: usize = 8;
 /// Maximum payload size in bytes.
-pub const MAX_PAYLOAD: usize = 65_536;
+pub const MAX_PAYLOAD: usize = 131_072;
 /// Maximum size of one native function in bytes.
 pub const MAX_FUNCTION_BYTES: usize = 16_384;
 /// Maximum read-only data embedded for one protected program.
@@ -786,6 +786,13 @@ pub enum IrOp {
     /// Repeated private-memory fill at RDI for RCX elements.
     RepStos {
         /// Element width.
+        width: Width,
+    },
+    /// Byte-swap a 32- or 64-bit value.
+    Bswap {
+        /// Destination and source register.
+        dst: u8,
+        /// Operand width.
         width: Width,
     },
 }

@@ -13,7 +13,7 @@ use crate::shared::cipher::{
 use crate::shared::derive::{DecodeTables, Seed, Tables};
 use crate::shared::format::{
     MAX_OPERANDS, REG_R8, REG_R9, REG_RAX, REG_RCX, REG_RDI, REG_RDX, REG_RSI, REG_RSP, ROLE_IMM,
-    ROLE_REG, SEM_ADD_RI, SEM_ADD_RR, SEM_AND_RI, SEM_AND_RR, SEM_CALL, SEM_CMPEQ_RR,
+    ROLE_REG, SEM_ADD_RI, SEM_ADD_RR, SEM_AND_RI, SEM_AND_RR, SEM_BSWAP, SEM_CALL, SEM_CMPEQ_RR,
     SEM_CMPLES_RR, SEM_CMPLEU_RR, SEM_CMPLTS_RR, SEM_CMPLTU_RR, SEM_JCC, SEM_JMP, SEM_LOAD8,
     SEM_LOAD16, SEM_LOAD32, SEM_LOAD64, SEM_MOV_RI, SEM_MOV_RR, SEM_MUL_RR, SEM_NEG_R, SEM_NOP,
     SEM_NOT_R, SEM_OR_RI, SEM_OR_RR, SEM_REP_MOVS, SEM_REP_STOS, SEM_RET, SEM_ROTL_RI, SEM_ROTL_RR,
@@ -300,7 +300,7 @@ fn set_reg_value_active(
     let selected = match active {
         Some(enable) => {
             let current = reg_value(registers, masks, values, operand)?;
-            let enable = 0_u64.wrapping_sub(enable & 1);
+            let enable = 0_u64.wrapping_sub(u64::from(enable != 0));
             (value & enable) | (current & !enable)
         }
         None => value,
@@ -661,10 +661,11 @@ fn execute_semantic_inner(
                 _ => 8,
             };
             let address = reg_value(registers, masks, values, 1)?;
+            let effective = if active == Some(0) { 0 } else { address };
             let loaded = if active.is_some() {
-                load_memory_oblivious(memory, address, width, memory_key)?
+                load_memory_oblivious(memory, effective, width, memory_key)?
             } else {
-                load_memory_with_key(memory, address, width, memory_key)?
+                load_memory_with_key(memory, effective, width, memory_key)?
             };
             set_reg_value_active(registers, masks, values, 0, loaded, active)?;
             Some(Flow::Continue)
@@ -678,10 +679,11 @@ fn execute_semantic_inner(
             };
             let address = reg_value(registers, masks, values, 0)?;
             let value = reg_value(registers, masks, values, 1)?;
+            let effective = if active == Some(0) { 0 } else { address };
             if active.is_some() {
-                store_memory_oblivious(memory, address, width, value, memory_key)?;
+                store_memory_oblivious(memory, effective, width, value, memory_key, active)?;
             } else {
-                store_memory_with_key(memory, address, width, value, memory_key)?;
+                store_memory_with_key(memory, effective, width, value, memory_key)?;
             }
             Some(Flow::Continue)
         }
@@ -719,6 +721,17 @@ fn execute_semantic_inner(
                 callee,
                 return_state,
             })
+        }
+        SEM_BSWAP => {
+            let value = reg_value(registers, masks, values, 0)?;
+            let code = immediate(values, 1)?;
+            let swapped = match code {
+                0 => u64::from(u32::try_from(value & 0xffff_ffff).ok()?.swap_bytes()),
+                1 => value.swap_bytes(),
+                _ => return None,
+            };
+            set_reg_value_active(registers, masks, values, 0, swapped, active)?;
+            Some(Flow::Continue)
         }
         SEM_REP_MOVS | SEM_REP_STOS => {
             if active.is_some() {
@@ -823,7 +836,9 @@ fn store_memory_oblivious(
     width: usize,
     value: u64,
     memory_key: Option<u64>,
+    active: Option<u64>,
 ) -> Option<()> {
+    let write = active != Some(0);
     if width == 0 || width > 8 {
         return None;
     }
@@ -840,7 +855,11 @@ fn store_memory_oblivious(
             let plain = memory_key.map_or(old, |key| old ^ memory_mask(key, position));
             let same = u64::from(u64::try_from(position).unwrap_or(u64::MAX) == target);
             let mask = 0_u8.wrapping_sub(u8::try_from(same).unwrap_or(0));
-            let chosen = (new_byte & mask) | (plain & !mask);
+            let chosen = if write {
+                (new_byte & mask) | (plain & !mask)
+            } else {
+                plain
+            };
             let stored = memory_key.map_or(chosen, |key| chosen ^ memory_mask(key, position));
             if let Some(slot) = memory.get_mut(position) {
                 *slot = stored;
@@ -1390,6 +1409,7 @@ fn execute_oblivious_with_tables_and_stack(
         let mut block_index = 0_usize;
         while block_index < count {
             let apply = current.get(block_index).copied().unwrap_or(0);
+            trace_event("block", pass, block_index, apply, 0, 0);
             let Some(tag) = tags.get(block_index).copied() else {
                 return halt(Status::BadPayload, steps);
             };
@@ -1423,6 +1443,7 @@ fn execute_oblivious_with_tables_and_stack(
                 let Some(decoded) = reader.read_instruction() else {
                     return halt(Status::BadPayload, steps);
                 };
+                trace_event("op", pass, block_index, apply, decoded.semantic, 0);
                 let Some(flow) = execute_semantic_inner(
                     &decoded,
                     &mut registers,
@@ -1431,6 +1452,7 @@ fn execute_oblivious_with_tables_and_stack(
                     Some(memory_key),
                     Some(apply),
                 ) else {
+                    trace_event("sem-fail", pass, block_index, apply, decoded.semantic, 0);
                     return halt(Status::BadPayload, steps);
                 };
                 match flow {
@@ -1468,6 +1490,7 @@ fn execute_oblivious_with_tables_and_stack(
                         return halt(Status::BadPayload, steps);
                     }
                     Flow::Return(value) => {
+                        trace_event("return", pass, block_index, apply, 0, value);
                         result |= apply & value;
                         returned |= apply;
                         break;
@@ -1503,6 +1526,28 @@ fn execute_oblivious_with_tables_and_stack(
     } else {
         halt(Status::BadPayload, steps)
     }
+}
+
+#[cfg(feature = "trace")]
+#[allow(
+    clippy::print_stderr,
+    reason = "the trace feature is an explicit diagnostic build; it writes to stderr by design"
+)]
+fn trace_event(phase: &str, pass: usize, block: usize, apply: u64, semantic: u8, value: u64) {
+    std::eprintln!(
+        "CT {phase} pass={pass} block={block} apply={apply:#x} sem={semantic} value={value:#x}"
+    );
+}
+
+#[cfg(not(feature = "trace"))]
+const fn trace_event(
+    _phase: &str,
+    _pass: usize,
+    _block: usize,
+    _apply: u64,
+    _semantic: u8,
+    _value: u64,
+) {
 }
 
 fn enqueue_target(

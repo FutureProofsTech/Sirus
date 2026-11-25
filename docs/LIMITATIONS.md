@@ -12,8 +12,8 @@ build. It does not silently skip or best-effort translate.
 Common integer operations on registers and the private stack, including `mov`,
 `movzx`, `movsx`, `movsxd`, `lea`, `add`, `sub`, `and`, `or`, `xor`, `cmp`,
 `test`, `inc`, `dec`, `neg`, `not`, `imul`, shifts, rotates, `push`, `pop`,
-`leave`, `cdqe`, `jmp`, `jcc`, `ret`, `cmovcc`, `setcc`, and 8/16/32/64-bit
-memory widths.
+`leave`, `cdqe`, `bswap`, `jmp`, `jcc`, `ret`, `cmovcc`, `setcc`, and
+8/16/32/64-bit memory widths.
 
 Also supported:
 
@@ -27,6 +27,8 @@ Also supported:
 - VEX-encoded 128-bit AVX versions of the same integer operations, including
   `vpsrldq`/`vpslldq` and `vmovq`; 256-bit AVX remains rejected;
 - `rep movsb`/`movsq` and `rep stosb`/`stosq` on the private memory region;
+- `bswap` 32/64-bit in normal and constant-time modes; the undefined 16-bit
+  form with a `0x66` operand-size prefix is rejected rather than guessed;
 - `--follow-calls` automatically lifts direct local callees that resolve to a
   real function symbol; external or unresolved calls fail closed;
 - System V stack arguments 7 through 12 and Win64 stack arguments 5 through 10.
@@ -41,7 +43,8 @@ Also supported:
 - syscalls, `rdtsc`, `cpuid`, privileged or IO instructions;
 - atomics and fences;
 - segment overrides, address-size override, lock prefix;
-- VEX/EVEX encodings;
+- VEX encodings outside the documented 128-bit integer subset and all EVEX
+  encodings;
 - host pointer dereferences;
 - more than 12 System V arguments or more than 10 Win64 arguments;
 - cross-block flag liveness that cannot be proven;

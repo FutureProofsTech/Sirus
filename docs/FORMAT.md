@@ -76,6 +76,7 @@ No host memory is addressable.
 | 44 | CALL | — | push guest return state and enter callee entry state |
 | 45 | REP_MOVS | — | copy RCX private-memory elements from RSI to RDI |
 | 46 | REP_STOS | — | fill RCX private-memory elements at RDI |
+| 47 | BSWAP | dst, width | byte-swap 32/64-bit `dst` |
 
 Bounds violations, invalid shifts (after masking), invalid registers, invalid
 opcodes, and address overflow halt with `BadPayload`.

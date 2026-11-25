@@ -14,7 +14,10 @@
 
 use sirus_core::lifter::lift_function;
 use sirus_core::program::{CompileOptions, CompiledProgram, compile};
-use sirus_vm::engine::{Run, Status, VmInput, execute, execute_entry, execute_oblivious};
+use sirus_vm::engine::{
+    Run, Status, VmInput, execute, execute_entry, execute_entry_with_stack, execute_oblivious,
+};
+use sirus_vm::shared::derive::Tables;
 
 const fn options() -> CompileOptions {
     let mut options = CompileOptions::new();
@@ -144,6 +147,54 @@ fn executes_branchy_oblivious_with_fixed_steps() {
 }
 
 #[test]
+fn constant_time_reads_stack_argument_after_loop() {
+    // v7_stack: loop then load the 7th argument from [rsp+8].
+    let code = [
+        0x48, 0x31, 0xf7, 0x83, 0xe2, 0x07, 0x74, 0x18, 0x4c, 0x01, 0xc2, 0x0f, 0x1f, 0x44, 0x00,
+        0x00, 0x48, 0xc1, 0xc7, 0x05, 0x4c, 0x01, 0xc7, 0x49, 0x83, 0xc0, 0x01, 0x4c, 0x39, 0xc2,
+        0x75, 0xf0, 0x4c, 0x33, 0x4c, 0x24, 0x08, 0x4c, 0x89, 0xc8, 0x48, 0x31, 0xf8, 0xc3,
+    ];
+    let mut options = options();
+    options.constant_time = true;
+    options.constant_time_passes = 256;
+    options.mba_depth = 0;
+    options.mba_budget = 0;
+    let program = compile_code(&code, 0x88, options);
+    let tables = Tables::derive(program.seed()).decode_tables();
+    let input = VmInput::new(
+        program.payload(),
+        program.seed(),
+        program.expected_hash(),
+        program.base_a(),
+        program.base_b(),
+        program.entry_states(),
+        program.fuel(),
+    );
+    let normal = execute_entry_with_stack(
+        input,
+        0,
+        [123_456_789, 987_654_321, 3, 5, 7, 11],
+        [13, 0, 0, 0, 0, 0],
+        &tables,
+        false,
+        0,
+    );
+    let oblivious = execute_entry_with_stack(
+        input,
+        0,
+        [123_456_789, 987_654_321, 3, 5, 7, 11],
+        [13, 0, 0, 0, 0, 0],
+        &tables,
+        true,
+        usize::from(program.constant_time_passes()),
+    );
+    assert_eq!(normal.status, Status::Returned);
+    assert_eq!(oblivious.status, Status::Returned);
+    assert_eq!(normal.value, 0x1ec2_d2d2_1d0f);
+    assert_eq!(oblivious.value, normal.value);
+}
+
+#[test]
 fn executes_loop_oblivious_with_fixed_steps() {
     let code = [
         0x31, 0xc0, 0x48, 0x85, 0xf6, 0x74, 0x08, 0x48, 0x01, 0xf8, 0x48, 0xff, 0xce, 0x75, 0xf8,
@@ -207,7 +258,7 @@ fn oblivious_entry_and_pass_errors_fail_closed() {
         program.entry_states(),
         program.fuel(),
     );
-    let tables = sirus_vm::shared::derive::Tables::derive(program.seed()).decode_tables();
+    let tables = Tables::derive(program.seed()).decode_tables();
     let wrong_entry = sirus_vm::engine::execute_oblivious_with_tables(input, 7, [0; 6], &tables, 4);
     assert_eq!(wrong_entry.status, Status::BadPayload);
     let zero_passes =

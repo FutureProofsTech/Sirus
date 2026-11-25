@@ -1,9 +1,9 @@
 # Sirus Positioning: Commercial and Open-Source Comparison
 
 **Status:** measured positioning report, not a marketing claim  
-**Sirus target:** `v1.5.8-hardened`
+**Sirus target:** `v1.5.9-hardened`
 **Host:** Intel Core i5-14400F, 16 threads, Linux x86-64  
-**Date:** 2026-11-25
+**Date:** 2026-11-26
 
 This report answers two separate questions:
 
@@ -30,7 +30,7 @@ function through its Lua API and uses `CompilationType.Virtualization`.
 - 1,000 protected calls per sample, 7 samples, median reported;
 - VMProtect 3.11.0 Linux demo, one function, default virtualization, project
   packing left enabled;
-- Sirus 1.5.8 release protector, deterministic seed;
+- Sirus 1.5.9 release protector, deterministic seed;
 - same source, same inputs, matching checksums (`bb8882a0420aed20`);
 - process startup measured separately (1 call, 7 samples).
 

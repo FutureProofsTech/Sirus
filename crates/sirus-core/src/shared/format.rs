@@ -30,7 +30,7 @@ pub const VM_STACK_ARG_BASE: u64 = VM_STACK_TOP - 72;
 pub const ALIASES_PER_SEMANTIC: usize = 4;
 
 /// Number of semantic operations in the virtual ISA.
-pub const SEMANTIC_COUNT: usize = 47;
+pub const SEMANTIC_COUNT: usize = 48;
 
 /// Maximum number of fields in one encoded instruction.
 pub const MAX_OPERANDS: usize = 4;
@@ -238,6 +238,8 @@ pub const SEM_CALL: u8 = 44;
 pub const SEM_REP_MOVS: u8 = 45;
 /// Repeated private-memory fill: `width_code, 0`.
 pub const SEM_REP_STOS: u8 = 46;
+/// Byte swap: `dst, width_code`.
+pub const SEM_BSWAP: u8 = 47;
 
 /// Every semantic id in ascending order. Iterating this array avoids unchecked
 /// integer casts and keeps table construction exhaustive.
@@ -289,6 +291,7 @@ pub const SEMANTIC_IDS: [u8; SEMANTIC_COUNT] = [
     SEM_CALL,
     SEM_REP_MOVS,
     SEM_REP_STOS,
+    SEM_BSWAP,
 ];
 
 /// Returns the canonical operand layout of a semantic operation.
@@ -302,7 +305,9 @@ pub const fn format(semantic: u8) -> Option<Format> {
         | SEM_AND_RR | SEM_OR_RR | SEM_XOR_RR | SEM_SHL_RR | SEM_SHR_RR | SEM_SAR_RR
         | SEM_ROTL_RR | SEM_ROTR_RR => Some(f2(ROLE_REG, ROLE_REG)),
         SEM_MOV_RI | SEM_ADD_RI | SEM_SUB_RI | SEM_AND_RI | SEM_OR_RI | SEM_XOR_RI | SEM_SHL_RI
-        | SEM_SHR_RI | SEM_SAR_RI | SEM_ROTL_RI | SEM_ROTR_RI => Some(f2(ROLE_REG, ROLE_IMM)),
+        | SEM_SHR_RI | SEM_SAR_RI | SEM_ROTL_RI | SEM_ROTR_RI | SEM_BSWAP => {
+            Some(f2(ROLE_REG, ROLE_IMM))
+        }
         SEM_NOT_R | SEM_NEG_R | SEM_RET => Some(f1(ROLE_REG)),
         SEM_CMPEQ_RR | SEM_CMPLTU_RR | SEM_CMPLTS_RR | SEM_CMPLEU_RR | SEM_CMPLES_RR => {
             Some(f3(ROLE_REG, ROLE_REG, ROLE_REG))

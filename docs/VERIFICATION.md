@@ -5,7 +5,8 @@
 **Nightly toolchain:** 2026-08-03 / 2026-08-21 family for Miri and fuzzing
 **Kani:** 0.68.0
 **Project state:** all features described in `README.md` implemented and tested
-**Last evidenced run:** final 1.5.8-hardened tree, tag `v1.5.8-hardened`
+**Last evidenced run:** final 1.5.9-hardened tree, tag `v1.5.9-hardened`
+**Windows CI:** `pe32-wine`, `pe32-native`, and `pe32-msvc-cfg` all pass
 
 This file records commands actually executed. Anything not executed is listed as
 an external evidence gap or a documented boundary, never inferred.
@@ -36,12 +37,11 @@ Result: **exit 0**. The script runs:
 
 ## 2. Test inventory
 
-`cargo test --workspace` now runs **218 tests**, all passing; the MBA corpus and
-statistical timing tests are `#[ignore]` measurement hooks and are not part of
-the normal count.
+`cargo test --workspace` now runs **226 tests**, all passing, with two ignored
+measurement hooks: the MBA corpus emitter and the statistical timing probe.
 
 ```text
-218 passed, 0 failed
+226 passed, 0 failed, 2 ignored
 ```
 
 Breakdown:
@@ -50,7 +50,7 @@ Breakdown:
 |---|---:|
 | `sirus-binfmt` unit tests | 26 |
 | `sirus-binfmt` real-loader test | 1 |
-| `sirus-core` unit tests | 92 |
+| `sirus-core` unit tests | 95 (1 ignored) |
 | `sirus-protector` unit tests | 43 |
 | `sirus-hardened` runtime checks | 3 |
 | `sirus-protector` end-to-end | 1 |
@@ -63,14 +63,21 @@ Breakdown:
 | `sirus-protector` direct protected calls | 1 |
 | `sirus-protector` AVX-128 subset | 1 |
 | `sirus-protector` repeated strings | 1 |
+| `sirus-protector` byte swap | 1 |
+| `sirus-protector` concurrent reentrancy | 1 |
+| `sirus-protector` constant-time memory isolation | 1 |
+| `sirus-protector` signal reentrancy | 1 |
 | `sirus-vm` unit tests | 11 |
-| `sirus-vm` execution | 21 |
+| `sirus-vm` execution | 22 |
 | `sirus-vm` deterministic fuzz | 2 |
 | `sirus-vm` malformed payloads | 9 |
+| `sirus-vm` statistical timing | 0 (1 ignored) |
 
 The end-to-end tests compile a real victim, protect it in normal and
 `--constant-time` modes, compare outputs, check body scrubbing, compare two
 seeds, tamper payload, forced-return bypass, and run the real protected binary.
+`cargo test --workspace --release` also passes 226/226; this release mode is
+what exposed the missing `SEM_BSWAP` import, so it is rerun for the tag.
 
 The feature fixtures compile real C victims and execute protected binaries:
 
@@ -79,12 +86,23 @@ The feature fixtures compile real C victims and execute protected binaries:
 - `movdqu`/`pxor`/`paddq` and `paddd`/`psubd`/`pmuludq`/`punpcklqdq` forms;
 - a selected caller and callee connected by a direct `call rel32`;
 - a VEX-encoded 128-bit AVX table/xor/add/store sequence;
-- `rep movsb` and `rep stosb` over private stack memory.
+- `rep movsb` and `rep stosb` over private stack memory;
+- `bswap` 32/64-bit in normal and constant-time modes, with the undefined
+  16-bit prefix form rejected by a decoder test;
+- eight pthread workers calling one protected function concurrently;
+- a SIGALRM handler that re-enters the protected function while the main
+  thread is already executing it;
+- a constant-time branch/store victim whose inactive branch must not write
+  private memory.
 
-The RIP-relative, stack-argument, SSE2, and AVX-128 fixtures run in normal and
-constant-time modes. The direct-call fixture runs in normal mode and rejects
-constant-time calls. The repeated-string fixture runs in normal mode and
-rejects constant-time repeated strings.
+The RIP-relative, stack-argument, SSE2, AVX-128, byte-swap, and
+constant-time-memory fixtures run in normal and constant-time modes. The
+direct-call fixture runs in normal mode and rejects constant-time calls. The
+repeated-string fixture runs in normal mode and rejects constant-time repeated
+strings. The concurrency fixture compares an eight-thread protected run against native;
+it caught a real misaligned-stack `SIGSEGV` in the Linux entry shim. The signal
+fixture requires at least one handler invocation during the protected run and
+checks that both the interrupted and reentrant results are correct.
 
 Windows/Wine adds a native C 8-argument fixture (5th-8th stack arguments,
 normal and constant-time) and a two-function direct-call fixture (normal;
@@ -137,14 +155,13 @@ Final passes on the current tree:
 
 ```text
 cargo +nightly miri test -p sirus-vm --lib
-  11 tests passed (1.17 s)
+  11 tests passed (1.35 s)
 ```
 
-The 1.5.8 VM library run passes. The full VM execution suite (19 passed,
-1 ignored on the 1.5.6 tree) and the core suite (82 tests on the 1.5.6 tree) are
-opt-in, extremely slow, and were not rerun for this tag. The 1.5.7 tree keeps
-the same Miri-clean VM helpers; Kani, fuzzing, and end-to-end binaries cover the
-new lift and call paths.
+The 1.5.9 VM library run passes with 11/11 tests. The full VM execution suite
+and the core suite are opt-in, extremely slow, and were not rerun for this tag.
+Kani, fuzzing, and end-to-end binaries cover the new lift, call, byte-swap, and
+constant-time memory paths.
 
 ---
 
@@ -158,13 +175,14 @@ cargo +nightly fuzz run vm -- -max_total_time=60 -rss_limit_mb=4096 -timeout=5
 Result:
 
 ```text
-Done 1056362 runs in 61 second(s)
+Done 789455 runs in 61 second(s)
 ```
 
-The final-tree session completed 1,056,362 runs with no crash. A fresh
+The 1.5.9 final-tree session completed 789,455 runs with no crash. A fresh
 1.5.1 session completed another 342,270 runs, the 1.5.7 session completed
-424,824 runs, and the 1.5.8 session completed 398,277 runs; adding all recorded
-sessions, the cumulative total is **4,094,420 executions**.
+424,824 runs, the 1.5.8 session completed 398,277 runs, and an earlier session
+completed 1,056,362 runs; adding all recorded sessions, the cumulative total is
+**4,883,875 executions**.
 
 No crash, panic, OOB, or timeout. The fuzz target builds a valid integrity key
 for arbitrary payloads so the decoder body path is exercised, not only the
@@ -173,14 +191,15 @@ integrity rejection path.
 The 1.5.2 session also added a lifter/compiler target:
 
 ```text
+Done 133973 runs in 61 second(s)  (1.5.9 session)
 Done 112332 runs in 21 second(s)
-Done 85527 runs in 31 second(s)  (1.5.7 session)
-Done 73936 runs in 31 second(s)  (1.5.8 session)
+Done 85527 runs in 31 second(s)   (1.5.7 session)
+Done 73936 runs in 31 second(s)   (1.5.8 session)
 ```
 
 It lifts arbitrary byte strings and compiles every successfully lifted function
 in normal and (input-selected) constant-time modes. The cumulative lifter total
-is **271,795 executions**.
+is **405,768 executions**.
 
 In-tree deterministic fuzz additionally runs 20,000 random payloads and 10,000
 mutations of a valid payload.
@@ -188,9 +207,11 @@ mutations of a valid payload.
 Separate format fuzz targets:
 
 ```text
+PE:  26,539,167 runs in 61 s, no crash (1.5.9 session)
+ELF: 13,516,906 runs in 61 s, no crash (1.5.9 session)
 PE:  11,489,628 runs in 21 s, no crash (1.5.1 session)
 ELF:  5,015,515 runs in 21 s, no crash (1.5.1 session)
-Cumulative: 28,971,774 PE / 20,071,488 ELF runs.
+Cumulative: 55,510,941 PE / 33,588,394 ELF runs.
 ```
 
 Reproducible output:
@@ -213,7 +234,7 @@ cargo tarpaulin --workspace --all-targets --engine Llvm \
   --exclude-files 'target/*' --exclude-files 'bench/*' --timeout 120
 ```
 
-Result: **86.80% line coverage (7538 / 8684 lines)** with
+Result: **87.07% line coverage (7607 / 8737 lines)** with
 `--exclude-files 'target/*' --exclude-files 'bench/*'`. This is above the agreed
 85% floor.
 
@@ -238,9 +259,9 @@ cargo llvm-cov --workspace --all-targets --summary-only
 ```
 
 ```text
-TOTAL regions 84.23% (4383 missed of 27796)
-TOTAL functions 73.47% (291 missed of 1097)
-TOTAL lines 88.27% (1772 missed of 15112)
+TOTAL regions 84.09% (4449 missed of 27962)
+TOTAL functions 73.53% (292 missed of 1103)
+TOTAL lines 88.25% (1786 missed of 15206)
 ```
 
 The two tools instrument differently; both are above the 85% floor and show the
@@ -305,12 +326,13 @@ verification tooling. It is not linked into shipped crates.
 
 ## 8b. Ghidra and radare2 static analysis
 
-Ghidra 12.2 headless (`scripts/ghidra-check.sh`) examined 7 scoped functions:
-5 in `.sirus` and 2 patched host targets. It completed 7/7 decompilations.
-The patched host targets ended in `halt_baddata()` after the jump/scrub; the VM
+Ghidra 12.2 headless (`scripts/ghidra-check.sh`) examined 19 scoped
+functions: 17 in `.sirus` and 2 patched host targets. It completed 18/19; one
+internal `.sirus` function hit a Ghidra pcode/unreadable-memory warning. The
+patched host targets ended in `halt_baddata()` after the jump/scrub; the VM
 segment yielded only engine/state functions. Despite the decompiler's output,
-the host binary as a whole retains Rust/std strings; scoped `.sirus` string scans
-remain clean.
+the host binary as a whole retains Rust/std strings; scoped `.sirus` string
+scans remain clean.
 
 radare2 5.9.8 `pdc` (`scripts/radare2-check.sh`) produced only:
 
@@ -404,7 +426,7 @@ target was the reference output for `(7, 3)`:
 `11936045730314344032`.
 
 ```text
-PASS symbolic timeout: active=1 deadended=0 errored=0 elapsed=120.00s
+PASS symbolic timeout: active=5 deadended=0 errored=0 elapsed=120.00s
 ```
 
 This is a bounded timeout, not a proof of unsatisfiability. It shows that the
@@ -423,15 +445,16 @@ LLVM 18 vintage). For compiler compatibility only, `const fn` is changed to
 `fn`; the executed bodies are otherwise the generated source.
 
 ```text
-KLEE: done: total instructions = 2180488
+KLEE: done: total instructions = 7234878
 KLEE: done: completed paths = 0
-KLEE: done: partially completed paths = 2
-KLEE: done: generated tests = 1
+KLEE: done: partially completed paths = 8
+KLEE: done: generated tests = 5
 PASS KLEE symbolic run (no memory errors in explored paths)
 ```
 
 The symbolic arguments did not complete a path within 60 seconds. This is
-again a bounded resistance result, not a proof.
+again a bounded resistance result, not a proof. The `reason` lint attributes
+that rustc 1.78 cannot parse are stripped for this compatibility build only.
 
 ## 8f. Creusot proofs
 
@@ -463,15 +486,18 @@ Official `dudect-bencher` 0.7.0:
 ```
 
 ```text
-bench crypto      ... : n == +0.200M, max t = +3.37690
-bench crypto_same ... : n == +0.199M, max t = -1.01007
-bench vm          ... : n == +0.029M, max t = -745.81435
+bench crypto      ... : n == +0.009M, max t = +2.39025
+bench crypto_same ... : n == +0.140M, max t = -2.05029
+bench vm          ... : n == +0.092M, max t = -204.39423
 ```
 
-The cipher path stays below the usual |t| = 5 leak threshold. The deliberately
-data-dependent VM branch path is far above it, so the VM is **not** measured as
-constant-time. This confirms the residual: safe-Rust virtualization hides logic,
-not execution timing.
+The two-key crypto measurement now passes the key through `black_box`. Without
+that control the compiler specialized two constant-key code paths and the
+harness measured a branch/layout difference (|t| about 19) rather than cipher
+data timing. With the opaque key the cipher path is below the usual |t| = 5
+leak threshold. The deliberately data-dependent VM branch path is far above it,
+so the VM is **not** measured as constant-time. This confirms the residual:
+safe-Rust virtualization hides logic, not execution timing.
 
 The in-tree Welch harness (`scripts/dudect-check.sh`) independently measured
 `crypto_t=-3.794` and `vm_t=-56.685` over 120,000 samples. Both measurements
@@ -496,15 +522,15 @@ frontier does not converge.
 Official dudect-bencher on the same host:
 
 ```text
-bench vm                 ... : max t = -225.23809  (normal branchy profile)
-bench vm_constant        ... : max t = +2.82059    (straight-line)
-bench vm_constant_branch ... : max t = -2.74189    (branch)
-bench vm_constant_loop   ... : max t = -1.57791    (loop)
-bench vm_constant_memory ... : max t = -0.97765    (private memory)
+bench vm                 ... : max t = -204.39423  (normal branchy profile)
+bench vm_constant        ... : max t = -1.94598    (straight-line)
+bench vm_constant_branch ... : max t = +1.66536    (branch)
+bench vm_constant_loop   ... : max t = +3.19387    (loop)
+bench vm_constant_memory ... : max t = -2.73192    (private memory)
 ```
 
 All four `--constant-time` cases stayed below the conventional |t| = 5
-threshold; the worst was |t| = 2.821. The normal profile still leaks because it
+threshold; the worst was |t| = 3.194. The normal profile still leaks because it
 executes data-dependent control flow.
 
 ## 8h. Tools not executed or not applicable
@@ -549,11 +575,11 @@ bytes. Constant-time, hardened, and hardened+constant-time variants match.
 Native Windows CI is executed by the `pe32-native` job through
 `scripts/windows-native-check.sh`, and the `pe32-msvc-cfg` job builds the same
 fixture with MSVC `/guard:cf`, resolves function sizes from the PDB plus linker
-map, protects it with explicit `--range` selectors, and compares outputs. Both
-jobs pass. The CFG binary also exercises the indirect call path under
-`/GUARD:CF`. The shared fixture also protects a DLL export and loads it through
-a host using `LoadLibrary`/`GetProcAddress`, and a second fixture verifies a TLS
-callback plus `RCDATA` resource after protection.
+map, protects it with explicit `--range` selectors, and compares outputs. All
+three Windows jobs passed on the 1.5.9 tree. The CFG binary also exercises the
+indirect call path under `/GUARD:CF`. The shared fixture also protects a DLL
+export and loads it through a host using `LoadLibrary`/`GetProcAddress`, and a
+second fixture verifies a TLS callback plus `RCDATA` resource after protection.
 
 ---
 
@@ -704,7 +730,7 @@ cargo asm -p sirus-core --lib 1
 
 | Item | Status |
 |---|---|
-| Coverage floor (85%) | **met**: 86.80% tarpaulin / 88.27% llvm-cov lines |
+| Coverage floor (85%) | **met**: 87.07% tarpaulin / 88.25% llvm-cov lines |
 | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect | executed; evidence recorded |
 | live process memory dump scan | pass; masked VM state, constant not observed |
 | Windows PE runtime execution | Wine and native Windows; normal, constant-time, hardened; `/guard:cf`, ABI matrix, unwind lookup, and text-checksum tamper tests pass |
@@ -714,6 +740,7 @@ cargo asm -p sirus-core --lib 1
 | Linux caller-saved ABI | assembly shim preserves GPRs + XMM0–XMM15; C regression passes |
 | Windows hardening / self-code checksum | debugger/PEB/TSC/LFENCE, debug-register reports, and linked text hash with tamper test |
 | native self-code checksum in the safe tier / kernel anti-debug | out of scope (ADR-020) |
+| native Windows CI for this tag | **passed**: all three Windows jobs green |
 
 These are documented boundaries, not hidden passes. The Linux ELF and Windows
 gates pass, including native Windows and MSVC CFG. Runtime exception propagation

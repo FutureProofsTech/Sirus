@@ -80,8 +80,8 @@ runtime:
 - one integer result in `RAX`;
 - conditional branches and loops inside the lifted function are supported;
 - RIP-relative reads of read-only data, the documented SSE2 integer subset,
-  VEX-encoded 128-bit AVX integer forms, and repeated string moves/fills are
-  supported;
+  VEX-encoded 128-bit AVX integer forms, `bswap`, and repeated string
+  moves/fills are supported;
 - direct calls to another function selected in the same protection run are
   supported; `--follow-calls` auto-lifts direct local callees; external calls,
   indirect control flow, 256-bit AVX/x87, writable RIP-relative globals, and

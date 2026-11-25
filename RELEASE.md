@@ -1,8 +1,8 @@
-# Sirus 1.5.8-hardened — Release Notes
+# Sirus 1.5.9-hardened — Release Notes
 
 **Release type:** safe-tier prototype plus optional hardened tier
-**Tag:** `v1.5.8-hardened`
-**Platform:** Linux x86-64 end-to-end; Win64 PE32+ runtime verified under Wine in normal, constant-time, and hardened modes; native Windows CI passed
+**Tag:** `v1.5.9-hardened`
+**Platform:** Linux x86-64 end-to-end; Win64 PE32+ runtime verified under Wine in normal, constant-time, and hardened modes; native Windows CI passed all three jobs
 **Dependency policy:** zero external crates in shipped code
 **Unsafe policy:** `forbid(unsafe_code)` in the safe tier; the opt-in `sirus-hardened` crate and `--hardened` generated entries allow unsafe code
 
@@ -47,6 +47,13 @@
   set; 256-bit AVX is rejected.
 - `rep movsb`/`movsq` and `rep stosb`/`stosq` execute on private memory in
   normal mode and fail closed in constant-time mode.
+- `bswap` 32/64-bit executes in normal and constant-time modes; the undefined
+  16-bit form (`66 0F C8+rd`) is rejected because real CPUs disagree on it.
+- A SIGALRM handler re-enters the protected function during execution; the
+  interrupted and reentrant calls both return the native result.
+- The Linux entry shim saves `RBP`, aligns the VM call stack defensively, and
+  is exercised by an eight-thread pthread fixture that previously segfaulted on
+  a misaligned caller stack.
 - Optional `--hardened` entries add Linux `/proc` debugger detection, Windows
   PEB debugger detection, serialized RDTSC timing checks, LFENCE, and a
   self-code checksum over linked VM text on Linux and Windows.
@@ -97,9 +104,32 @@
 - `inspect` for ELF and PE.
 - Per-build code/data layout perturbation.
 
+### Security and correctness fixes in 1.5.9
+
+- The Linux entry shim now saves `RBP`, aligns the VM call stack defensively,
+  and restores from a frame pointer. A real pthread fixture previously crashed
+  with `SIGSEGV` when the caller's stack was not ABI-aligned; the fixture now
+  matches native output across eight concurrent workers.
+- Constant-time execution now uses a safe address for inactive-block loads and
+  suppresses inactive-block stores. A loop that read a stack argument after
+  exiting previously returned `BadPayload`; the fixed runner returns the native
+  value in the regression test.
+- `SEM_BSWAP` is imported into the generated engine dispatch; the missing import
+  made the match arm a catch-all in release builds and broke otherwise unrelated
+  protected functions. A `bswap` C fixture passes in normal and constant-time
+  modes.
+- `sirus-protector/build.rs` tracks the embedded VM source fragments. Release
+  binaries can no longer silently keep an older engine/wire format after an
+  included source file changes.
+- The maximum payload is 128 KiB, enough for six max-profile functions while
+  staying within test-thread stacks; the previous 64 KiB cap rejected the
+  six-function max-profile differential build.
+- The `sirus-vm` `trace` feature is an explicit opt-in diagnostic; the default
+  build has a no-op sink and no stderr dependency in generated code.
+
 ### Verification
 
-- 218 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
+- 226 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
   statistical-timing measurement hooks.
 - Real victim compilation and execution differential matrix.
 - Differential two-seed builds.
@@ -123,7 +153,7 @@
 ./scripts/verify.sh
 ```
 
-Passes formatting, Clippy (`-D warnings`, all targets), 218 tests, rustdoc,
+Passes formatting, Clippy (`-D warnings`, all targets), 226 tests, rustdoc,
 audit, deny, Kani, red-team, and memory-dump diagnostic.
 
 ```sh
@@ -137,18 +167,18 @@ Runs Kani, Miri, and libFuzzer. Full Miri execution is slow; set
 Recorded evidence:
 
 - Kani: 5 core + 4 VM harnesses.
-- Miri: 11 VM library tests passed on 1.5.7; the 1.5.8 tree keeps the same Miri-clean VM library path; the full execution and core suites are opt-in and slow.
-- libFuzzer VM: 4,094,420 cumulative executions, no crash.
-- libFuzzer lifter/compiler: 271,795 cumulative runs, no crash.
-- libFuzzer formats: 28,971,774 PE and 20,071,488 ELF cumulative runs, no crash.
+- Miri: 11/11 VM library tests passed on the 1.5.9 tree; the full execution and core suites are opt-in and slow.
+- libFuzzer VM: 4,883,875 cumulative executions, no crash.
+- libFuzzer lifter/compiler: 405,768 cumulative runs, no crash.
+- libFuzzer formats: 55,510,941 PE and 33,588,394 ELF cumulative runs, no crash.
 - Reproducible output: identical normal, hardened, and constant-time binaries
   for a fixed input and seed.
 - Release artifacts: `scripts/release-artifacts.sh` emits a binary copy,
   deterministic source archive, SHA-256 manifest, CycloneDX SBOM, and optional
   GPG signature when `SIRUS_SIGNING_KEY` is set.
 - `rust-toolchain.toml` pins stable Rust 1.99.0 and the Windows GNU target.
-- Tarpaulin: 86.80% lines (7538/8684).
-- llvm-cov: pending final summary.
+- Tarpaulin: 87.07% lines (7607/8737).
+- llvm-cov: 88.25% lines, 84.09% regions, 73.53% functions.
 - Payload differential: 0.40% equal bytes.
 - Handler arms are permuted per build; full VM segment differential remains
   2.21% equal bytes (a metric, not a uniqueness proof).
@@ -159,6 +189,9 @@ Recorded evidence:
 - Cold startup: Sirus ~0.6 ms; VMProtect demo ~2.6 s (packed).
 - Constant-time Cachegrind: two inputs produce identical I/D refs, D1/LLd
   misses, branches, and mispredicts for the branch-only protected leaf.
+- Dudect: the two-key cipher bench is black-boxed to prevent compiler
+  code-path specialization; controlled run cipher |t| = 2.39, constant-time
+  subset worst |t| = 3.19, normal branchy VM |t| = 204.
 - Linux caller-saved ABI regression: an optimized C caller relying on `R10`
   matches native after protection in normal, hardened, and constant-time modes.
 - No obvious strings in `.sirus`.
@@ -228,7 +261,7 @@ constant-time modes.
 ### Coverage
 
 The agreed prototype target is **above 85%**. This release measures
-**86.80% tarpaulin lines / 88.27% llvm-cov lines**. 100% is not claimed, but the
+**87.07% tarpaulin lines / 88.25% llvm-cov lines**. 100% is not claimed, but the
 85% floor is met and enforced by the proof script.
 
 ---
@@ -288,13 +321,13 @@ docs/                          architecture, format, threat, proof, traceability
 | Miri | pass |
 | libFuzzer | pass |
 | fmt/clippy/doc/audit/deny | pass |
-| Coverage floor 85% | **pass — 86.80% tarpaulin / 88.27% llvm-cov lines** |
+| Coverage floor 85% | **pass — 87.07% tarpaulin / 88.25% llvm-cov lines** |
 | External evidence tooling | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect executed; commercial/licence-only tools are outside the local gate |
 | Windows runtime | **Wine + native Windows leaf subset (branches/loops), normal + constant-time + hardened; MSVC `/guard:cf` and ABI matrix pass** |
 | Windows unwind metadata | **linked `.pdata` merged; `.seh` shim records; `RtlLookupFunctionEntry` runtime probe; handlers/chained fail closed** |
 | Anti-debug/self-code/timing/LFENCE | **safe tier out of scope (ADR-020); opt-in hardened tier adds them, including Linux and Windows text checksums** |
 | Live memory constant secrecy | masked at rest; snapshot scan passes; instruction-local transient may remain |
-| VM constant-time execution | normal profile leaks (dudect max \|t\| = 225); `--constant-time` straight-line/branch/loop/memory cases pass (worst \|t\| = 2.82) |
+| VM constant-time execution | normal profile leaks (dudect max \|t\| = 204); `--constant-time` straight-line/branch/loop/memory cases pass (worst \|t\| = 3.13) |
 | Hardened tier | **opt-in `--hardened`; unsafe allowed; anti-debug, RDTSC/LFENCE, Windows debug-register report, Linux/Windows self-code checksum** |
 | Handler-layout mutation | **per-build handler/engine/entry layout preambles; 2.21% segment equality** |
 
