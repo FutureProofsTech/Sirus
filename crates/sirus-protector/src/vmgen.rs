@@ -132,6 +132,22 @@ fn read_u64(bytes: &[u8], offset: usize) -> u64 {
         .map_or(0, u64::from_le_bytes)
 }
 
+/// Word-wise FNV-1a matching the generated integrity verifier.
+fn code_hash(bytes: &[u8]) -> u64 {
+    let mut value = 0xcbf2_9ce4_8422_2325_u64;
+    let mut chunks = bytes.chunks_exact(8);
+    for chunk in &mut chunks {
+        let word = u64::from_le_bytes(<[u8; 8]>::try_from(chunk).unwrap_or([0; 8]));
+        value ^= word;
+        value = value.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    for byte in chunks.remainder() {
+        value ^= u64::from(*byte);
+        value = value.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    value
+}
+
 fn layout_preamble(seed: &Seed, domain: u64, prefix: &str, condition: &str) -> String {
     let material = junk(seed, domain, 8);
     let mut state =
@@ -394,6 +410,34 @@ fn generate_source(program: &CompiledProgram, id: &str, vm_base: u64) -> Result<
         program.constant_time(),
         program.constant_time_passes()
     );
+    if program.hardened() {
+        emit!(
+            source,
+            "#[cfg(target_os = \"linux\")]\n\
+             #[used]\n\
+             #[link_section = \".sirus_text_start\"]\n\
+             static SIRUS_TEXT_START_{id}: u8 = 0xa5;\n\
+             #[cfg(target_os = \"linux\")]\n\
+             #[used]\n\
+             #[link_section = \".sirus_text_end\"]\n\
+             static SIRUS_TEXT_END_{id}: u8 = 0x5a;\n\
+             #[cfg(target_os = \"linux\")]\n\
+             #[used]\n\
+             static SIRUS_CODE_HASH_{id}: u64 = 0;\n\n"
+        );
+    }
+    let integrity_check = if program.hardened() {
+        format!(
+            "#[cfg(target_os = \"linux\")]\n\
+             if !hardened::verify_code(\n\
+             \x20   core::ptr::addr_of!(SIRUS_TEXT_START_{id}) as usize + 1,\n\
+             \x20   core::ptr::addr_of!(SIRUS_TEXT_END_{id}) as usize,\n\
+             \x20   core::ptr::addr_of!(SIRUS_CODE_HASH_{id}) as usize,\n\
+             ) {{ return 0; }}\n"
+        )
+    } else {
+        String::new()
+    };
 
     emit!(
         source,
@@ -431,6 +475,7 @@ fn generate_source(program: &CompiledProgram, id: &str, vm_base: u64) -> Result<
             "#[inline(never)]\n\
              pub extern \"C\" fn {entry_name}(a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64) -> u64 {{\n\
              {entry_layout}\
+             {integrity_check}\
              {hardened_begin}\x20   let Some(tables) = shared::derive::DecodeTables::from_encrypted(\n\
              \x20       &{table_name},\n\
              \x20       {table_key_name},\n\
@@ -472,7 +517,12 @@ fn linker_script(vm_base: u64) -> String {
         "PHDRS {{ sirus PT_LOAD FLAGS(5); }}\n\
          SECTIONS {{\n\
          \x20 . = 0x{vm_base:016x};\n\
-         \x20 .sirus : {{ *(.text*) *(.rodata*) }} :sirus\n\
+         \x20 .sirus : {{\n\
+         \x20   *(.sirus_text_start)\n\
+         \x20   *(.text*)\n\
+         \x20   *(.sirus_text_end)\n\
+         \x20   *(.rodata*)\n\
+         \x20 }} :sirus\n\
          \x20 /DISCARD/ : {{\n\
          \x20   *(.data*) *(.bss*) *(.eh_frame*) *(.eh_frame_hdr*)\n\
          \x20   *(.comment*) *(.note*) *(.got*) *(.got.plt*)\n\
@@ -612,7 +662,7 @@ fn validate_blob(blob: &[u8], program: &CompiledProgram, id: &str) -> Result<VmB
         usize::try_from(load.p_offset).map_err(|_| ProtectError::internal("VM segment offset"))?;
     let size =
         usize::try_from(load.p_filesz).map_err(|_| ProtectError::internal("VM segment size"))?;
-    let segment = blob
+    let mut segment = blob
         .get(
             offset
                 ..offset
@@ -696,6 +746,59 @@ fn validate_blob(blob: &[u8], program: &CompiledProgram, id: &str) -> Result<VmB
             return Err(ProtectError::internal("entry outside segment bytes"));
         }
         entry_vas.push(address);
+    }
+    if program.hardened() {
+        let start_name = format!("SIRUS_TEXT_START_{id}");
+        let end_name = format!("SIRUS_TEXT_END_{id}");
+        let text_start = find_unique_symbol(&elf, &start_name, STT_OBJECT)?;
+        let text_end = find_unique_symbol(&elf, &end_name, STT_OBJECT)?;
+        if text_start.size != 1 || text_end.size != 1 {
+            return Err(ProtectError::internal("integrity marker size"));
+        }
+        let start_offset = text_start
+            .value
+            .checked_sub(load.p_vaddr)
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or_else(|| ProtectError::internal("integrity text start"))?;
+        let end_offset = text_end
+            .value
+            .checked_sub(load.p_vaddr)
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or_else(|| ProtectError::internal("integrity text end"))?;
+        let text_start = start_offset
+            .checked_add(1)
+            .ok_or_else(|| ProtectError::internal("integrity text start offset"))?;
+        if text_start >= end_offset || end_offset > segment.len() {
+            return Err(ProtectError::internal("integrity text range"));
+        }
+        if segment.get(start_offset) != Some(&0xa5) || segment.get(end_offset) != Some(&0x5a) {
+            return Err(ProtectError::internal("integrity marker bytes"));
+        }
+        let hash_name = format!("SIRUS_CODE_HASH_{id}");
+        let hash_symbol = find_unique_symbol(&elf, &hash_name, STT_OBJECT)?;
+        if hash_symbol.size != 8 {
+            return Err(ProtectError::internal("integrity hash symbol size"));
+        }
+        let hash_offset = hash_symbol
+            .value
+            .checked_sub(load.p_vaddr)
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or_else(|| ProtectError::internal("integrity hash offset"))?;
+        let hash_end = hash_offset
+            .checked_add(8)
+            .ok_or_else(|| ProtectError::internal("integrity hash range"))?;
+        if hash_end > segment.len() {
+            return Err(ProtectError::internal("integrity hash outside segment"));
+        }
+        let hash = code_hash(
+            segment
+                .get(text_start..end_offset)
+                .ok_or_else(|| ProtectError::internal("integrity text bytes"))?,
+        );
+        let slot = segment
+            .get_mut(hash_offset..hash_end)
+            .ok_or_else(|| ProtectError::internal("integrity hash slot"))?;
+        slot.copy_from_slice(&hash.to_le_bytes());
     }
     Ok(VmBlob {
         segment,

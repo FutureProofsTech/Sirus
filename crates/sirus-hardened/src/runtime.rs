@@ -3,6 +3,45 @@
 //! This module is copied verbatim into the generated hardened VM. It never
 //! allocates and imports no symbols.
 
+/// Verifies the generated code range against an expected FNV-1a hash.
+///
+/// The caller supplies linker-resolved addresses. The range is bounded before
+/// it is read, and the expected value is loaded volatile so the post-link patch
+/// is not constant-folded.
+#[inline]
+#[must_use]
+pub fn verify_code(start: usize, end: usize, expected: usize) -> bool {
+    let Some(length) = end.checked_sub(start) else {
+        return false;
+    };
+    if length == 0 || length > 0x0010_0000 {
+        return false;
+    }
+    // SAFETY: `start..start+length` is the generated text range bounded by
+    // linker markers, and `expected` points at the patched static.
+    let bytes = unsafe { core::slice::from_raw_parts(start as *const u8, length) };
+    // SAFETY: the generated wrapper passes the address of an aligned u64.
+    let expected = unsafe { core::ptr::read_volatile(expected as *const u64) };
+    code_hash(bytes) == expected
+}
+
+/// Word-wise FNV-1a over generated code bytes.
+#[inline]
+fn code_hash(bytes: &[u8]) -> u64 {
+    let mut value = 0xcbf2_9ce4_8422_2325_u64;
+    let mut chunks = bytes.chunks_exact(8);
+    for chunk in &mut chunks {
+        let word = u64::from_le_bytes(<[u8; 8]>::try_from(chunk).unwrap_or([0; 8]));
+        value ^= word;
+        value = value.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    for byte in chunks.remainder() {
+        value ^= u64::from(*byte);
+        value = value.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    value
+}
+
 /// Reads the x86-64 time-stamp counter.
 #[inline]
 #[must_use]

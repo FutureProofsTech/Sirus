@@ -12,4 +12,4 @@ pub mod runtime;
 #[cfg(feature = "host")]
 pub mod host;
 
-pub use runtime::{debugger_present, hypervisor_present, lfence, rdtsc, timing_ok};
+pub use runtime::{debugger_present, hypervisor_present, lfence, rdtsc, timing_ok, verify_code};

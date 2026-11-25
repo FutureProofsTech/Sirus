@@ -45,6 +45,59 @@ for args in "7 3" "3 7" "0 0" "123456789 5"; do
     fi
 done
 
+echo "== hardened self-code checksum =="
+./target/debug/sirus protect \
+    --input "$work/victim" \
+    --output "$work/protected-hardened" \
+    --function-contains sirus_demo_check \
+    --function-contains sirus_demo_loop \
+    --seed "$seed_a" \
+    --hardened >/dev/null
+chmod +x "$work/protected-hardened"
+timeout 5 "$work/victim" 7 3 >"$work/integrity-native.out"
+timeout 5 "$work/protected-hardened" 7 3 >"$work/integrity-protected.out"
+if ! cmp -s "$work/integrity-native.out" "$work/integrity-protected.out"; then
+    echo "hardened integrity build changed behavior" >&2
+    exit 1
+fi
+python3 - "$work/protected-hardened" "$work/protected-tampered" <<'PY'
+import struct
+import sys
+from pathlib import Path
+
+source, destination = map(Path, sys.argv[1:])
+data = bytearray(source.read_bytes())
+assert data[:4] == b'\x7fELF'
+section_offset = struct.unpack_from('<Q', data, 0x28)[0]
+section_size = struct.unpack_from('<H', data, 0x3a)[0]
+section_count = struct.unpack_from('<H', data, 0x3c)[0]
+names_index = struct.unpack_from('<H', data, 0x3e)[0]
+sections = []
+for index in range(section_count):
+    offset = section_offset + index * section_size
+    name, _kind, _flags, address, file_offset, size, _link, _info, _align, _entry = \
+        struct.unpack_from('<IIQQQQIIQQ', data, offset)
+    sections.append((name, file_offset, size, address))
+name_offset = sections[names_index][1]
+names = data[name_offset:name_offset + sections[names_index][2]]
+for name, file_offset, size, _address in sections:
+    end = names.find(b'\0', name)
+    if names[name:end] == b'.sirus':
+        assert size > 16
+        data[file_offset + 2] ^= 1
+        break
+else:
+    raise SystemExit('missing .sirus section')
+destination.write_bytes(data)
+PY
+chmod +x "$work/protected-tampered"
+timeout 5 "$work/protected-tampered" 7 3 >"$work/integrity-tampered.out" 2>/dev/null || true
+if cmp -s "$work/integrity-native.out" "$work/integrity-tampered.out"; then
+    echo "hardened VM accepted modified machine code" >&2
+    exit 1
+fi
+echo "PASS hardened self-code checksum rejects modified VM text"
+
 echo "== structural, entropy, string, differential checks =="
 python3 - "$work/victim" "$work/protected-a" "$work/protected-b" <<'PY'
 import math
