@@ -44,10 +44,11 @@ def object_sizes(path):
     while index < symbol_count:
         entry = symbol_table + index * 18
         name = coff_name(data, entry, strings, string_size)
+        canonical = name.lstrip("_")
         aux = data[entry + 17]
-        if name in NAMES and aux >= 1:
+        if canonical in NAMES and aux >= 1:
             aux_entry = entry + 18
-            sizes[name] = u32(data, aux_entry + 4)
+            sizes[canonical] = u32(data, aux_entry + 4)
         index += 1 + aux
     return sizes
 
@@ -68,7 +69,7 @@ def map_rvas(path):
     rvas = {}
     for line in text.splitlines():
         for name in NAMES:
-            if name not in line:
+            if name not in line and f"_{name}" not in line:
                 continue
             match = re.search(r"\b([0-9A-Fa-f]{16})\b", line)
             if match:
