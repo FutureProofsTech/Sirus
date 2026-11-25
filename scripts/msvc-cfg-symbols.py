@@ -86,6 +86,8 @@ def main():
     rvas = map_rvas(sys.argv[2])
     for name in sorted(NAMES):
         if name not in sizes or name not in rvas:
+            print(f"object sizes: {sizes}", file=sys.stderr)
+            print(f"map rvas: {rvas}", file=sys.stderr)
             raise SystemExit(f"missing CFG symbol: {name}")
         print(f"{name}={rvas[name]:x}:{sizes[name]:x}")
 
