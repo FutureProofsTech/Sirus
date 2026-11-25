@@ -728,6 +728,46 @@ fn read_manifest_u32_at(payload: &[u8], key: u64, start: usize, big_endian: bool
     Some(decode_manifest_u32(&bytes, big_endian))
 }
 
+fn load_manifest(
+    payload: &[u8],
+    key: u64,
+    big_endian: bool,
+    tags: &mut [u64; MAX_PAYLOAD_BLOCKS],
+    offsets: &mut [u32; MAX_PAYLOAD_BLOCKS],
+    lengths: &mut [u32; MAX_PAYLOAD_BLOCKS],
+) -> Option<(usize, usize)> {
+    let count_value = read_manifest_u64_at(payload, key, 0, big_endian)?;
+    let count = usize::try_from(count_value).ok()?;
+    if count == 0 || count > MAX_PAYLOAD_BLOCKS {
+        return None;
+    }
+    let manifest_len = manifest_size(count)?;
+    if manifest_len > payload.len() {
+        return None;
+    }
+    let mut index = 0_usize;
+    while index < count {
+        let entry_relative = index.checked_mul(MANIFEST_ENTRY_BYTES)?;
+        let entry_start = MANIFEST_COUNT_BYTES.checked_add(entry_relative)?;
+        let tag = read_manifest_u64_at(payload, key, entry_start, big_endian)?;
+        let offset_start = entry_start.checked_add(8)?;
+        let length_start = offset_start.checked_add(4)?;
+        let offset = read_manifest_u32_at(payload, key, offset_start, big_endian)?;
+        let length = read_manifest_u32_at(payload, key, length_start, big_endian)?;
+        let offset = usize::try_from(offset).ok()?;
+        let length = usize::try_from(length).ok()?;
+        let end = offset.checked_add(length)?;
+        if offset < manifest_len || length == 0 || end > payload.len() {
+            return None;
+        }
+        *tags.get_mut(index)? = tag;
+        *offsets.get_mut(index)? = u32::try_from(offset).ok()?;
+        *lengths.get_mut(index)? = u32::try_from(length).ok()?;
+        index = index.saturating_add(1);
+    }
+    Some((count, manifest_len))
+}
+
 /// Executes a protected function with tables derived from the plan seed.
 #[inline]
 #[must_use]
@@ -801,75 +841,41 @@ pub fn execute_with_tables(
         (u8::try_from(index & 0xff).unwrap_or(0) ^ fill_byte) ^ memory_mask(memory_key, index)
     });
 
-    'dispatch: loop {
-        let Some(count_value) =
-            read_manifest_u64_at(input.payload, key, 0, tables.manifest_big_endian)
-        else {
-            return halt(Status::BadPayload, steps);
-        };
-        let Ok(count) = usize::try_from(count_value) else {
-            return halt(Status::BadPayload, steps);
-        };
-        if count == 0 || count > MAX_PAYLOAD_BLOCKS {
-            return halt(Status::BadPayload, steps);
-        }
-        let Some(manifest_len) = manifest_size(count) else {
-            return halt(Status::BadPayload, steps);
-        };
-        if manifest_len > input.payload.len() {
-            return halt(Status::BadPayload, steps);
-        }
-        let scan_cost = u64::try_from(count).unwrap_or(u64::MAX);
-        if fuel < scan_cost {
-            return halt(Status::FuelExhausted, steps);
-        }
-        fuel = fuel.saturating_sub(scan_cost);
-        steps = steps.saturating_add(scan_cost);
+    let mut tags = [0_u64; MAX_PAYLOAD_BLOCKS];
+    let mut offsets = [0_u32; MAX_PAYLOAD_BLOCKS];
+    let mut lengths = [0_u32; MAX_PAYLOAD_BLOCKS];
+    let Some((count, _manifest_len)) = load_manifest(
+        input.payload,
+        key,
+        tables.manifest_big_endian,
+        &mut tags,
+        &mut offsets,
+        &mut lengths,
+    ) else {
+        return halt(Status::BadPayload, steps);
+    };
+    let scan_cost = u64::try_from(count).unwrap_or(u64::MAX);
+    if fuel < scan_cost {
+        return halt(Status::FuelExhausted, steps);
+    }
+    fuel = fuel.saturating_sub(scan_cost);
+    steps = steps.saturating_add(scan_cost);
 
+    'dispatch: loop {
         let mut found: Option<(usize, usize)> = None;
         let mut entry_index_scan = 0_usize;
         while entry_index_scan < count {
-            let Some(entry_relative) = entry_index_scan.checked_mul(MANIFEST_ENTRY_BYTES) else {
-                return halt(Status::BadPayload, steps);
-            };
-            let Some(entry_start) = MANIFEST_COUNT_BYTES.checked_add(entry_relative) else {
-                return halt(Status::BadPayload, steps);
-            };
-            let Some(tag) =
-                read_manifest_u64_at(input.payload, key, entry_start, tables.manifest_big_endian)
-            else {
-                return halt(Status::BadPayload, steps);
-            };
-            if tag == state {
-                let Some(offset_start) = entry_start.checked_add(8) else {
+            if tags.get(entry_index_scan).copied() == Some(state) {
+                let Some(offset) = offsets.get(entry_index_scan).copied() else {
                     return halt(Status::BadPayload, steps);
                 };
-                let Some(length_start) = offset_start.checked_add(4) else {
+                let Some(length) = lengths.get(entry_index_scan).copied() else {
                     return halt(Status::BadPayload, steps);
                 };
-                let Some(offset) = read_manifest_u32_at(
-                    input.payload,
-                    key,
-                    offset_start,
-                    tables.manifest_big_endian,
-                ) else {
-                    return halt(Status::BadPayload, steps);
-                };
-                let Some(length) = read_manifest_u32_at(
-                    input.payload,
-                    key,
-                    length_start,
-                    tables.manifest_big_endian,
-                ) else {
-                    return halt(Status::BadPayload, steps);
-                };
-                let Ok(offset) = usize::try_from(offset) else {
-                    return halt(Status::BadPayload, steps);
-                };
-                let Ok(length) = usize::try_from(length) else {
-                    return halt(Status::BadPayload, steps);
-                };
-                found = Some((offset, length));
+                found = Some((
+                    usize::try_from(offset).unwrap_or(usize::MAX),
+                    usize::try_from(length).unwrap_or(usize::MAX),
+                ));
                 break;
             }
             entry_index_scan = entry_index_scan.saturating_add(1);
@@ -877,15 +883,9 @@ pub fn execute_with_tables(
         let Some((body_start, body_length)) = found else {
             return halt(Status::BadPayload, steps);
         };
-        if body_start < manifest_len || body_length == 0 {
-            return halt(Status::BadPayload, steps);
-        }
         let Some(body_end) = body_start.checked_add(body_length) else {
             return halt(Status::BadPayload, steps);
         };
-        if body_end > input.payload.len() {
-            return halt(Status::BadPayload, steps);
-        }
 
         let mut reader = BodyReader::new(
             input.payload,

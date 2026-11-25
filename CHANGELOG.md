@@ -2,6 +2,25 @@
 
 All notable changes to Sirus.
 
+## [1.5.5-hardened] — 2026-11-25
+
+### Performance
+
+- SipHash streaming now compresses full 8-byte chunks instead of looping one
+  byte at a time. Payload integrity hashing is substantially faster with
+  identical hash values.
+- Normal execution builds the decrypted manifest table once per invocation
+  instead of re-scanning and re-decrypting it at every block transition.
+- Measured default profile: ~75.0 µs/call, down from ~78.7 µs; balanced
+  ~53.9 µs; minimal ~15.5 µs. The default remains dominated by the intentional
+  MBA/decoy expansion, not by setup.
+- The failed `opt-level=2` experiment was not shipped: PIC GOT calls require
+  runtime relocations that the append-only VM section does not support.
+
+### Evidence
+
+- 201 tests; 90.08% tarpaulin / 90.79% llvm-cov lines.
+
 ## [1.5.4-hardened] — 2026-11-25
 
 ### Fixed

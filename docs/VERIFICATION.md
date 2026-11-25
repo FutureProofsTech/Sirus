@@ -5,7 +5,7 @@
 **Nightly toolchain:** 2026-08-03 / 2026-08-21 family for Miri and fuzzing
 **Kani:** 0.68.0
 **Project state:** all features described in `README.md` implemented and tested
-**Last evidenced run:** final 1.5.4-hardened tree, tag `v1.5.4-hardened`
+**Last evidenced run:** final 1.5.5-hardened tree, tag `v1.5.5-hardened`
 
 This file records commands actually executed. Anything not executed is listed as
 an external evidence gap or a documented boundary, never inferred.
@@ -189,7 +189,7 @@ cargo tarpaulin --workspace --all-targets --engine Llvm \
   --exclude-files 'target/*' --exclude-files 'bench/*' --timeout 120
 ```
 
-Result: **90.13% line coverage (6778 / 7520 lines)** with
+Result: **90.08% line coverage (6799 / 7548 lines)** with
 `--exclude-files 'target/*' --exclude-files 'bench/*'`. This is above the agreed
 85% floor.
 
@@ -214,9 +214,9 @@ cargo llvm-cov --workspace --all-targets --summary-only
 ```
 
 ```text
-TOTAL regions 86.16% (3437 missed of 24831)
-TOTAL functions 74.30% (256 missed of 996)
-TOTAL lines 90.61% (1251 missed of 13316)
+TOTAL regions 86.35% (3403 missed of 24925)
+TOTAL functions 74.62% (253 missed of 997)
+TOTAL lines 90.79% (1229 missed of 13347)
 ```
 
 The two tools instrument differently; both are above the 85% floor and show the
@@ -316,12 +316,12 @@ VMProtect demo 3.11 virtualization measured on its own native baseline):
 | Native (Sirus benchmark build) | ~1.2-1.4 ns | 1x | ~0.0002x |
 | Native (VMProtect benchmark build) | ~1.89 ns | 1x | ~0.0002x |
 | VMProtect 3.11 demo, virtualization | ~8.48 us | ~4,490x | 1x |
-| Sirus default | ~78.7 us | ~49,800x | ~9.3x |
-| Sirus hardened | ~76.7 us | ~40,600x | ~9.0x |
-| Sirus constant-time | ~214 us | ~101,500x | ~25.2x |
-| Sirus hardened constant-time | ~217 us | ~111,300x | ~25.5x |
-| Sirus balanced (`depth=1, budget=128, decoys=1`) | ~56.6 us | ~30,000x | ~6.7x |
-| Sirus minimal (`depth=0, budget=0, decoys=0`) | ~14.7 us | ~6,100x | ~1.7x |
+| Sirus default | ~75.0 us | ~49,800x | ~9.3x |
+| Sirus hardened | ~78.5 us | ~40,600x | ~9.0x |
+| Sirus constant-time | ~234 us | ~101,500x | ~25.2x |
+| Sirus hardened constant-time | ~235 us | ~111,300x | ~25.5x |
+| Sirus balanced (`depth=1, budget=128, decoys=1`) | ~53.9 us | ~30,000x | ~6.7x |
+| Sirus minimal (`depth=0, budget=0, decoys=0`) | ~15.5 us | ~6,100x | ~1.7x |
 
 Sirus append size is about 30 KiB (0.7% of the benchmark binary); VMProtect demo
 packs the 4.4 MiB input to a 1.17 MiB output but pays a multi-second startup cost
@@ -680,7 +680,7 @@ cargo asm -p sirus-core --lib 1
 
 | Item | Status |
 |---|---|
-| Coverage floor (85%) | **met**: 90.13% tarpaulin / 90.61% llvm-cov lines |
+| Coverage floor (85%) | **met**: 90.08% tarpaulin / 90.79% llvm-cov lines |
 | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect | executed; evidence recorded |
 | live process memory dump scan | pass; masked VM state, constant not observed |
 | Windows PE runtime execution | Wine and native Windows; normal, constant-time, hardened; `/guard:cf`, ABI matrix, unwind lookup, and text-checksum tamper tests pass |

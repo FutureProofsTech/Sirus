@@ -70,7 +70,41 @@ impl SipHasher24 {
     /// Absorbs bytes. May be called repeatedly.
     #[inline]
     pub fn write(&mut self, bytes: &[u8]) {
-        for byte in bytes {
+        let mut index = 0_usize;
+        if self.tail_len != 0 {
+            let needed = 8_u32.saturating_sub(self.tail_len);
+            let available = u32::try_from(bytes.len()).unwrap_or(u32::MAX).min(needed);
+            let available = usize::try_from(available).unwrap_or(bytes.len());
+            while let Some(byte) = bytes.get(index).copied() {
+                if index >= available {
+                    break;
+                }
+                let shift = self.tail_len.wrapping_mul(8);
+                self.tail |= u64::from(byte) << shift;
+                self.tail_len = self.tail_len.wrapping_add(1);
+                self.length = self.length.wrapping_add(1);
+                index = index.saturating_add(1);
+                if self.tail_len == 8 {
+                    let message = self.tail;
+                    self.tail = 0;
+                    self.tail_len = 0;
+                    self.compress(message);
+                    break;
+                }
+            }
+        }
+        let Some(rest) = bytes.get(index..) else {
+            return;
+        };
+        let mut chunks = rest.chunks_exact(8);
+        for chunk in &mut chunks {
+            let Ok(array) = <[u8; 8]>::try_from(chunk) else {
+                continue;
+            };
+            self.length = self.length.wrapping_add(8);
+            self.compress(u64::from_le_bytes(array));
+        }
+        for byte in chunks.remainder() {
             let shift = self.tail_len.wrapping_mul(8);
             self.tail |= u64::from(*byte) << shift;
             self.tail_len = self.tail_len.wrapping_add(1);

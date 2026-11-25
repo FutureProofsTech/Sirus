@@ -1,7 +1,7 @@
-# Sirus 1.5.4-hardened — Release Notes
+# Sirus 1.5.5-hardened — Release Notes
 
 **Release type:** safe-tier prototype plus optional hardened tier
-**Tag:** `v1.5.4-hardened`
+**Tag:** `v1.5.5-hardened`
 **Platform:** Linux x86-64 end-to-end; Win64 PE32+ runtime verified under Wine in normal, constant-time, and hardened modes; native Windows CI passed
 **Dependency policy:** zero external crates in shipped code
 **Unsafe policy:** `forbid(unsafe_code)` in the safe tier; the opt-in `sirus-hardened` crate and `--hardened` generated entries allow unsafe code
@@ -132,15 +132,15 @@ Recorded evidence:
   deterministic source archive, SHA-256 manifest, CycloneDX SBOM, and optional
   GPG signature when `SIRUS_SIGNING_KEY` is set.
 - `rust-toolchain.toml` pins stable Rust 1.99.0 and the Windows GNU target.
-- Tarpaulin: 90.13% lines (6778/7520).
-- llvm-cov: 90.61% lines, 86.16% regions.
+- Tarpaulin: 90.08% lines (6799/7548).
+- llvm-cov: 90.79% lines, 86.35% regions.
 - Payload differential: 0.40% equal bytes.
 - Handler arms are permuted per build; full VM segment differential remains
   2.21% equal bytes (a metric, not a uniqueness proof).
 - Payload entropy: 7.996 Shannon / 7.751 min-entropy bits/byte.
-- Per-call benchmark: native ~1.2-1.9 ns; Sirus default ~78.7 us; hardened
-  ~76.7 us; constant-time ~214 us; hardened constant-time ~217 us; balanced
-  ~56.6 us; minimal ~14.7 us; VMProtect 3.11 demo virtualization ~8.5 us.
+- Per-call benchmark: native ~1.2-1.9 ns; Sirus default ~75.0 us; hardened
+  ~78.5 us; constant-time ~234 us; hardened constant-time ~235 us; balanced
+  ~53.9 us; minimal ~15.5 us; VMProtect 3.11 demo virtualization ~8.5 us.
 - Cold startup: Sirus ~0.6 ms; VMProtect demo ~2.6 s (packed).
 - Constant-time Cachegrind: two inputs produce identical I/D refs, D1/LLd
   misses, branches, and mispredicts for the branch-only protected leaf.
@@ -209,7 +209,7 @@ constant-time modes.
 ### Coverage
 
 The agreed prototype target is **above 85%**. This release measures
-**90.13% tarpaulin lines / 90.61% llvm-cov lines**. 100% is not claimed, but the
+**90.08% tarpaulin lines / 90.79% llvm-cov lines**. 100% is not claimed, but the
 85% floor is met and enforced by the proof script.
 
 ---
@@ -269,7 +269,7 @@ docs/                          architecture, format, threat, proof, traceability
 | Miri | pass |
 | libFuzzer | pass |
 | fmt/clippy/doc/audit/deny | pass |
-| Coverage floor 85% | **pass — 90.13% tarpaulin / 90.61% llvm-cov lines** |
+| Coverage floor 85% | **pass — 90.08% tarpaulin / 90.79% llvm-cov lines** |
 | External evidence tooling | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect executed; commercial/licence-only tools are outside the local gate |
 | Windows runtime | **Wine + native Windows leaf subset (branches/loops), normal + constant-time + hardened; MSVC `/guard:cf` and ABI matrix pass** |
 | Windows unwind metadata | **linked `.pdata` merged; `.seh` shim records; `RtlLookupFunctionEntry` runtime probe; handlers/chained fail closed** |

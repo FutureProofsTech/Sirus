@@ -120,9 +120,9 @@ code and are not mixed into the default runtime. Both Linux and Windows hardened
   loops return `LoopBound`. Private `Load`/`Store` uses a full-stack byte scan
   with masked selection, making the access pattern fixed but slow. The normal
   branchy profile remains data-dependent and leaks timing.
-- Per-call overhead is about 78.7 us for the default profile, 76.7 us for the
-  hardened profile, 214 us for the constant-time profile, 217 us for hardened
-  constant-time, 56.6 us for the balanced profile, and 14.7 us for the minimal
+- Per-call overhead is about 75.0 us for the default profile, 78.5 us for the
+  hardened profile, 234 us for the constant-time profile, 235 us for hardened
+  constant-time, 53.9 us for the balanced profile, and 15.5 us for the minimal
   profile on the benchmark host. The same function under VMProtect 3.11 demo
   virtualization is about 8.5 us. Sirus has much lower startup cost because it
   does not pack the host image.
