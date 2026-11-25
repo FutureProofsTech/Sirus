@@ -24,6 +24,11 @@ dirty="$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
 artifact="$out/sirus-$version-$(uname -s)-$(uname -m)"
 cp target/release/sirus "$artifact"
 chmod 755 "$artifact"
+source_archive="$out/sirus-$version-source.tar.gz"
+tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
+    -czf "$source_archive" \
+    Cargo.toml Cargo.lock README.md RELEASE.md CHANGELOG.md PLAN.md \
+    crates scripts docs bench fuzz/Cargo.toml fuzz/fuzz_targets
 
 {
     printf 'version=%s\n' "$version"
@@ -73,7 +78,7 @@ PY
 
 (
     cd "$out"
-    sha256sum "$(basename "$artifact")" MANIFEST.txt sbom.json >SHA256SUMS
+    sha256sum "$(basename "$artifact")" "$(basename "$source_archive")" MANIFEST.txt sbom.json >SHA256SUMS
 )
 
 if [[ -n "${SIRUS_SIGNING_KEY:-}" ]]; then

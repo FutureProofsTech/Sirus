@@ -700,7 +700,240 @@ fn inspect_pe(bytes: &[u8], output: &mut impl Write) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::scrub_range;
+    use super::{ProtectArgs, Selector, inspect, protect, scrub_range};
+    use sirus_core::program::CompileOptions;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn sandbox() -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let path =
+            std::env::temp_dir().join(format!("sirus-pipeline-{}-{nanos}", std::process::id()));
+        fs::create_dir_all(&path).expect("sandbox");
+        path
+    }
+
+    fn compile_fixture(directory: &Path) -> PathBuf {
+        let output = directory.join("victim");
+        let result = Command::new(std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_owned()))
+            .arg("--edition=2021")
+            .arg("-C")
+            .arg("opt-level=2")
+            .arg("-C")
+            .arg("panic=abort")
+            .arg("-C")
+            .arg("debuginfo=0")
+            .arg(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/victim.rs"
+            ))
+            .arg("-o")
+            .arg(&output)
+            .output()
+            .expect("rustc fixture");
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        output
+    }
+
+    fn arguments(input: &Path, output: &Path, selectors: Vec<Selector>) -> ProtectArgs {
+        ProtectArgs {
+            input: input.to_path_buf(),
+            output: output.to_path_buf(),
+            selectors,
+            seed: Some(
+                "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff".to_owned(),
+            ),
+            options: CompileOptions::new(),
+            keep_temp: false,
+            scrub: true,
+            vm_base: None,
+            emit_source: None,
+        }
+    }
+
+    fn synthetic_pe() -> Vec<u8> {
+        let mut data = vec![0_u8; 0x400];
+        data[0..2].copy_from_slice(b"MZ");
+        data[0x3c..0x40].copy_from_slice(&0x80_u32.to_le_bytes());
+        data[0x80..0x84].copy_from_slice(b"PE\0\0");
+        let coff = 0x84_usize;
+        data[coff..coff + 2].copy_from_slice(&0x8664_u16.to_le_bytes());
+        data[coff + 2..coff + 4].copy_from_slice(&1_u16.to_le_bytes());
+        data[coff + 16..coff + 18].copy_from_slice(&240_u16.to_le_bytes());
+        let optional = coff + 20;
+        data[optional..optional + 2].copy_from_slice(&0x20b_u16.to_le_bytes());
+        data[optional + 16..optional + 20].copy_from_slice(&0x1000_u32.to_le_bytes());
+        data[optional + 24..optional + 32].copy_from_slice(&0x1_4000_0000_u64.to_le_bytes());
+        data[optional + 32..optional + 36].copy_from_slice(&0x1000_u32.to_le_bytes());
+        data[optional + 36..optional + 40].copy_from_slice(&0x200_u32.to_le_bytes());
+        data[optional + 56..optional + 60].copy_from_slice(&0x3000_u32.to_le_bytes());
+        data[optional + 60..optional + 64].copy_from_slice(&0x200_u32.to_le_bytes());
+        data[optional + 108..optional + 112].copy_from_slice(&16_u32.to_le_bytes());
+        let table = optional + 240;
+        data[table..table + 8].copy_from_slice(b".text\0\0\0");
+        data[table + 8..table + 12].copy_from_slice(&0x200_u32.to_le_bytes());
+        data[table + 12..table + 16].copy_from_slice(&0x1000_u32.to_le_bytes());
+        data[table + 16..table + 20].copy_from_slice(&0x200_u32.to_le_bytes());
+        data[table + 20..table + 24].copy_from_slice(&0x200_u32.to_le_bytes());
+        data[table + 36..table + 40].copy_from_slice(&0x6000_0020_u32.to_le_bytes());
+        data[0x200..0x204].copy_from_slice(&[0x48, 0x89, 0xf8, 0xc3]);
+        data
+    }
+
+    fn windows_toolchain_available() -> bool {
+        let rustc = Command::new("rustc")
+            .args([
+                "--print",
+                "target-libdir",
+                "--target",
+                "x86_64-pc-windows-gnu",
+            ])
+            .output();
+        let rustc_ok = rustc
+            .ok()
+            .filter(|output| output.status.success())
+            .is_some_and(|output| {
+                let path = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+                Path::new(&path).is_dir()
+            });
+        rustc_ok
+            && Command::new("x86_64-w64-mingw32-gcc")
+                .arg("--version")
+                .output()
+                .is_ok()
+            && Command::new("lld-link").arg("--version").output().is_ok()
+    }
+
+    #[test]
+    fn pe_pipeline_smoke_when_toolchain_available() {
+        if !windows_toolchain_available() {
+            return;
+        }
+        let directory = sandbox();
+        let input = directory.join("input.exe");
+        let output = directory.join("protected.exe");
+        fs::write(&input, synthetic_pe()).expect("write pe");
+        let report = protect(&arguments(
+            &input,
+            &output,
+            vec![Selector::Range {
+                start: 0x1000,
+                size: 4,
+            }],
+        ))
+        .expect("protect pe");
+        assert_eq!(report.functions, 1);
+        let mut inspection = Vec::new();
+        inspect(&output, &mut inspection).expect("inspect pe");
+        assert!(String::from_utf8_lossy(&inspection).contains("protected=true"));
+    }
+
+    #[test]
+    fn pipeline_selectors_and_inspection_are_exercised_in_process() {
+        let directory = sandbox();
+        let victim = compile_fixture(&directory);
+        let victim_bytes = fs::read(&victim).expect("read victim");
+        let victim_elf = sirus_binfmt::elf::Elf64::parse(&victim_bytes).expect("parse victim");
+        let exact_name = victim_elf
+            .find_functions_containing("sirus_demo_check")
+            .expect("find check")
+            .first()
+            .expect("check symbol")
+            .name
+            .to_owned();
+        let exact_output = directory.join("exact");
+        let report = protect(&arguments(
+            &victim,
+            &exact_output,
+            vec![Selector::Exact(exact_name.clone())],
+        ))
+        .expect("exact protect");
+        assert_eq!(report.functions, 1);
+        let mut inspection = Vec::new();
+        inspect(&exact_output, &mut inspection).expect("inspect");
+        assert!(String::from_utf8_lossy(&inspection).contains("protected=true"));
+        assert!(
+            protect(&arguments(
+                &exact_output,
+                &directory.join("again"),
+                vec![Selector::Exact(exact_name.clone())],
+            ))
+            .is_err()
+        );
+
+        let contains_output = directory.join("contains");
+        protect(&arguments(
+            &victim,
+            &contains_output,
+            vec![Selector::Contains("sirus_demo_check".to_owned())],
+        ))
+        .expect("contains protect");
+
+        let function = victim_elf
+            .find_functions_containing("sirus_demo_loop")
+            .expect("find loop")
+            .first()
+            .expect("loop symbol")
+            .to_owned();
+        let range_output = directory.join("range");
+        protect(&arguments(
+            &victim,
+            &range_output,
+            vec![Selector::Range {
+                start: function.value,
+                size: function.size,
+            }],
+        ))
+        .expect("range protect");
+
+        assert!(
+            protect(&arguments(
+                &victim,
+                &directory.join("missing"),
+                vec![Selector::Exact("missing".to_owned())],
+            ))
+            .is_err()
+        );
+        assert!(
+            protect(&arguments(
+                &victim,
+                &directory.join("ambiguous"),
+                vec![Selector::Contains("sirus_demo".to_owned())],
+            ))
+            .is_err()
+        );
+        assert!(
+            protect(&arguments(
+                &victim,
+                &directory.join("overlap"),
+                vec![
+                    Selector::Exact(exact_name.clone()),
+                    Selector::Exact(exact_name),
+                ],
+            ))
+            .is_err()
+        );
+        assert!(
+            protect(&arguments(
+                &victim,
+                &directory.join("markers"),
+                vec![Selector::Markers {
+                    begin: b"sirus-marker-missing".to_vec(),
+                    end: b"sirus-marker-end".to_vec(),
+                }],
+            ))
+            .is_err()
+        );
+    }
 
     #[test]
     fn scrub_range_overwrites_and_validates_bounds() {

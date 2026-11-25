@@ -81,7 +81,7 @@
 
 ### Verification
 
-- 195 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
+- 198 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
   statistical-timing measurement hooks.
 - Real victim compilation and execution differential matrix.
 - Differential two-seed builds.
@@ -105,7 +105,7 @@
 ./scripts/verify.sh
 ```
 
-Passes formatting, Clippy (`-D warnings`, all targets), 195 tests, rustdoc,
+Passes formatting, Clippy (`-D warnings`, all targets), 198 tests, rustdoc,
 audit, deny, Kani, red-team, and memory-dump diagnostic.
 
 ```sh
@@ -126,10 +126,10 @@ Recorded evidence:
 - Reproducible output: identical normal, hardened, and constant-time binaries
   for a fixed input and seed.
 - Release artifacts: `scripts/release-artifacts.sh` emits a binary copy,
-  SHA-256 manifest, CycloneDX SBOM, and optional GPG signature when
-  `SIRUS_SIGNING_KEY` is set.
-- Tarpaulin: 87.14% lines (6553/7520).
-- llvm-cov: 88.23% lines, 83.74% regions.
+  deterministic source archive, SHA-256 manifest, CycloneDX SBOM, and optional
+  GPG signature when `SIRUS_SIGNING_KEY` is set.
+- Tarpaulin: 89.72% lines (6747/7520).
+- llvm-cov: 90.19% lines, 85.74% regions.
 - Payload differential: 0.40% equal bytes.
 - Handler arms are permuted per build; full VM segment differential remains
   2.21% equal bytes (a metric, not a uniqueness proof).
@@ -205,7 +205,7 @@ constant-time modes.
 ### Coverage
 
 The agreed prototype target is **above 85%**. This release measures
-**87.14% tarpaulin lines / 88.23% llvm-cov lines**. 100% is not claimed, but the
+**89.72% tarpaulin lines / 90.19% llvm-cov lines**. 100% is not claimed, but the
 85% floor is met and enforced by the proof script.
 
 ---
@@ -265,7 +265,7 @@ docs/                          architecture, format, threat, proof, traceability
 | Miri | pass |
 | libFuzzer | pass |
 | fmt/clippy/doc/audit/deny | pass |
-| Coverage floor 85% | **pass — 87.14% tarpaulin / 88.23% llvm-cov lines** |
+| Coverage floor 85% | **pass — 89.72% tarpaulin / 90.19% llvm-cov lines** |
 | External evidence tooling | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect executed; commercial/licence-only tools are outside the local gate |
 | Windows runtime | **Wine + native Windows leaf subset (branches/loops), normal + constant-time + hardened; MSVC `/guard:cf` and ABI matrix pass** |
 | Windows unwind metadata | **linked `.pdata` merged; `.seh` shim records; `RtlLookupFunctionEntry` runtime probe; handlers/chained fail closed** |

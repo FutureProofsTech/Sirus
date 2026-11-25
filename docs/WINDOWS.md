@@ -71,8 +71,10 @@ runtime:
 - no calls, indirect control flow, SSE/AVX/x87, RIP-relative data, or host
   pointer dereference inside the protected function;
 - exception/unwind metadata is emitted for the injected VM and the ABI shims;
-- MSVC CFG-enabled callers and indirect calls are tested; the injected VM does
-  not add CFG guard-table entries of its own.
+- MSVC CFG-enabled callers and indirect calls are tested. Protected entries are
+  reached through a direct `rel32` jump, which CFG does not instrument; an
+  indirect caller validates the original function address, which remains in the
+  guard table. The injected VM does not need its own CFG guard-table entries.
 
 The stack-probe symbol is a real probe-only x64 helper. It walks downward one
 page at a time from the current stack pointer to the new frame base, touching

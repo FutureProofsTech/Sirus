@@ -845,7 +845,10 @@ Each numbered item follows the supplied `red team` checklist.
 
 These are starting budgets and release gates for the reference sample. Optimizations may improve them; regressions require review.
 
-- Protected function execution: ≤ 50× native for the reference arithmetic function; VM overhead is expected and acceptable for server-side license/protocol logic.
+- Protected function execution: ≤ 50× native was the original aspirational budget.
+  The measured bytecode VM prototype is ~49,000× native for the reference leaf
+  (default profile); this is a known design tradeoff, not a met gate. Treat
+  50× as future native-codegen work, not a current release claim.
 - VM entry table derivation: bounded and measured; no heap.
 - Injected VM blob: ≤ 64 KiB per build (excluding payload configurable ceiling).
 - Payload ceiling: 64 KiB by default.

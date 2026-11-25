@@ -1119,6 +1119,31 @@ mod tests {
     }
 
     #[test]
+    fn short_opcode_corpus_is_total() {
+        let mut first = 0_u16;
+        while first <= 0xff {
+            let mut second = 0_u16;
+            while second <= 0xff {
+                let code = [
+                    u8::try_from(first).unwrap_or(0),
+                    u8::try_from(second).unwrap_or(0),
+                    0xc3,
+                ];
+                let _ = lift_function(&code, 0x1000);
+                let two_byte = [
+                    0x0f,
+                    u8::try_from(first).unwrap_or(0),
+                    u8::try_from(second).unwrap_or(0),
+                    0xc3,
+                ];
+                let _ = lift_function(&two_byte, 0x1000);
+                second = second.saturating_add(1);
+            }
+            first = first.saturating_add(1);
+        }
+    }
+
+    #[test]
     fn rejects_call_inside_protected_range() {
         let code = [0x48, 0x89, 0xf8, 0xe8, 0, 0, 0, 0, 0xc3];
         let result = lift_function(&code, 0);
