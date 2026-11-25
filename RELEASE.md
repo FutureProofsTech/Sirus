@@ -1,7 +1,7 @@
-# Sirus 1.5.2-hardened — Release Notes
+# Sirus 1.5.3-hardened — Release Notes
 
 **Release type:** safe-tier prototype plus optional hardened tier
-**Tag:** `v1.5.2-hardened`
+**Tag:** `v1.5.3-hardened`
 **Platform:** Linux x86-64 end-to-end; Win64 PE32+ runtime verified under Wine in normal, constant-time, and hardened modes; native Windows CI passed
 **Dependency policy:** zero external crates in shipped code
 **Unsafe policy:** `forbid(unsafe_code)` in the safe tier; the opt-in `sirus-hardened` crate and `--hardened` generated entries allow unsafe code
@@ -79,7 +79,7 @@
 
 ### Verification
 
-- 195 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
+- 196 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
   statistical-timing measurement hooks.
 - Real victim compilation and execution differential matrix.
 - Differential two-seed builds.
@@ -103,7 +103,7 @@
 ./scripts/verify.sh
 ```
 
-Passes formatting, Clippy (`-D warnings`, all targets), 195 tests, rustdoc,
+Passes formatting, Clippy (`-D warnings`, all targets), 196 tests, rustdoc,
 audit, deny, Kani, red-team, and memory-dump diagnostic.
 
 ```sh
@@ -126,8 +126,8 @@ Recorded evidence:
 - Release artifacts: `scripts/release-artifacts.sh` emits a binary copy,
   SHA-256 manifest, CycloneDX SBOM, and optional GPG signature when
   `SIRUS_SIGNING_KEY` is set.
-- Tarpaulin: 87.10% lines (6415/7365).
-- llvm-cov: 88.40% lines, 83.91% regions.
+- Tarpaulin: 87.12% lines (6424/7374).
+- llvm-cov: 88.53% lines, 84.03% regions.
 - Payload differential: 0.40% equal bytes.
 - Handler arms are permuted per build; full VM segment differential remains
   2.21% equal bytes (a metric, not a uniqueness proof).
@@ -190,10 +190,17 @@ leak threshold, the normal VM branch far above it, and the straight-line,
 branchy, and looping `--constant-time` cases below it. Commercial/licence-gated
 tools are outside the local gate and are not release blockers.
 
+### Known correctness guard
+
+A cyclic lifted function containing `Select`/`cmov` is rejected with
+`unsupported instruction pattern`. A minimized C loop followed by `cmovae` hung
+after protection in both normal and constant-time modes; the guard prevents
+that hang until the runtime interaction is fixed.
+
 ### Coverage
 
 The agreed prototype target is **above 85%**. This release measures
-**87.10% tarpaulin lines / 88.40% llvm-cov lines**. 100% is not claimed, but the
+**87.12% tarpaulin lines / 88.53% llvm-cov lines**. 100% is not claimed, but the
 85% floor is met and enforced by the proof script.
 
 ---
@@ -252,7 +259,7 @@ docs/                          architecture, format, threat, proof, traceability
 | Miri | pass |
 | libFuzzer | pass |
 | fmt/clippy/doc/audit/deny | pass |
-| Coverage floor 85% | **pass — 87.10% tarpaulin / 88.40% llvm-cov lines** |
+| Coverage floor 85% | **pass — 87.12% tarpaulin / 88.53% llvm-cov lines** |
 | External evidence tooling | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect executed; commercial/licence-only tools are outside the local gate |
 | Windows runtime | **Wine + native Windows leaf subset (branches/loops), normal + constant-time + hardened; MSVC `/guard:cf` and ABI matrix pass** |
 | Windows unwind metadata | **linked `.pdata` merged; `.seh` shim records; `RtlLookupFunctionEntry` runtime probe; handlers/chained fail closed** |

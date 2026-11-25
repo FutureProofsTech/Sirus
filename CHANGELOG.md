@@ -2,6 +2,20 @@
 
 All notable changes to Sirus.
 
+## [1.5.3-hardened] — 2026-11-25
+
+### Fixed
+
+- Reject cyclic lifted functions that contain a `Select`/`cmov` operation until
+  the runtime interaction is fixed. A minimized C loop followed by `cmovae`
+  hung after protection; normal and constant-time modes were both affected.
+  This is a fail-closed guard, not a complete cmov-in-loop implementation.
+
+### Evidence
+
+- Added a core regression test for the reject path.
+- 196 tests; coverage refreshed after the guard.
+
 ## [1.5.2-hardened] — 2026-11-25
 
 ### Added
@@ -22,7 +36,7 @@ All notable changes to Sirus.
 
 - `pe32-wine`, `pe32-native`, and `pe32-msvc-cfg` pass with the new ABI, unwind,
   and checksum probes.
-- 195 tests; 87.10% tarpaulin / 88.40% llvm-cov lines.
+- 196 tests; 87.12% tarpaulin / 88.53% llvm-cov lines.
 
 ## [1.5.1-hardened] — 2026-11-25
 

@@ -120,6 +120,8 @@ pub enum CoreError {
     Io,
     /// A feature is intentionally unsupported under the current ABI.
     UnsupportedAbi,
+    /// A lifted pattern is rejected until its runtime semantics are fixed.
+    UnsupportedPattern,
 }
 
 impl fmt::Display for DecodeReason {
@@ -196,6 +198,7 @@ impl fmt::Display for CoreError {
             Self::ToolFailure => formatter.write_str("external tool failed"),
             Self::Io => formatter.write_str("I/O failure"),
             Self::UnsupportedAbi => formatter.write_str("unsupported ABI"),
+            Self::UnsupportedPattern => formatter.write_str("unsupported instruction pattern"),
         }
     }
 }
@@ -296,6 +299,7 @@ mod tests {
             CoreError::ToolFailure,
             CoreError::Io,
             CoreError::UnsupportedAbi,
+            CoreError::UnsupportedPattern,
         ];
         for error in errors {
             let mut buffer = Buffer::new();

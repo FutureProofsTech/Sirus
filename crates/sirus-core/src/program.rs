@@ -565,7 +565,17 @@ pub fn compile(
             return Err(CoreError::CapacityExceeded);
         }
         max_function_blocks = max_function_blocks.max(block_count);
-        if function_has_cycle(function) {
+        let cyclic = function_has_cycle(function);
+        if cyclic
+            && function
+                .ops
+                .as_slice()
+                .iter()
+                .any(|operation| matches!(operation, IrOp::Select { .. }))
+        {
+            return Err(CoreError::UnsupportedPattern);
+        }
+        if cyclic {
             any_loop = true;
         }
         let mut block_index = 0_usize;
@@ -937,7 +947,8 @@ pub fn compile(
 #[cfg(test)]
 mod tests {
     use super::{CompileOptions, ProgramStats, compile};
-    use crate::ir::BoundedVec;
+    use crate::error::CoreError;
+    use crate::ir::{Block, BoundedVec, IrOp, LiftedFunction, MAX_BLOCKS, MAX_IR_OPS, Terminator};
     use crate::lifter::lift_function;
     use crate::shared::format::DEFAULT_FUEL;
 
@@ -945,6 +956,45 @@ mod tests {
         let mut options = CompileOptions::new();
         options.decoys = 1;
         options
+    }
+
+    #[test]
+    fn rejects_select_inside_a_cycle() {
+        let mut ops = BoundedVec::<IrOp, MAX_IR_OPS>::new();
+        ops.push(IrOp::Select {
+            dst: 0,
+            cond: 0,
+            when_true: 0,
+            when_false: 0,
+        })
+        .expect("select");
+        let mut blocks = BoundedVec::<Block, MAX_BLOCKS>::new();
+        blocks
+            .push(Block {
+                start_va: 0,
+                ops_start: 0,
+                ops_len: 1,
+                terminator: Terminator::Jump { target: 1 },
+            })
+            .expect("block");
+        blocks
+            .push(Block {
+                start_va: 1,
+                ops_start: 0,
+                ops_len: 0,
+                terminator: Terminator::Jump { target: 0 },
+            })
+            .expect("block");
+        let function = LiftedFunction {
+            entry_block: 0,
+            blocks,
+            ops,
+            byte_len: 2,
+        };
+        assert_eq!(
+            compile(&[function], [0_u8; 32], options()).err(),
+            Some(CoreError::UnsupportedPattern)
+        );
     }
 
     #[test]
@@ -1050,7 +1100,7 @@ mod tests {
             )
             .is_err()
         );
-        let empty: [crate::ir::LiftedFunction; 0] = [];
+        let empty: [LiftedFunction; 0] = [];
         assert!(compile(&empty, [0_u8; 32], CompileOptions::new()).is_err());
         let _ = BoundedVec::<u8, 1>::new();
     }

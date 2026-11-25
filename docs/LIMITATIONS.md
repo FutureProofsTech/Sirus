@@ -136,6 +136,10 @@ code and are not mixed into the default runtime. Both Linux and Windows hardened
   unlimited local adversary.
 - Tampering can produce deterministic wrong outputs rather than a visible crash;
   this is intentional deep binding behavior.
+- **Known correctness guard:** a cyclic lifted function containing a
+  `Select`/`cmov` operation is rejected with `unsupported instruction pattern`.
+  A minimized C loop followed by `cmovae` hung after protection before this
+  guard. This is fail-closed behavior; cmov-inside-loop support is future work.
 - The project is not a substitute for formal audit, hardware security, or
   anti-cheat kernel design.
 
