@@ -36,12 +36,12 @@ Result: **exit 0**. The script runs:
 
 ## 2. Test inventory
 
-`cargo test --workspace` now runs **201 tests**, all passing; the MBA corpus and
+`cargo test --workspace` now runs **202 tests**, all passing; the MBA corpus and
 statistical timing tests are `#[ignore]` measurement hooks and are not part of
 the normal count.
 
 ```text
-201 passed, 0 failed
+202 passed, 0 failed
 ```
 
 Breakdown:
@@ -51,7 +51,7 @@ Breakdown:
 | `sirus-binfmt` unit tests | 26 |
 | `sirus-binfmt` real-loader test | 1 |
 | `sirus-core` unit tests | 83 |
-| `sirus-protector` unit tests | 42 |
+| `sirus-protector` unit tests | 43 |
 | `sirus-hardened` runtime checks | 3 |
 | `sirus-protector` end-to-end | 1 |
 | `sirus-protector` pipeline errors | 1 |
@@ -189,7 +189,7 @@ cargo tarpaulin --workspace --all-targets --engine Llvm \
   --exclude-files 'target/*' --exclude-files 'bench/*' --timeout 120
 ```
 
-Result: **90.08% line coverage (6799 / 7548 lines)** with
+Result: **90.25% line coverage (6812 / 7548 lines)** with
 `--exclude-files 'target/*' --exclude-files 'bench/*'`. This is above the agreed
 85% floor.
 
@@ -214,9 +214,9 @@ cargo llvm-cov --workspace --all-targets --summary-only
 ```
 
 ```text
-TOTAL regions 86.35% (3403 missed of 24925)
-TOTAL functions 74.62% (253 missed of 997)
-TOTAL lines 90.79% (1229 missed of 13347)
+TOTAL regions 86.51% (3380 missed of 25051)
+TOTAL functions 74.65% (253 missed of 998)
+TOTAL lines 90.97% (1212 missed of 13423)
 ```
 
 The two tools instrument differently; both are above the 85% floor and show the
@@ -680,7 +680,7 @@ cargo asm -p sirus-core --lib 1
 
 | Item | Status |
 |---|---|
-| Coverage floor (85%) | **met**: 90.08% tarpaulin / 90.79% llvm-cov lines |
+| Coverage floor (85%) | **met**: 90.25% tarpaulin / 90.97% llvm-cov lines |
 | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect | executed; evidence recorded |
 | live process memory dump scan | pass; masked VM state, constant not observed |
 | Windows PE runtime execution | Wine and native Windows; normal, constant-time, hardened; `/guard:cf`, ABI matrix, unwind lookup, and text-checksum tamper tests pass |

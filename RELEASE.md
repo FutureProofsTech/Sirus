@@ -84,7 +84,7 @@
 
 ### Verification
 
-- 201 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
+- 202 tests (unit + integration + end-to-end), plus opt-in MBA-corpus and
   statistical-timing measurement hooks.
 - Real victim compilation and execution differential matrix.
 - Differential two-seed builds.
@@ -108,7 +108,7 @@
 ./scripts/verify.sh
 ```
 
-Passes formatting, Clippy (`-D warnings`, all targets), 201 tests, rustdoc,
+Passes formatting, Clippy (`-D warnings`, all targets), 202 tests, rustdoc,
 audit, deny, Kani, red-team, and memory-dump diagnostic.
 
 ```sh
@@ -132,8 +132,8 @@ Recorded evidence:
   deterministic source archive, SHA-256 manifest, CycloneDX SBOM, and optional
   GPG signature when `SIRUS_SIGNING_KEY` is set.
 - `rust-toolchain.toml` pins stable Rust 1.99.0 and the Windows GNU target.
-- Tarpaulin: 90.08% lines (6799/7548).
-- llvm-cov: 90.79% lines, 86.35% regions.
+- Tarpaulin: 90.25% lines (6812/7548).
+- llvm-cov: 90.97% lines, 86.51% regions.
 - Payload differential: 0.40% equal bytes.
 - Handler arms are permuted per build; full VM segment differential remains
   2.21% equal bytes (a metric, not a uniqueness proof).
@@ -209,7 +209,7 @@ constant-time modes.
 ### Coverage
 
 The agreed prototype target is **above 85%**. This release measures
-**90.08% tarpaulin lines / 90.79% llvm-cov lines**. 100% is not claimed, but the
+**90.25% tarpaulin lines / 90.97% llvm-cov lines**. 100% is not claimed, but the
 85% floor is met and enforced by the proof script.
 
 ---
@@ -269,7 +269,7 @@ docs/                          architecture, format, threat, proof, traceability
 | Miri | pass |
 | libFuzzer | pass |
 | fmt/clippy/doc/audit/deny | pass |
-| Coverage floor 85% | **pass — 90.08% tarpaulin / 90.79% llvm-cov lines** |
+| Coverage floor 85% | **pass — 90.25% tarpaulin / 90.97% llvm-cov lines** |
 | External evidence tooling | Ghidra/radare2/GAMBA/SiMBA/MBA-Blast/angr/KLEE/Creusot/dudect executed; commercial/licence-only tools are outside the local gate |
 | Windows runtime | **Wine + native Windows leaf subset (branches/loops), normal + constant-time + hardened; MSVC `/guard:cf` and ABI matrix pass** |
 | Windows unwind metadata | **linked `.pdata` merged; `.seh` shim records; `RtlLookupFunctionEntry` runtime probe; handlers/chained fail closed** |

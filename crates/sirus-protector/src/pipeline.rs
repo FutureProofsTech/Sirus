@@ -761,7 +761,7 @@ mod tests {
     }
 
     fn synthetic_pe() -> Vec<u8> {
-        let mut data = vec![0_u8; 0x400];
+        let mut data = vec![0_u8; 0x600];
         data[0..2].copy_from_slice(b"MZ");
         data[0x3c..0x40].copy_from_slice(&0x80_u32.to_le_bytes());
         data[0x80..0x84].copy_from_slice(b"PE\0\0");
@@ -786,6 +786,31 @@ mod tests {
         data[table + 20..table + 24].copy_from_slice(&0x200_u32.to_le_bytes());
         data[table + 36..table + 40].copy_from_slice(&0x6000_0020_u32.to_le_bytes());
         data[0x200..0x204].copy_from_slice(&[0x48, 0x89, 0xf8, 0xc3]);
+        data[0x204..0x20f].fill(0x90);
+        data[0x20f] = 0xc3;
+        data[0x210..0x214].copy_from_slice(&[0x48, 0x89, 0xf8, 0xc3]);
+        data[0x214..0x21f].fill(0x90);
+        data[0x21f] = 0xc3;
+        data[coff + 8..coff + 12].copy_from_slice(&0x500_u32.to_le_bytes());
+        data[coff + 12..coff + 16].copy_from_slice(&2_u32.to_le_bytes());
+        data[0x500..0x524].fill(0);
+        data[0x500..0x504].copy_from_slice(&0_u32.to_le_bytes());
+        data[0x504..0x508].copy_from_slice(&4_u32.to_le_bytes());
+        data[0x508..0x50c].copy_from_slice(&0_u32.to_le_bytes());
+        data[0x50c..0x50e].copy_from_slice(&1_u16.to_le_bytes());
+        data[0x50e..0x510].copy_from_slice(&0x20_u16.to_le_bytes());
+        data[0x510] = 2;
+        data[0x500 + 18..0x500 + 22].copy_from_slice(&0_u32.to_le_bytes());
+        data[0x500 + 22..0x500 + 26].copy_from_slice(&15_u32.to_le_bytes());
+        data[0x500 + 26..0x500 + 30].copy_from_slice(&0x10_u32.to_le_bytes());
+        data[0x500 + 30..0x500 + 32].copy_from_slice(&1_u16.to_le_bytes());
+        data[0x500 + 32..0x500 + 34].copy_from_slice(&0x20_u16.to_le_bytes());
+        data[0x500 + 34] = 2;
+        data[0x524..0x528].copy_from_slice(&24_u32.to_le_bytes());
+        data[0x528..0x532].copy_from_slice(b"sirus_demo");
+        data[0x532] = 0;
+        data[0x533..0x538].copy_from_slice(b"other");
+        data[0x538] = 0;
         data
     }
 
@@ -876,6 +901,44 @@ mod tests {
                 &victim,
                 &directory_output,
                 vec![Selector::Exact("x".to_owned())],
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn pe_symbol_selectors_are_resolved() {
+        if !windows_toolchain_available() {
+            return;
+        }
+        let directory = sandbox();
+        let input = directory.join("symbols.exe");
+        fs::write(&input, synthetic_pe()).expect("write pe");
+        protect(&arguments(
+            &input,
+            &directory.join("exact.exe"),
+            vec![Selector::Exact("sirus_demo".to_owned())],
+        ))
+        .expect("exact pe");
+        protect(&arguments(
+            &input,
+            &directory.join("contains.exe"),
+            vec![Selector::Contains("sirus".to_owned())],
+        ))
+        .expect("contains pe");
+        assert!(
+            protect(&arguments(
+                &input,
+                &directory.join("missing.exe"),
+                vec![Selector::Exact("missing".to_owned())],
+            ))
+            .is_err()
+        );
+        assert!(
+            protect(&arguments(
+                &input,
+                &directory.join("ambiguous.exe"),
+                vec![Selector::Contains("e".to_owned())],
             ))
             .is_err()
         );

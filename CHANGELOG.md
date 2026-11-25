@@ -34,7 +34,7 @@ All notable changes to Sirus.
 
 ### Evidence
 
-- 201 tests; 90.08% tarpaulin / 90.79% llvm-cov lines.
+- 202 tests; 90.25% tarpaulin / 90.97% llvm-cov lines.
 
 ## [1.5.4-hardened] — 2026-11-25
 
