@@ -2,9 +2,10 @@
 
 Source documents:
 
-1. `project` — architectural blueprint.
-2. `code standard` — mandatory Rust and verification standard.
-3. `red team` — adversarial acceptance checklist.
+1. `docs/ARCHITECTURE.md` — architectural blueprint.
+2. `docs/CODE_STANDARD_COMPLIANCE.md` — mandatory Rust and verification
+   standard.
+3. `docs/RED_TEAM.md` — adversarial acceptance checklist.
 
 This matrix maps every substantive requirement to implementation and evidence.
 Statuses are honest: **implemented**, **partial**, **open**, or **not feasible**
@@ -12,7 +13,7 @@ under the safe-Rust/no-unsafe constraint.
 
 ---
 
-## A. `project` blueprint
+## A. Architecture blueprint
 
 ### Core philosophy / threat model
 
@@ -116,7 +117,7 @@ under the safe-Rust/no-unsafe constraint.
 
 ---
 
-## B. `code standard`
+## B. Code standard
 
 ### Level 1
 
@@ -184,7 +185,7 @@ See `docs/CODE_STANDARD_COMPLIANCE.md` and ADR-001.
 
 ---
 
-## C. `red team` checklist
+## C. Red team checklist
 
 | # | Requirement | Status | Evidence |
 |---:|---|---|---|

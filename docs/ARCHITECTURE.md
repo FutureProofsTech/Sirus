@@ -1,7 +1,7 @@
 # Sirus Architecture
 
-This document describes the implemented architecture. The forward-looking
-engineering plan is [`../PLAN.md`](../PLAN.md); exact measured evidence is in
+This document describes the implemented architecture. Design decisions are in
+[`DECISIONS.md`](DECISIONS.md) and exact measured evidence is in
 [`VERIFICATION.md`](VERIFICATION.md).
 
 ---

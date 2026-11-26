@@ -12,9 +12,10 @@ executable segment, patches the original function to jump into it, and destroys
 the original function body.
 
 The project is a production-grade prototype, not a claim of mathematical
-unbreakability. The full engineering plan is [`PLAN.md`](PLAN.md), the exact
-verification evidence is [`docs/VERIFICATION.md`](docs/VERIFICATION.md), known
-limits are in [`docs/LIMITATIONS.md`](docs/LIMITATIONS.md), and the measured
+unbreakability. The implemented architecture is in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), the exact verification evidence
+is [`docs/VERIFICATION.md`](docs/VERIFICATION.md), known limits are in
+[`docs/LIMITATIONS.md`](docs/LIMITATIONS.md), and the measured
 commercial/open-source positioning is in
 [`docs/POSITIONING.md`](docs/POSITIONING.md).
 
