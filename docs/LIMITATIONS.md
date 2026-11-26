@@ -127,8 +127,8 @@ code and are not mixed into the default runtime. Both Linux and Windows hardened
 
 ## 5. Security residuals
 
-- Full `.sirus` segment differential equality is 2.21% between two seeds; handler
-  code skeleton is reused. Payload equality is 0.38%.
+- Full `.sirus` segment differential equality is 2.43% between two seeds; handler
+  code skeleton is reused. Payload equality is 0.40%.
 - The linear MBA forms are reduced by GAMBA/SiMBA. On the non-linear
   modular-inverse corpus, GAMBA times out at 20 s and the variable-shift form
   parser-fails; SiMBA still reduces the inverse form. This is measured cost
@@ -168,19 +168,20 @@ code and are not mixed into the default runtime. Both Linux and Windows hardened
 ## 6. Verification gaps
 
 - The agreed prototype floor is 85% line coverage. The current measured coverage
-  is 85.05% tarpaulin / 86.14% llvm-cov and the proof script enforces the 85%
+  is 87.07% tarpaulin / 88.25% llvm-cov and the proof script enforces the 85%
   regression floor. 100% is not claimed.
 - Kani proofs cover bounded primitives and memory bounds; the full decoder is too
   large for CBMC and is covered by tests/fuzzing instead.
-- Miri covers core units plus 10 VM library and 20 VM execution tests (1 ignored under Miri); it is very slow.
+- Miri covers the VM library suite (11/11 on the final tree); the full execution
+  and core suites are opt-in and slow.
 - Ghidra/radare2, GAMBA/SiMBA/MBA-Blast, angr, KLEE, Creusot, and dudect-bencher
   were executed locally; results are in `docs/VERIFICATION.md`.
 - IDA/Binary Ninja, Ferrocene, and Triton are commercial/licence/auth-gated and
   are outside the local release gate. AORAI is a C-only Frama-C plugin and is not
   applicable to the Rust product.
 - The official dudect-bencher run is complete; the normal VM branch is a measured
-  timing leak, while the straight-line, branchy, and looping `--constant-time`
-  cases pass the |t| = 5 threshold.
+  timing leak, while the straight-line, branchy, looping, and private-memory
+  `--constant-time` cases pass the |t| = 5 threshold.
 - cargo-show-asm was installed after the main build evidence; assembly inspection
   currently uses objdump/readelf scripts.
 

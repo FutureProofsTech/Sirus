@@ -4,8 +4,8 @@
 
 The current release gate covers the Linux x86-64 ELF protector and generated
 `no_std` VM. Win64 PE32+ runtime protection is verified under Wine for the strict
-leaf subset (branches and loops included); native Windows loader/CI validation is
-not yet complete.
+leaf subset (branches and loops included); Wine, native Windows, and MSVC
+`/guard:cf` jobs pass in CI.
 
 ## Reporting a vulnerability
 

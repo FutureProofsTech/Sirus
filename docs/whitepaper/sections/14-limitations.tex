@@ -1,0 +1,104 @@
+\section{Limitations and Non-Capabilities}
+\label{sec:limitations}
+
+\subsection{Scope of the implementation}
+
+Sirus is a selective protector, not a whole-program virtualizer. It accepts a
+subset of x86-64, a subset of the ABI, and a subset of the platform surface. The
+boundaries are deliberate: the decoder fails closed rather than guessing, and the
+runtime fails closed rather than accessing host state.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{Principal limitations.}
+\label{tab:limitations}
+\begin{tabularx}{\textwidth}{@{}p{0.20\textwidth}X@{}}
+\toprule
+Area & Limitation \\
+\midrule
+Instruction set & Common integer operations, private-memory widths, the documented SSE2 and 128-bit VEX integer forms, \code{rep movs/stos} on private memory, and \code{bswap}. No AVX-256/AVX2, x87, MMX, floating point, or EVEX. \\
+Control flow & Direct calls between selected functions; no external, indirect, or unresolved calls; no indirect jumps or jump tables; no cross-block flag liveness that cannot be proven. \\
+Memory & Private 4 KiB stack and 2 KiB read-only data; no host pointers; no writable RIP-relative globals; no absolute host memory. \\
+ABI & System V 6 register + 6 stack integer arguments; Win64 4 register + 6 stack integer arguments; one integer result; no floating-point arguments or results. \\
+Function size & 16 KiB per function; 8 functions per program; 128 KiB payload; 256 blocks; 8192 IR operations. \\
+Platform & Linux ELF64 x86-64 is the primary path. Windows PE32+ AMD64 is a selective leaf-function line. No Mach-O, ARM64, or 32-bit x86. \\
+Security & No kernel anti-debug, DBI detection, trusted signing, formal Spectre proof, or proof of obfuscation security. The normal profile leaks timing. \\
+Tooling & No IDA Pro, Binary Ninja, Ferrocene, or Triton in the local gate; no independent audit. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Instruction-set boundary}
+
+The supported subset is listed in Appendix~\ref{app:x86}. A function that calls
+\code{libcore}, formats text, allocates, touches \code{std}, uses floating point,
+or invokes an external library is generally not directly virtualizable. The
+intended target is compact leaf logic: a license predicate, a checksum, a key
+derivation step, or a proprietary arithmetic routine.
+
+The decoder rejects a form rather than approximating it. This is why a function
+that compiles and runs natively can still fail protection: the subset is smaller
+than the native ISA. The user must inspect the error and either refactor the
+function or choose a different target.
+
+\subsection{ABI boundary}
+
+The VM returns zero on any fail-closed condition. The host must consume the
+protected value as data so that a wrong value causes a downstream failure. A
+boolean-only interface that treats zero as "denied" is a poor fit: an attacker
+can patch the caller or force the return. The recommended design derives a key,
+checksum, or protocol field from the protected value and uses that result in a
+subsequent operation.
+
+The Windows line supports the Win64 integer ABI and preserves the callee-saved
+XMM range through the shim. It does not support floating-point arguments,
+language exception propagation, arbitrary imports, or kernel callbacks.
+
+\subsection{Platform boundary}
+
+The Linux ELF path is the primary production path. It supports ELF64 x86-64
+executables and shared objects, with symbol, substring, range, or marker
+selection. Fully stripped binaries require marker or range mode. The output
+retains the host symbol table; the user can strip it separately if desired.
+
+The Windows PE path is a selective leaf-function line. It injects one
+read-execute section, patches RVA-relative entries, merges linked unwind
+metadata, and passes Wine, native Windows, and MSVC \code{/guard:cf} fixtures.
+It does not claim full Win64 virtualization, signing, imports/TLS edge cases, or
+runtime exception propagation.
+
+\subsection{Security boundary}
+
+The safe tier does not implement kernel anti-debug, DBI detection, debug-register
+inspection, RDTSC timing checks, or a native text checksum. Those controls require
+unsafe OS interfaces and are confined to the optional hardened tier. The
+hardened tier itself does not claim kernel-level or hypervisor-level detection.
+
+The payload construction is an obfuscation and tamper-evidence layer, not a
+standard authenticated cipher. The body stream is a keyed ARX stream; SipHash is
+used for the manifest, integrity, and key derivation. The integrity value is
+64-bit and the key shares are present in the generated code. An attacker with
+full local control can rewrite the generated code and the payload together.
+
+The normal profile is not constant-time. The explicit mode is a fixed-pass
+oblivious subset, not a general constant-time compiler, and it does not model
+speculative execution.
+
+\subsection{Verification boundary}
+
+Kani verifies bounded memory and arithmetic harnesses. Miri checks the VM library
+tests. libFuzzer explores payloads, lifter inputs, and binary parsers. Ghidra,
+radare2, angr, KLEE, GAMBA, SiMBA, MBA-Blast, dudect, and Cachegrind are run with
+fixed budgets. None of these is a whole-product proof. The decoder is too large
+for a useful CBMC run on this host. The symbolic probes time out rather than
+prove unsatisfiability. The MBA study shows reductions, not irreducibility.
+
+\subsection{What ``production prototype'' means}
+
+The Linux pipeline is real and executed end-to-end. The safety gates, fuzzing,
+Miri, Kani, differential builds, tamper and bypass tests, external analysis, and
+Windows CI pass. The remaining gaps are explicit research, platform, and tooling
+gaps, not hidden demo shortcuts. A release to untrusted third parties should
+require an independent audit, a formal review of the custom payload
+construction, and platform-specific validation beyond the tested fixtures.

@@ -1,0 +1,79 @@
+\section{Optional Hardening Tier}
+\label{sec:hardening}
+
+\subsection{Why a separate tier}
+
+The safe tier deliberately forbids \code{unsafe}. Debugger detection, timing
+checks, debug-register inspection, and code-page hashing require OS interfaces,
+privileged instructions, or raw memory access that safe Rust cannot express. The
+project keeps the default artifact safe and places these controls in an opt-in
+\code{sirus-hardened} crate, enabled only with \verb|--hardened|. The hardened
+crate is never linked into the default runtime, and the safe tier's
+\code{forbid(unsafe_code)} policy remains enforced by the build.
+
+This separation is a security property. A user who does not need the hardened
+tier does not inherit its unsafe code, its platform-specific failure modes, or
+its compatibility risk.
+
+\subsection{Linux tracer detection}
+
+On Linux, the hardened entry reads \code{/proc/self/status} through a raw
+syscall and checks the \code{TracerPid} field. A non-zero tracer PID causes the
+entry to fail closed with value zero. The check is intentionally narrow: it
+detects a class of ptrace-based debuggers and does not claim to detect kernel
+modules, hypervisors, or all dynamic instrumentation.
+
+The raw syscall avoids a libc dependency and keeps the generated runtime
+freestanding. The implementation is unsafe by construction; it is confined to
+the hardened crate and reviewed as a boundary component.
+
+\subsection{Windows debugger checks}
+
+On Windows, the hardened entry inspects the process environment block for
+\code{BeingDebugged} and \code{NtGlobalFlag}. A detected debugger causes a
+fail-closed return. This is a user-mode check; it does not claim to detect a
+kernel debugger or a hypervisor.
+
+The Windows debug-register path is available through the \code{harden-check}
+command. It uses the thread context API to report the debug registers on a native
+Windows host. Linux user mode cannot read debug registers without a ptrace
+relationship, so the command reports \code{unsupported} there rather than
+pretending to provide a control.
+
+\subsection{RDTSC and LFENCE timing budget}
+
+The hardened entry measures a bounded interval with \code{rdtsc}, serialized with
+\code{lfence}, and fails if the interval exceeds the configured budget. This
+raises the cost of single-stepping and some emulation-based tracing. It is not a
+proof against a hypervisor that controls the timestamp counter, and it can
+produce false positives on a heavily loaded or migrated process.
+
+The check is opt-in because timing checks interact with scheduling, virtualization,
+and power management. The safe tier does not include them.
+
+\subsection{Linked text checksum}
+
+Linux and Windows hardened builds compute a checksum over the linked VM text at
+runtime and compare it with the build-time value. A modified VM text region
+causes the entry to fail closed. The checksum is implemented in the hardened
+crate with raw memory reads; it is not present in the safe tier.
+
+The checksum protects the VM text, not the entire host image. A patcher that
+changes the host entry, the payload, or the expected checksum is outside its
+scope. The tamper test modifies VM text and verifies that the protected binary
+rejects the modification.
+
+\subsection{Failure behavior}
+
+A failed hardened check returns zero. As with all fail-closed paths, the intended
+deployment consumes the protected result as data, so a zero result causes a
+downstream failure rather than a silent success. The generated entry does not
+abort, print, or allocate.
+
+\subsection{Boundaries}
+
+The hardened tier does not provide kernel-level anti-debug, hypervisor detection,
+DBI detection, trusted signing, or a formal Spectre mitigation. Those controls
+require privileges, kernel components, or hardware features outside the project's
+safe-Rust and local-evidence constraints. The paper reports them as
+non-capabilities, not as hidden features.

@@ -1,0 +1,218 @@
+\section{Obfuscation Layer}
+\label{sec:obfuscation}
+
+\subsection{Control-flow flattening}
+
+Each lifted function is converted into a set of basic blocks with random
+non-zero 64-bit state identifiers. The manifest order of the blocks is shuffled
+independently of the body order. Every block ends with a flattened transition,
+a return, or a trap. The transition carries a state value and a canceling mix:
+
+\begin{align}
+  \text{jump}(s, m) &: \quad s' = s + m - m, \label{eq:jump}\\
+  \text{jcc}(c, a, b, m) &: \quad s' = c \neq 0 \;?\; a : b,
+  \label{eq:jcc}
+\end{align}
+
+where $a$ and $b$ are blinded state identifiers and $m$ is a per-build random
+mix. The conditional selection is expressed through a runtime register and
+canceling arithmetic rather than a native switch table. The goal is not to hide
+that a dispatcher exists; it is to remove the direct correspondence between
+native block order and bytecode order.
+
+Dispatchers are validated to stay within the block table. An invalid state is a
+\code{BadPayload} halt. The flattening does not change the function's observable
+behavior: the transition function is a permutation of the original CFG edges.
+
+\subsection{Opaque guards and decoys}
+
+Selected unconditional jumps are replaced by an opaque guard and a decoy block.
+The guard uses the invariant
+
+\begin{equation}
+  (x \mathbin{\&} 1) \cdot ((x \mathbin{\&} 1) - 1) = 0,
+  \label{eq:opaque}
+\end{equation}
+
+which is zero for every 64-bit $x$ because one of two consecutive values is even.
+The false path executes a decoy block on scratch registers and rejoins the true
+successor. The guard never changes live architectural state; a verifier can
+establish this by inspecting liveness before accepting the block. Decoys
+increase the number of plausible paths a dynamic trace or symbolic engine must
+consider without affecting correctness.
+
+\subsection{Mixed Boolean-arithmetic rewriting}
+
+The expression arena applies exact 64-bit wrapping identities:
+
+\begin{align}
+  x + y &= (x \oplus y) + 2(x \land y), \label{eq:mba-add}\\
+  x - y &= x + \lnot y + 1, \label{eq:mba-sub}\\
+  x \oplus y &= (x \lor y) - (x \land y), \label{eq:mba-xor}\\
+  x \land y &= (x \lor y) - (x \oplus y), \label{eq:mba-and}\\
+  x \lor y &= (x \oplus y) + (x \land y), \label{eq:mba-or}\\
+  \lnot x &= x \oplus (2^{64}-1). \label{eq:mba-not}
+\end{align}
+
+The rewrite is bounded by \verb|--mba-depth| (0--8, default 3) and
+\verb|--mba-budget| (expression nodes, default 512). Every rewrite is checked
+for exact equivalence over boundary values and seeded random inputs; an
+out-of-budget rewrite is skipped rather than approximated.
+
+Linear identities alone are reducible by modern simplifiers. Sirus therefore
+adds one non-linear wrapper per function: a variable-shift bit recombination and
+a multiplication by a data-dependent odd value followed by a six-step Newton
+modular inverse. The net effect is the identity over 64-bit wrapping arithmetic,
+but the expression contains variable shifts and a modular-inversion chain that a
+linear simplifier cannot treat as a linear form. This is a cost-asymmetry
+mechanism, not a proof of irreducibility. Section~\ref{sec:evaluation} reports
+which external tools reduce which forms.
+
+Constants are blinded as two random shares reassembled with XOR:
+\begin{equation}
+  c = c_0 \oplus c_1, \qquad c_0 \xleftarrow{\$} \{0,1\}^{64}.
+  \label{eq:blinding}
+\end{equation}
+The shares are emitted as separate immediate leaves; no single instruction
+contains the plaintext constant.
+
+\subsection{Randomized virtual ISA}
+
+\subsubsection{Semantics and aliases}
+
+The virtual ISA has 48 semantic operations (Appendix~\ref{app:isa}). Each
+semantic has four aliases, for a total of 192 assigned opcodes from a shuffled
+256-byte pool. Each alias has:
+
+\begin{itemize}
+  \item a unique opcode byte;
+  \item its own permutation of the canonical operand roles;
+  \item a choice of one of two 256-entry register encoding maps;
+  \item a flag selecting little- or big-endian immediate bytes.
+\end{itemize}
+
+An instruction is encoded as the opcode byte followed by operands in alias order:
+a register role becomes one encoded register byte, and an immediate role becomes
+eight bytes in the alias byte order. Register bytes are decoded through the
+selected map; an invalid encoding is a \code{BadPayload} halt. Alias selection is
+random per instruction, so opcode frequency analysis on one block does not
+generalize to the next.
+
+\subsubsection{Encrypted decode table}
+
+The runtime needs the semantic, alias, operand order, register map, and
+endianness for each opcode. These are packed into a fixed image of
+
+\begin{equation}
+  256 + 256 + 2 \cdot 256 + 192 \cdot 8 + 1 = 2561 \text{ bytes}
+  \label{eq:table-size}
+\end{equation}
+
+and XOR-masked with a per-build ARX stream keyed by a SipHash-derived value. The
+image is decrypted into a fixed stack table once per protected invocation. The
+table key is present in the generated code, so the table is obfuscated, not
+secret from an attacker who executes the VM. The benefit is that the static
+binary does not contain a plaintext opcode-to-semantic map.
+
+The build-time encoder and runtime use the same \code{shared/derive.rs} module.
+The seed is 256 bits; no alias table is serialized as plaintext outside the
+encrypted image. The two register maps are independent permutations with
+validity filters; the semantic and alias tables are filtered at use sites.
+
+\subsection{Payload format and encryption}
+
+\subsubsection{Manifest}
+
+The payload begins with an encrypted 8-byte block count followed by encrypted
+16-byte manifest entries, one per block:
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Field & Size & Meaning \\
+\midrule
+state id & 8 bytes & 64-bit block state \\
+body offset & 4 bytes & absolute payload offset \\
+body length & 4 bytes & encoded body length \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Entries are shuffled independently of the body order. The count is bounded by
+256. The manifest keystream is position-addressed and uses a per-build integer
+endianness. A missing state, an out-of-range offset, or a zero-length body is a
+\code{BadPayload} halt.
+
+\subsubsection{Rolling body stream}
+
+Each block body is encrypted with a rolling stream seeded by the global key, the
+block state, and the absolute body offset:
+
+\begin{align}
+  \sigma_0 &= K \oplus \operatorname{rotl}(s,17) \oplus o \oplus D, \label{eq:body-seed}\\
+  \mu_i &= \operatorname{mix}\!\left(\sigma_i \oplus \operatorname{rotl}(i,23) \oplus p_{i-1}\right), \label{eq:body-mix}\\
+  \sigma_{i+1} &= \operatorname{rotl}(\sigma_i,7) + \operatorname{rotl}(\mu_i,31)
+                  \oplus i \oplus p_{i-1}, \label{eq:body-state}\\
+  c_i &= p_i \oplus \operatorname{low8}(\mu_i), \label{eq:body-cipher}
+\end{align}
+
+where $K$ is the global key, $s$ the block state, $o$ the body offset, $D$ a
+domain separator, $p_{-1}=0$, and \code{mix} is a SplitMix64-style ARX avalanche
+function. The construction is symmetric: the same equations decrypt. Bytes are
+decoded sequentially into locals; no decrypted body buffer is stored.
+
+This stream is an obfuscation stream, not a cryptographic cipher. It is designed
+for high-entropy, position-dependent, rolling obfuscation with low per-byte cost.
+SipHash-2-4 remains the primitive for manifest encryption, integrity, and key
+derivation. The paper does not claim confidentiality against an attacker who can
+execute the VM and observe its state.
+
+\subsubsection{Integrity binding}
+
+The runtime computes
+
+\begin{align}
+  h &= \operatorname{SipHash24}_{k_h}(\text{encrypted payload}), \label{eq:hash}\\
+  K_{\text{eff}} &= a \oplus b \oplus h \oplus h_{\text{expected}}, \label{eq:key}
+\end{align}
+
+where $a$ and $b$ are random split shares in the generated source and $k_h$ is
+derived from the seed. At build time $h = h_{\text{expected}}$ and
+$K_{\text{eff}}$ is the intended key. A modified payload changes $h$ and therefore
+$K_{\text{eff}}$; manifest and body decryption then produce invalid structures.
+No comparison branch is used, so a naive patch does not reveal an obvious
+"integrity check" site.
+
+The binding is 64-bit and the key shares are present in the generated code. It
+detects accidental and naive tampering, not an attacker who rewrites the expected
+hash, the key shares, and the payload together. It is an obfuscation and
+tamper-evidence layer, not a public-key MAC.
+
+\subsection{Masked at-rest state}
+
+Before execution, the VM derives a register mask for every virtual register and a
+private-memory keystream from the effective payload key. Reads XOR the mask back
+in; writes XOR it out. The initial stack fill is also stored masked. A passive
+process dump therefore observes masked values rather than the plaintext
+constants used by the protected function. A decoded value can still exist
+transiently in a local while one instruction executes; the masking layer is not
+an instruction-level tracer defense.
+
+\subsection{Semantic-handler permutation and layout}
+
+The generated engine reorders its top-level semantic match arms with a
+seed-derived Fisher--Yates permutation, keeping the wildcard last. The entry
+preambles and engine layout are also permuted. LLVM may canonicalize some switch
+lowering, so this is layout mutation, not a claim that every build has a distinct
+handler implementation.
+
+\subsection{Differential diversity}
+
+Two builds of the same input with different seeds are compared at equal offsets.
+On the release tree, the encrypted payload has an equal-byte ratio of 0.0040
+(0.40\%) and the full injected VM segment has an equal-byte ratio of 0.0243
+(2.43\%). The remaining similarity is the interpreter skeleton, shared runtime
+helpers, and canonical instruction sequences. These numbers are diversity
+metrics, not semantic security proofs; Section~\ref{sec:security} discusses the
+residual.

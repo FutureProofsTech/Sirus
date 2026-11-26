@@ -4,6 +4,7 @@
 **Tag:** `v1.5.9-hardened`
 **Platform:** Linux x86-64 end-to-end; Win64 PE32+ runtime verified under Wine in normal, constant-time, and hardened modes; native Windows CI passed all three jobs
 **Dependency policy:** zero external crates in shipped code
+**License:** GPL-3.0-only
 **Unsafe policy:** `forbid(unsafe_code)` in the safe tier; the opt-in `sirus-hardened` crate and `--hardened` generated entries allow unsafe code
 
 ---
@@ -103,6 +104,8 @@
 - Atomic output replacement with permission preservation.
 - `inspect` for ELF and PE.
 - Per-build code/data layout perturbation.
+- A 52-page technical white paper in `docs/whitepaper/` with LaTeX source
+  and compiled PDF.
 
 ### Security and correctness fixes in 1.5.9
 
@@ -181,7 +184,7 @@ Recorded evidence:
 - llvm-cov: 88.25% lines, 84.09% regions, 73.53% functions.
 - Payload differential: 0.40% equal bytes.
 - Handler arms are permuted per build; full VM segment differential remains
-  2.21% equal bytes (a metric, not a uniqueness proof).
+  2.43% equal bytes (a metric, not a uniqueness proof).
 - Payload entropy: 7.996 Shannon / 7.751 min-entropy bits/byte.
 - Per-call benchmark: native ~1.2-1.9 ns; Sirus default ~75.0 us; hardened
   ~78.5 us; constant-time ~234 us; hardened constant-time ~235 us; balanced
@@ -302,7 +305,7 @@ scripts/cachegrind-check.sh   constant-time cachegrind gate
 scripts/linux-abi-check.sh    Linux caller-saved ABI regression
 verification/creusot          Creusot/Why3 boundary proofs
 verification/dudect           official dudect-bencher harness
-docs/                          architecture, format, threat, proof, traceability
+docs/                          architecture, format, threat, proof, traceability, white paper
 ```
 
 ---
@@ -327,9 +330,9 @@ docs/                          architecture, format, threat, proof, traceability
 | Windows unwind metadata | **linked `.pdata` merged; `.seh` shim records; `RtlLookupFunctionEntry` runtime probe; handlers/chained fail closed** |
 | Anti-debug/self-code/timing/LFENCE | **safe tier out of scope (ADR-020); opt-in hardened tier adds them, including Linux and Windows text checksums** |
 | Live memory constant secrecy | masked at rest; snapshot scan passes; instruction-local transient may remain |
-| VM constant-time execution | normal profile leaks (dudect max \|t\| = 204); `--constant-time` straight-line/branch/loop/memory cases pass (worst \|t\| = 3.13) |
+| VM constant-time execution | normal profile leaks (dudect max \|t\| = 204); `--constant-time` straight-line/branch/loop/memory cases pass (worst \|t\| = 3.19) |
 | Hardened tier | **opt-in `--hardened`; unsafe allowed; anti-debug, RDTSC/LFENCE, Windows debug-register report, Linux/Windows self-code checksum** |
-| Handler-layout mutation | **per-build handler/engine/entry layout preambles; 2.21% segment equality** |
+| Handler-layout mutation | **per-build handler/engine/entry layout preambles; 2.43% segment equality** |
 
 The safe tier remains the default and still forbids unsafe code. The hardened
 tier is opt-in and carries an explicit unsafe policy. Native Windows-host CI and

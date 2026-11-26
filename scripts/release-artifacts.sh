@@ -27,7 +27,7 @@ chmod 755 "$artifact"
 source_archive="$out/sirus-$version-source.tar.gz"
 tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
     -czf "$source_archive" \
-    Cargo.toml Cargo.lock README.md RELEASE.md CHANGELOG.md \
+    Cargo.toml Cargo.lock README.md RELEASE.md CHANGELOG.md LICENSE SECURITY.md \
     crates scripts docs bench fuzz/Cargo.toml fuzz/fuzz_targets
 
 {

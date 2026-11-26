@@ -1,0 +1,46 @@
+\section{Supported x86-64 Subset}
+\label{app:x86}
+
+The decoder accepts the forms below when they occur in the selected function and
+use supported registers, flags, and memory addressing. A form that is not listed
+is rejected; the list is conservative by design.
+
+\small
+\setlength{\tabcolsep}{3pt}
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.20\textwidth}>{\raggedright\arraybackslash}p{0.44\textwidth}>{\raggedright\arraybackslash}p{0.28\textwidth}@{}}
+\caption{Supported x86-64 categories.}\label{tab:x86subset}\\
+\toprule
+Category & Examples & Notes \\
+\midrule
+\endfirsthead
+\toprule
+Category & Examples & Notes \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+Data movement & \code{mov}, \code{movzx}, \code{movsx}, \code{movsxd}, \code{lea} & 8/16/32/64-bit widths; private memory and GPRs \\
+Integer arithmetic & \code{add}, \code{sub}, \code{and}, \code{or}, \code{xor}, \code{cmp}, \code{test}, \code{inc}, \code{dec}, \code{neg}, \code{not}, \code{imul} & Wrapping; \code{imul} marks flags unknown \\
+Shifts and rotates & \code{shl}, \code{shr}, \code{sar}, \code{rol}, \code{ror} & Counts masked to 63 \\
+Control flow & \code{jmp}, \code{jcc}, \code{ret}, \code{cmovcc}, \code{setcc} & No indirect jumps or tables \\
+Stack frames & \code{push}, \code{pop}, \code{leave}, \code{cdqe} & Private stack only \\
+Direct calls & \code{call rel32} & Target must be selected or followed; external calls rejected \\
+RIP-relative data & \code{lea} and memory reads with RIP displacement & Read-only targets copied to private data \\
+SSE2 integer & \code{movdqu}, \code{movdqa}, \code{pxor}, \code{pand}, \code{por}, \code{paddq}, \code{psubq}, \code{paddd}, \code{psubd}, \code{pmuludq}, \code{punpcklqdq}, \code{punpckhqdq}, \code{psrldq}, \code{pslldq}, \code{movq}, \code{movd} & 128-bit integer subset; no floating point \\
+VEX-128 AVX integer & 128-bit versions of the SSE2 set, \code{vpsrldq}, \code{vpslldq}, \code{vmovq} & AVX-256 and EVEX rejected \\
+Repeated strings & \code{rep movsb}, \code{rep movsq}, \code{rep stosb}, \code{rep stosq} & Private memory; constant-time rejected \\
+Byte swap & \code{bswap r32}, \code{bswap r64} & 16-bit form rejected \\
+ABI & System V 6+6 integer arguments; Win64 4+6 integer arguments; one integer result & No floating-point arguments or results \\
+\bottomrule
+\end{longtable}
+
+The following forms are rejected: external or indirect calls, indirect jumps,
+jump tables, writable RIP-relative globals, absolute host memory, AVX-256/AVX2,
+EVEX, x87, MMX, floating point, syscalls, \code{rdtsc}, \code{cpuid}, privileged
+or I/O instructions, atomics, fences, address-size overrides, lock prefixes,
+segment overrides that affect addressing, unproven cross-block flag liveness,
+functions larger than 16 KiB, and programs exceeding the bounded capacities.
+
+The undefined 16-bit \code{bswap} form with a \code{0x66} operand-size prefix is
+rejected rather than translated. The decoder's behavior is tested for the
+32-bit, 64-bit, and REX.W-plus-0x66 forms, and for the rejected 16-bit form.

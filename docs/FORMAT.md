@@ -163,7 +163,7 @@ Generated runtimes embed an encrypted decode-table image containing:
 semantic_of_opcode[256]
 alias_of_opcode[256]
 reg_decode[2][256]
-aliases[160] (opcode, order[4], reg_map, endian, reserved)
+aliases[192] (opcode, order[4], reg_map, endian, reserved)
 manifest_big_endian
 ```
 
@@ -258,15 +258,15 @@ PE32+ only. A `.sirus` section is appended:
 - PE checksum recomputed;
 - optional RVA-relative `E9` patch.
 
-Header slack for one section header is required. Runtime execution is not yet
-validated for Windows.
+Header slack for one section header is required. The Win64 runtime is verified
+under Wine and native Windows for the selective leaf subset.
 
 ---
 
 ## 10. ABI
 
 - System V AMD64 (Linux) for the working ELF backend.
-- Up to six integer arguments in `RDI`, `RSI`, `RDX`, `RCX`, `R8`, `R9`.
+- Up to six register arguments in `RDI`, `RSI`, `RDX`, `RCX`, `R8`, `R9`.
 - One integer result in `RAX`.
 - No floating-point arguments or results.
 - System V stack arguments 7-12 and Win64 stack arguments 5-10 are supported.

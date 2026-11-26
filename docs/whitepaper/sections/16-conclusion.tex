@@ -1,0 +1,34 @@
+\section{Conclusion}
+\label{sec:conclusion}
+
+Sirus demonstrates that a selective x86-64 code virtualizer can be built as a
+zero-dependency, safe-Rust artifact with a real evidence trail. The system lifts
+a supported function into a bounded IR, flattens and rewrites its control flow,
+encodes it into a per-build randomized encrypted ISA, synthesizes a freestanding
+\code{no_std} VM, injects it into an ELF or PE image, and removes the original
+body. The default runtime forbids unsafe code and host memory access; the
+optional hardened tier isolates the controls that require an unsafe boundary.
+
+The evaluation is deliberately mixed. The positive results are substantial: 226
+tests in debug and release modes, Kani and Miri coverage of bounded components,
+tens of millions of fuzzing executions, differential equality with native code
+across the supported feature fixtures, external decompilers that reduce the
+patched functions to stubs, bounded symbolic probes that do not find a preimage,
+three external MBA simplifiers that produce a measured cost asymmetry, a
+constant-time subset below the conventional timing threshold, and green Wine,
+native Windows, and MSVC \code{/guard:cf} jobs. The negative results are equally
+important: the default branchy profile leaks timing, the interpreter skeleton is
+shared between builds, the MBA layer is not irreducible, one Ghidra decompilation
+does not complete, the symbolic probes time out rather than prove
+unsatisfiability, and the safe tier does not provide kernel anti-debug or a
+formal Spectre proof.
+
+Sirus is therefore best understood as an engineering prototype for asymmetric
+reverse-engineering cost, not as a universal obfuscator. Its contribution is the
+combination of a complete selective pipeline, a randomized encrypted virtual ISA,
+a fixed-pass oblivious mode, a strict safe-Rust implementation, and a
+reproducible evaluation that reports its own boundaries. The remaining work is
+clear: broader ISA and platform coverage, external-call and exception support,
+stronger integrity and anti-debug boundaries, formal models of the virtual ISA,
+and an independent audit. Those are substantial research and engineering tasks,
+and the current paper deliberately does not claim them.

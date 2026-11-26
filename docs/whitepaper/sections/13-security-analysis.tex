@@ -1,0 +1,153 @@
+\section{Security Analysis}
+\label{sec:security}
+
+\subsection{What is protected}
+
+Sirus removes the original native body of a selected function and replaces it
+with an encrypted bytecode program for a per-build interpreter. An attacker who
+reads the protected image sees the host image, the patched entry, the VM engine,
+and an encrypted payload. The original arithmetic and control flow are not
+present as native instructions. The protected entry is still identifiable through
+the host symbol table and the \code{E9} jump; the goal is not to hide that a
+function is protected, but to make the protected logic expensive to recover.
+
+\subsection{Objective-by-objective assessment}
+
+\paragraph{O1: readable original logic.}
+The body is overwritten with deterministic random bytes after the entry patch.
+The patch/scrub test checks that the original bytes change and that the body is
+absent from the protected file and from a live memory snapshot. Ghidra and
+radare2 reduce the host targets to jump or bad-data stubs. The injected segment
+contains engine code, not the original function.
+
+\paragraph{O2: operation obscurity.}
+The arithmetic is rewritten through exact MBA identities, constants are split
+into XOR shares, and the ISA aliases obscure which semantic operation is
+executing. The external MBA study shows that linear forms are reducible and that
+the non-linear wrapper raises the cost for the tested general simplifier. This is
+measured cost asymmetry, not a proof of irreducibility.
+
+\paragraph{O3: build independence.}
+A new seed changes the opcode assignment, operand order, register maps, immediate
+endianness, state ids, block order, keys, entry shares, MBA shapes, decoys,
+handler order, and code/data layout. The differential payload equal-byte ratio is
+0.40\%; the full VM segment is 2.43\% equal at equal offsets. The remaining
+similarity is the interpreter skeleton and shared helpers. The metric is a
+diversity indicator, not a semantic unlinkability proof.
+
+\paragraph{O4: tamper detection.}
+The effective payload key mixes the SipHash of the encrypted payload with the
+expected value. A modified payload decrypts to invalid structures and returns
+\code{BadPayload} or a deterministic wrong value. The binding does not use a
+visible comparison branch. It is not a public-key MAC: an attacker who can
+rewrite the expected hash and key shares is outside its scope.
+
+\paragraph{O5: host safety.}
+The safe runtime contains no unsafe code, no heap allocation, no host memory
+access, and no panic path in normal execution. Kani, Miri, libFuzzer, the
+malformed-payload suite, and valgrind cover complementary slices. The claim is
+memory safety under the tested models and inputs, not a formal proof of the
+entire interpreter.
+
+\paragraph{O6: forced-return resistance.}
+The protected function returns data that the host consumes downstream. A forced
+return that replaces the protected value with a constant changes the observable
+output of the test harness. A caller-side patch that ignores the result is
+outside the protected function's scope; no local protector can prevent a caller
+from discarding a return value.
+
+\paragraph{O7: string hygiene.}
+The generated engine has no formatting, panic strings, or libc imports. The
+scoped \code{.sirus} string scan is clean. The host image retains its Rust/std
+strings and symbols; Sirus does not strip the host.
+
+\subsection{Attack-cost table}
+
+Table~\ref{tab:attacks} groups the attack classes by the control that addresses
+them and the residual that remains after the control.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{Attack classes, controls, and residuals.}
+\label{tab:attacks}
+\begin{tabularx}{\textwidth}{@{}p{0.20\textwidth}p{0.34\textwidth}X@{}}
+\toprule
+Attack & Control & Residual \\
+\midrule
+Static disassembly & Body removed; flattened encrypted bytecode; encrypted decode table & Entry symbols remain; decompiler work remains \\
+MBA simplification & Layered exact identities; non-linear wrapper; constant blinding & Linear forms reduce; SiMBA reduces inverse forms; not a proof \\
+Dynamic tracing & Byte-at-a-time decode; per-build states; decoys; masked state & DBI can record semantics; no kernel/DBI detection in safe tier \\
+Taint analysis & Arguments influence flags, states, and decode geometry & Taint depth not formally proven \\
+Symbolic execution & Large random states; encrypted manifest; MBA; fuel bound & Path explosion is probabilistic; bounded timeouts only \\
+Memory dumping & No decrypted body cache; masked registers and stack & A live instruction-local value can be observed \\
+Forced return & Result consumed as data downstream & Caller-side patch remains possible \\
+Differential analysis & Per-build ISA, keys, layout, MBA, decoys & Interpreter skeleton reused; 2.43\% segment equality \\
+VM fuzzing & Checked decode and memory; fuel bound & Semantic garbage may produce a value \\
+Timing & Optional fixed-pass oblivious mode & Normal profile leaks; no Spectre proof \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Differential analysis}
+
+The differential harness protects the same binary with two fixed seeds and
+compares the resulting images at equal offsets. The payload is 0.40\% equal; the
+full VM segment is 2.43\% equal. The differences include the encrypted manifest
+and bodies, opcode and alias tables, register maps, state ids, entry shares,
+MBA shapes, decoys, handler order, and code/data placement. The similarities are
+the interpreter skeleton, shared runtime helpers, and canonical instruction
+sequences.
+
+A stronger differential attacker can align functions and compare semantics
+rather than bytes. Sirus does not claim resistance to a semantically aware
+diffing system that reconstructs the interpreter; it raises the amount of work
+required to do so.
+
+\subsection{Integrity and tamper behavior}
+
+The integrity binding is a 64-bit SipHash-derived value mixed into the effective
+key. It detects accidental corruption and naive patching. A modified payload
+produces invalid decodes or wrong values; the tamper test verifies that the
+result changes without a crash or hang. The binding is not a signature: an
+attacker who can modify the generated code, expected hash, and key shares
+together can produce a consistent alternative. The safe tier relies on the
+combination of encryption, integrity, and structural checks, not on a trusted
+hardware root.
+
+\subsection{Memory-dump behavior}
+
+The original body is absent from the live process. The runtime does not cache a
+decrypted body; instructions are decoded into locals one at a time. Virtual
+registers and the private stack are XOR-masked at rest with per-invocation keys.
+A passive snapshot therefore sees masked values. A decoded value can exist
+briefly in a local while one instruction executes; an instruction-level tracer
+is a stronger attacker than the snapshot diagnostic.
+
+\subsection{Timing and side channels}
+
+The default branchy profile is not constant-time. The explicit mode makes the
+decoded block sequence and private-memory address sequence independent of the
+inputs under the stated pass bound. It does not make the ALU operations,
+cache-bank behavior, branch predictor state, or speculative execution
+input-independent. The dudect and Cachegrind results are empirical checks, not a
+formal side-channel proof.
+
+\subsection{Residual risk}
+
+The main residuals are:
+
+\begin{itemize}
+  \item the interpreter skeleton is shared between builds;
+  \item the payload binding is 64-bit and not a public-key MAC;
+  \item the normal profile leaks timing;
+  \item the constant-time mode has a fixed pass bound and does not model
+        microarchitectural effects;
+  \item the safe tier has no kernel anti-debug or DBI detection;
+  \item the host symbol table and entry patch remain visible;
+  \item the supported instruction subset excludes many real functions;
+  \item no independent audit or formal obfuscation proof exists.
+\end{itemize}
+
+These residuals are recorded so that no deployment decision relies on a stronger
+claim than the evidence supports.

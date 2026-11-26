@@ -109,7 +109,7 @@ vmprotect_con native protected -sf bench/vmprotect-select.lua
 Legend: **Y** = documented/implemented, **P** = partial/limited, **N** = not
 supported. Commercial columns summarize public vendor documentation.
 
-| Capability | Sirus 1.2 | VMProtect 3.11 | Code Virtualizer 4.0 | Themida 3.2 | Denuvo Anti-Tamper | Tigress | OLLVM | MOVfuscator |
+| Capability | Sirus 1.5.9 | VMProtect 3.11 | Code Virtualizer 4.0 | Themida 3.2 | Denuvo Anti-Tamper | Tigress | OLLVM | MOVfuscator |
 |---|---|---|---|---|---|---|---|---|
 | Selective code virtualization | Y | Y | Y | Y | Y | Y | N | N |
 | Multiple VM designs in one file | N | Y | Y | Y | Y (dual VM) | Y | N | N |
@@ -122,7 +122,7 @@ supported. Commercial columns summarize public vendor documentation.
 | Control-flow flattening | Y | Y | Y | Y | Y | Y | Y | N/A |
 | Packing | N | Y | N (composes with packer) | Y | Y | runtime codegen | N | N |
 | Anti-debug / anti-VM | P (opt-in hardened) | Y | P | Y | Y | research transforms | N | N |
-| Runtime code/memory integrity | P (payload binding; Linux hardened text hash; Windows native self-hash absent) | Y | P | Y | Y | research transforms | P | N |
+| Runtime code/memory integrity | P (payload binding; Linux and Windows hardened text hash) | Y | P | Y | Y | research transforms | P | N |
 | Licensing / activation | N | Y | N | Y (WinLicense) | Y (game entitlement) | N | N | N |
 | Managed/.NET | N | Y | N | P | N | N | N | N |
 | Safe Rust / zero unsafe in protected runtime | Y | N | N | N | N | partially (C generated) | N | N |

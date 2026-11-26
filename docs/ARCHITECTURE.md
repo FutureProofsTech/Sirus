@@ -145,7 +145,7 @@ guard never changes live architectural state.
 Per build, a 256-bit seed derives:
 
 - 256-byte shuffled opcode pool;
-- four aliases per semantic operation (188 opcodes total);
+- four aliases per semantic operation (192 opcodes total);
 - per-alias operand order;
 - per-alias register-map variant;
 - per-alias immediate endianness;
@@ -154,7 +154,7 @@ Per build, a 256-bit seed derives:
 - rolling keys, state ids, block order, entry shares, MBA shapes, decoys.
 
 Alias operand layouts are derived from the seed once per VM invocation into a
-fixed 1.2 KiB runtime table, then indexed per instruction. They are not serialized
+fixed 2.5 KiB runtime table, then indexed per instruction. They are not serialized
 into the executable. The cached table removes a per-instruction SipHash/shuffle
 cost while keeping the static image free of a plaintext alias table.
 

@@ -1,0 +1,160 @@
+\section{Lifting and Intermediate Representation}
+\label{sec:lifting}
+
+\subsection{A strict decoder}
+
+The decoder is not a general-purpose disassembler. It recognizes instruction
+lengths, prefixes, ModRM/SIB fields, and operand structure only for the supported
+subset. Every instruction is decoded from the function entry, and branch targets
+must land on instruction boundaries inside the selected range. Two instructions
+may not overlap. A relative branch outside the range, an unsupported prefix, an
+unknown opcode, a malformed ModRM, or a truncated instruction is a build error
+with an offset and a reason.
+
+This strictness is a security property: there is no path on which an unsupported
+instruction is skipped, approximated, or interpreted with the wrong semantics.
+The decoder is also intentionally narrow in its prefix handling. Segment
+overrides that do not affect 64-bit addressing are accepted and ignored so that
+compiler-emitted \code{cs nop} padding lifts. Address-size overrides, lock
+prefixes, and unsupported repeated prefixes fail closed. The undefined 16-bit
+\code{bswap} form with a \code{0x66} operand-size prefix is rejected because real
+CPUs implement it inconsistently.
+
+\subsection{Virtual register file}
+
+The VM has 96 64-bit virtual registers. Table~\ref{tab:registers} lists the
+mapping. Architectural GPRs occupy slots 0--15, flags occupy 16--19, constant
+zero and one occupy 20--21, compiler scratch occupies 24--59, and lifter scratch
+occupies 60--63. The sixteen XMM registers occupy slots 64--95, two 64-bit halves
+per register.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{Virtual register map.}
+\label{tab:registers}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Slots & Contents & Notes \\
+\midrule
+0--15 & \code{RAX}, \code{RCX}, \code{RDX}, \code{RBX}, \code{RSP}, \code{RBP}, \code{RSI}, \code{RDI}, \code{R8}--\code{R15} & architectural GPRs \\
+16--19 & \code{ZF}, \code{CF}, \code{SF}, \code{OF} & eagerly computed flags \\
+20--21 & zero, one & constants \\
+24--59 & compiler scratch & temporaries \\
+60--63 & lifter scratch & expression lowering \\
+64--95 & \code{XMM0}--\code{XMM15} & two 64-bit halves each \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Registers are masked at rest with a per-invocation key. A read unmasks only the
+operand consumed by the current instruction; a write stores the result masked.
+The key is derived from the effective payload key and is present in the generated
+code. This is an at-rest masking layer, not cryptographic isolation from an
+attacker who executes or debugs the VM.
+
+\subsection{Flag model}
+
+Flags are computed eagerly after every supported flag-setting instruction. The
+lifter emits explicit comparisons into virtual flag registers, so a subsequent
+\code{jcc}, \code{cmovcc}, or \code{setcc} reads a virtual register rather than
+reconstructing native flag state.
+
+\begin{itemize}
+  \item \code{inc} and \code{dec} preserve \code{CF}.
+  \item Shifts and \code{imul} mark flags unknown. A dependent conditional branch
+        is rejected until a supported flag setter overwrites the unknown flag.
+  \item Flag knowledge resets at every basic-block boundary. Cross-block flag
+        liveness that cannot be proven is a build error, not an assumption.
+  \item Parity conditions are unsupported; the decoder rejects them.
+\end{itemize}
+
+This design trades code size for determinism. It also makes the virtual
+instruction stream independent of the host's native flag encoding.
+
+\subsection{Private memory model}
+
+Virtual memory is a fixed 4 KiB byte-addressable stack. The initial stack pointer
+is 4080, the stack grows down, and a fixed read-only data blob of at most 2 KiB is
+installed below the stack. Effective addresses are computed from base, index,
+scale, and displacement using 64-bit wrapping arithmetic. Every access checks
+\code{address + width <= memory.len()}; an out-of-range access fails closed.
+
+RIP-relative reads of read-only data are resolved at build time. The referenced
+bytes are copied into the private data blob, and the lifted instruction reads
+from that private copy. Writable RIP-relative targets and absolute host addresses
+are rejected. The VM never dereferences a host pointer.
+
+\subsection{IR and CFG construction}
+
+The IR is a fixed-capacity, two-address representation. Each basic block has one
+terminator: a jump, a conditional branch, a return, a trap, or a direct call.
+Leaders are discovered from the function entry, branch targets, and conditional
+fallthroughs. Blocks are stored in a bounded vector; the function limit is
+16 KiB, the block limit is 256, and the IR operation limit is 8192.
+
+The lifter performs three consistency checks before flattening:
+
+\begin{enumerate}
+  \item every decoded instruction belongs to exactly one block;
+  \item every branch target is a leader inside the function;
+  \item every block ends in exactly one supported terminator and does not fall
+        through accidentally.
+\end{enumerate}
+
+The resulting CFG is acyclic or cyclic, but it is always explicit. There are no
+computed jump targets and no jump tables. This is what makes flattening and
+fixed-pass execution possible.
+
+\subsection{Supported x86-64 extensions}
+
+Beyond the core integer subset, the lifter supports:
+
+\begin{itemize}
+  \item \textbf{RIP-relative read-only data}: a \code{lea} or memory operand with
+        a RIP-relative displacement is resolved to a private data offset if the
+        target lies in a read-only section and the bytes fit the data budget.
+  \item \textbf{SSE2 integer operations}: \code{movdqu}/\code{movdqa}, bitwise
+        \code{pxor}/\code{pand}/\code{por}, \code{paddq}/\code{psubq},
+        \code{paddd}/\code{psubd}, \code{pmuludq},
+        \code{punpcklqdq}/\code{punpckhqdq}, \code{psrldq}/\code{pslldq}, and
+        \code{movq}/\code{movd} forms.
+  \item \textbf{VEX-encoded 128-bit AVX integer forms} for the same operations,
+        including \code{vpsrldq}/\code{vpslldq} and \code{vmovq}. AVX-256 and
+        EVEX are rejected.
+  \item \textbf{Byte swap}: 32-bit and 64-bit \code{bswap}, in normal and
+        constant-time modes.
+  \item \textbf{Repeated strings}: \code{rep movsb}/\code{movsq} and
+        \code{rep stosb}/\code{stosq} over private memory in normal mode.
+        Constant-time repeated strings fail closed.
+  \item \textbf{Direct calls}: \code{call rel32} to another selected function,
+        with a bounded guest call stack, and optional automatic callee following
+        for resolvable local targets.
+\end{itemize}
+
+Table~\ref{tab:x86subset} in Appendix~\ref{app:x86} lists the accepted forms by
+category. The list is intentionally conservative: an instruction that is not
+modeled is a build error even if a native CPU would execute it.
+
+\subsection{Rejected forms and the fail-closed contract}
+
+The following are rejected at build time:
+
+\begin{itemize}
+  \item external calls and unresolved direct calls;
+  \item indirect calls and indirect jumps;
+  \item writable RIP-relative globals and absolute memory;
+  \item jump tables and computed targets;
+  \item 256-bit AVX/AVX2, EVEX, x87, MMX, and floating point;
+  \item syscalls, \code{rdtsc}, \code{cpuid}, privileged or I/O instructions;
+  \item atomics and fences;
+  \item segment overrides that affect addressing, address-size overrides, and
+        lock prefixes;
+  \item cross-block flag liveness that cannot be proven;
+  \item functions larger than 16 KiB or programs exceeding fixed capacities.
+\end{itemize}
+
+A build error is not a silent downgrade. The protector reports the offset and
+reason, and the output file is not produced. This is a deliberate usability
+trade-off: the supported subset is smaller than a commercial protector's, but a
+successful build does not contain a mistranslated instruction.

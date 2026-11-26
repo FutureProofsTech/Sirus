@@ -1,0 +1,135 @@
+\section{Implementation and Safety Engineering}
+\label{sec:implementation}
+
+\subsection{Three-tier no\_std policy}
+
+The workspace separates three environments:
+
+\begin{enumerate}
+  \item \textbf{Core and VM:} \code{no_std}, no allocation, no unsafe. The
+        compiler, lifter, IR, MBA arena, ISA derivation, cipher, payload
+        builder, and VM engine use fixed-capacity data structures and only
+        \code{core}.
+  \item \textbf{Binary formats:} \code{no_std} plus \code{alloc}, no unsafe.
+        Parsing and editing ELF/PE images require variable-size buffers in the
+        CLI context, but the parsers do not use raw pointers.
+  \item \textbf{Protector CLI:} \code{std}, safe Rust. Filesystem access,
+        process spawning, temporary directories, and error reporting are
+        confined to this boundary. The generated runtime is not linked against
+        \code{std}.
+\end{enumerate}
+
+The \code{sirus-hardened} crate is the only shipped crate that permits unsafe
+code, and it is opt-in. A source gate scans the workspace for unsafe constructs
+outside that crate.
+
+\subsection{Fixed capacities}
+
+All compiler and runtime collections are fixed-capacity. The main bounds are
+shown in Table~\ref{tab:limits}. A capacity overflow is a typed build error, not
+a panic or an allocation.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{Fixed capacities in the compiler and runtime.}
+\label{tab:limits}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Limit & Value \\
+\midrule
+Functions per protection run & 8 \\
+Blocks per function & 256 \\
+IR operations per function & 8192 \\
+Function size & 16 KiB \\
+Payload size & 128 KiB \\
+Private read-only data & 2 KiB \\
+Private stack & 4 KiB \\
+Virtual registers & 96 (GPRs, flags, constants, scratch, XMM halves) \\
+Manifest entries & 256 \\
+Constant-time passes & 1--4096 (default 256) \\
+Default fuel & 2,000,000 steps \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The capacities are chosen so that a protected function and its VM fit in a
+single RX segment and in the test-thread stack used by the differential harness.
+They are not arbitrary: the 128 KiB payload ceiling was raised after a
+six-function max-profile differential build exceeded the previous 64 KiB limit,
+and it remains small enough to keep the VM stack frame bounded.
+
+\subsection{Panic elimination}
+
+Normal execution has no panic path. Arithmetic is wrapping, shifts are masked,
+division is absent, indexing is checked through slice accessors, and every
+malformed state returns a status. The generated panic handler exists only as a
+final \code{no_std} link guard; it is not reachable from a supported semantic
+operation.
+
+The test-only lint exemptions allow assertion panics in integration tests. The
+shipped code keeps the ban on \code{unwrap}, \code{expect}, \code{panic},
+\code{todo}, \code{unimplemented}, and \code{unreachable}. Clippy runs with
+\code{-D warnings} across all targets; the release gate includes rustdoc with
+denied warnings and a dependency policy check.
+
+\subsection{Determinism and reproducibility}
+
+A protected image is a deterministic function of the input bytes, the seed, the
+profile, and the pinned toolchain. The seed drives every random choice through a
+single build RNG; no OS entropy is mixed after the seed is fixed. The
+reproducible-output check protects normal, hardened, and constant-time builds and
+compares their hashes.
+
+Omit \verb|--seed| to derive a seed from OS entropy. A fixed seed is useful for
+reproducible builds, regression tests, and differential comparison. The
+protector does not embed the seed in the output.
+
+The repository pins stable Rust 1.99.0 and the Windows GNU target in
+\path{rust-toolchain.toml}. The generated VM is compiled by \code{rustc} at
+protection time with the flags in Section~\ref{sec:runtime}. The protector uses
+\code{cc}, LLD, and \code{objcopy} on Linux, and
+\code{x86_64-w64-mingw32-gcc} plus \code{lld-link} on Windows.
+
+\subsection{Compiler/runtime source sharing}
+
+The protector embeds the VM engine, the shared ISA constants, the cipher, and
+the derivation module with \code{include_str!}. A build script tracks every
+embedded file and triggers a rebuild when one changes. This addresses a subtle
+class of release bugs: a stale embedded engine can disagree with the compiler's
+wire format even though the source tree looks consistent. The release history
+contains one such bug (a missing semantic import that became a catch-all match
+arm in release builds), which is now covered by a release-mode test run and the
+build-script dependency tracking.
+
+\subsection{Threading, reentrancy, and signals}
+
+The VM uses only per-invocation stack state. There is no mutable global engine
+state and no shared mutable cache. Separate host threads can call protected
+functions concurrently without sharing virtual registers or private memory. An
+eight-thread fixture calls one protected function 50,000 times per thread and
+compares the aggregate result with native.
+
+A signal handler can re-enter a protected function while the main thread is
+inside it. The generated entry uses a fresh stack frame and the Linux shim saves
+and restores the host context, so the interrupted and reentrant calls are
+independent. A SIGALRM fixture runs 200 protected calls while a 50 ms interval
+timer re-enters the same function from the handler; both the interrupted result
+and the handler result match native, and the handler must fire at least once.
+This test exposed and now covers a real stack-alignment bug in an earlier shim.
+
+\subsection{Logging and diagnostics}
+
+The generated runtime has no logging, formatting, or string constants for
+diagnostics. The optional \code{trace} feature of the \code{sirus-vm} reference
+crate prints constant-time events for debugging; it is not enabled in generated
+artifacts and its default sink is a no-op. This keeps the injected segment free
+of diagnostic strings and avoids a hidden stderr dependency.
+
+\subsection{Code and artifact size}
+
+The default benchmark build adds about 30 KiB of VM and payload to a 4.5 MiB
+binary (0.7\%). The payload for a single benchmark function is about 13.4 KiB;
+the VM segment including the engine and tables is larger. The exact size depends
+on the function, profile, and seed. The injected segment is read-execute and
+non-writable; the host image is not compressed or packed.

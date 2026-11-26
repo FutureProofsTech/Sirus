@@ -1,0 +1,149 @@
+\section{Virtual Machine Runtime}
+\label{sec:runtime}
+
+\subsection{Generated freestanding runtime}
+
+The protector generates a complete Rust source file for each protection run. It
+contains the shared ISA, cipher, and derivation modules; the engine; the encrypted
+payload and decode table; the seed, expected hash, key shares, entry states, and
+fuel; one \code{extern "C"} entry thunk per protected function; and safe
+\texttt{\#[used]} function-pointer statics that keep the thunks alive through
+linking without \code{no_mangle}.
+
+The source is compiled with:
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Setting & Value \\
+\midrule
+Edition & 2021 \\
+Crate type & binary, \code{no_std}, \code{no_main} \\
+Unsafe policy & \texttt{\#![forbid(unsafe\_code)]} in the default tier \\
+Panic strategy & abort \\
+Codegen units & 1 \\
+Relocation model & PIC \\
+Overflow checks & off (wrapping semantics are explicit) \\
+Optimization & \code{opt-level=z} \\
+Link mode & \verb|-nostdlib -static -no-pie|, custom linker script \\
+Garbage collection & disabled (\verb|--no-gc-sections|) \\
+Output segments & one RX \code{PT_LOAD} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\code{opt-level=z} also avoids libc \code{memcpy} synthesis for the current
+runtime. The linker script discards \code{.data}, \code{.bss}, \code{.got},
+relocations, exception tables, comments, and notes. The blob validator rejects
+undefined symbols, relocations, writable load segments, missing symbols, wrong
+payload/seed/hash values, and entries outside the segment before injection.
+
+\subsection{VM input and state}
+
+The generated entry receives the twelve integer arguments permitted by the ABI
+shim and passes the first six register arguments plus up to six stack arguments
+to the engine. The engine input contains the encrypted payload, private data
+blob, seed, expected hash, key shares, entry-state table, and fuel budget.
+
+The runtime state is:
+
+\begin{itemize}
+  \item 96 virtual 64-bit registers, masked at rest;
+  \item a 4 KiB private byte-addressable stack, masked at rest;
+  \item a read-only data blob of at most 2 KiB;
+  \item a current state identifier and a guest call stack;
+  \item a fuel counter and a step counter;
+  \item the decode tables, derived once per invocation;
+  \item the effective payload key, derived once per invocation.
+\end{itemize}
+
+There is no mutable global engine state. The payload, tables, and seed are
+read-only after initialization. This is the basis for thread and signal
+reentrancy.
+
+\subsection{Dispatcher}
+
+The normal dispatcher performs the following loop:
+
+\begin{enumerate}
+  \item Derive the decode tables from the seed.
+  \item Derive the effective key from the payload hash and key shares.
+  \item Initialize virtual registers, private stack, data blob, and fuel.
+  \item Set the current state to the requested entry state.
+  \item Scan the encrypted manifest for the current state.
+  \item Decode instructions sequentially from the block body.
+  \item Execute each semantic operation, updating registers, flags, memory, or
+        control state.
+  \item On a terminator, update the state or return/trap; otherwise continue.
+  \item Halt with \code{BadPayload} on any validation failure, or
+        \code{FuelExhausted} when the budget is exhausted.
+\end{enumerate}
+
+Every manifest scan and every decoded instruction charges fuel. The default
+budget is 2,000,000 steps. The budget is a deterministic bound, not a wall-clock
+timeout; it prevents a malformed or adversarial payload from causing an
+unbounded loop.
+
+\subsection{Semantic operations}
+
+The ISA has 48 semantics. They cover moves, immediate loads, wrapping
+addition/subtraction/multiplication, bitwise operations, shifts, rotates,
+comparisons, select, memory loads and stores at 8/16/32/64 bits, control-flow
+transitions, return, trap, direct call, repeated moves/fills, and byte swap.
+Appendix~\ref{app:isa} gives the canonical operands and semantics.
+
+All arithmetic is 64-bit wrapping. Shift and rotate counts are masked to 63.
+There is no division, no floating point, and no undefined shift. A memory
+operation computes an effective address and checks the full width before
+accessing the private stack. Invalid registers, invalid opcodes, malformed
+operands, and out-of-range addresses return \code{None}, which the dispatcher
+converts to \code{BadPayload}.
+
+\subsection{Direct calls and the guest stack}
+
+A selected function may call another selected function with a direct
+\code{call rel32}. The lifter resolves the target to an entry state and emits a
+\code{CALL} semantic. At runtime the VM pushes the return state on a bounded guest
+call stack, switches to the callee entry, and returns to the saved state on
+\code{RET}. The call stack is part of the private state; no host stack frame is
+created for the guest call. A call to an external or unresolved target is a build
+error, and an invalid return state is a \code{BadPayload} halt.
+
+The compiler can automatically lift resolvable direct callees with
+\verb|--follow-calls|. This is convenient for small helper clusters, but it does
+not extend the ABI boundary: a callee that uses an unsupported instruction or an
+external call still fails the build.
+
+\subsection{Failure semantics}
+
+The five runtime outcomes are:
+
+\begin{description}[leftmargin=1.2em,style=nextline]
+  \item[\code{Returned}] The program executed \code{RET}; the value is the
+        virtual \code{RAX} contents.
+  \item[\code{BadPayload}] A manifest, body, opcode, register, address, flag, or
+        call-state validation failed. Value is zero.
+  \item[\code{FuelExhausted}] The deterministic step budget was exhausted.
+        Value is zero.
+  \item[\code{Trap}] The program executed a \code{TRAP} semantic. Value is
+        zero.
+  \item[\code{LoopBound}] The fixed-pass constant-time frontier did not
+        converge within the configured pass budget. Value is zero.
+\end{description}
+
+No failure path unwinds, allocates, or touches host memory. A failure is
+deterministic for a fixed payload and input, which makes it testable and prevents
+a malformed payload from turning into an environment-dependent crash.
+
+\subsection{Memory safety argument}
+
+The runtime is safe Rust. The public path uses checked slice access; there is no
+\code{unsafe}, no raw pointer, no unchecked array indexing, no allocation, and no
+panic in normal execution. The generated panic handler is a final \code{no_std}
+guard and is not reachable through the supported semantic operations.
+
+This is a source-level safety argument, not a proof of the entire interpreter.
+Kani proves bounded memory helpers, Miri checks the Rust abstract machine on the
+library tests, and libFuzzer explores malformed payloads. The evaluation section
+states the exact scope of each result.

@@ -70,7 +70,7 @@ Sirus raises cost; it does not prove impossibility.
 | Symbolic execution | large random states, encrypted manifest, MBA, finite fuel | path explosion is probabilistic, not proven |
 | Memory dumping | no decrypted body cache; instructions live in locals only | live dump can observe transient VM register values (including repeated constants) |
 | Forced return | host consumes derived data, not only a boolean | caller-side patch remains possible |
-| Differential analysis | new seed changes every payload field, handler/engine/entry layout mutation, and much code/data layout | full `.sirus` segment equality measured at 2.21% |
+| Differential analysis | new seed changes every payload field, handler/engine/entry layout mutation, and much code/data layout | full `.sirus` segment equality measured at 2.43% |
 | VM fuzzing | checks and fuel prevent panic/OOB/hang | semantic garbage may still produce a value |
 
 ---
@@ -99,8 +99,8 @@ protected data in ways that fail downstream if incorrect.
 3. **No LFENCE/Spectre mitigation.** Safe Rust cannot emit the required barrier.
 4. **Handler layout reuse.** Payload/ISA/state geometry and semantic-arm order
    mutate per build, but the interpreter's semantic skeleton is shared. Full
-   `.sirus` equality is 2.21% in the current differential sample.
-5. **Coverage and tool notes.** Coverage is 85.05%/86.14%, above the agreed 85%
+   `.sirus` equality is 2.43% in the current differential sample.
+5. **Coverage and tool notes.** Coverage is 87.07%/88.25%, above the agreed 85%
    floor; 100% is not the target. Ghidra, radare2, GAMBA/SiMBA/MBA-Blast, angr,
    KLEE, Creusot, and dudect-bencher were executed. IDA/Binary Ninja, Ferrocene,
    and Triton are commercial/licence-gated and outside the local gate; AORAI is

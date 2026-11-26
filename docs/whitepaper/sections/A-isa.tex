@@ -1,0 +1,75 @@
+\section{Virtual ISA Semantics}
+\label{app:isa}
+
+The canonical operand layout is fixed by the shared format module. An alias may
+permute the order and choose a register map or immediate endianness, but the
+semantic operation is unchanged. All arithmetic is 64-bit wrapping unless stated
+otherwise. Shift and rotate counts are masked to 63.
+
+\small
+\setlength{\tabcolsep}{3pt}
+\begin{longtable}{@{}r >{\raggedright\arraybackslash}p{0.20\textwidth} >{\raggedright\arraybackslash}p{0.24\textwidth} >{\raggedright\arraybackslash}p{0.40\textwidth}@{}}
+\caption{Virtual ISA semantics.}\label{tab:isa}\\
+\toprule
+ID & Name & Canonical operands & Semantics \\
+\midrule
+\endfirsthead
+\toprule
+ID & Name & Canonical operands & Semantics \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+0 & \code{NOP} & -- & no operation \\
+1 & \code{MOV_RR} & dst, src & copy register \\
+2 & \code{MOV_RI} & dst, imm & load immediate \\
+3 & \code{ADD_RR} & dst, src & wrapping add \\
+4 & \code{ADD_RI} & dst, imm & add immediate \\
+5 & \code{SUB_RR} & dst, src & wrapping subtract \\
+6 & \code{SUB_RI} & dst, imm & subtract immediate \\
+7 & \code{MUL_RR} & dst, src & wrapping multiply \\
+8 & \code{AND_RR} & dst, src & bitwise AND \\
+9 & \code{AND_RI} & dst, imm & AND immediate \\
+10 & \code{OR_RR} & dst, src & bitwise OR \\
+11 & \code{OR_RI} & dst, imm & OR immediate \\
+12 & \code{XOR_RR} & dst, src & bitwise XOR \\
+13 & \code{XOR_RI} & dst, imm & XOR immediate \\
+14 & \code{NOT_R} & dst & bitwise NOT \\
+15 & \code{NEG_R} & dst & wrapping negation \\
+16 & \code{SHL_RR} & dst, count & left shift, count masked \\
+17 & \code{SHL_RI} & dst, imm & left shift \\
+18 & \code{SHR_RR} & dst, count & logical right shift \\
+19 & \code{SHR_RI} & dst, imm & logical right shift \\
+20 & \code{SAR_RR} & dst, count & arithmetic right shift \\
+21 & \code{SAR_RI} & dst, imm & arithmetic right shift \\
+22 & \code{ROTL_RR} & dst, count & rotate left \\
+23 & \code{ROTL_RI} & dst, imm & rotate left \\
+24 & \code{ROTR_RR} & dst, count & rotate right \\
+25 & \code{ROTR_RI} & dst, imm & rotate right \\
+26 & \code{CMPEQ_RR} & dst, a, b & boolean equality \\
+27 & \code{CMPLTU_RR} & dst, a, b & unsigned less \\
+28 & \code{CMPLTS_RR} & dst, a, b & signed less \\
+29 & \code{CMPLEU_RR} & dst, a, b & unsigned less-or-equal \\
+30 & \code{CMPLES_RR} & dst, a, b & signed less-or-equal \\
+31 & \code{SELECT_RRRR} & dst, cond, a, b & branchless select \\
+32 & \code{LOAD8} & dst, addr & byte load, zero-extended \\
+33 & \code{LOAD16} & dst, addr & 16-bit load \\
+34 & \code{LOAD32} & dst, addr & 32-bit load \\
+35 & \code{LOAD64} & dst, addr & 64-bit load \\
+36 & \code{STORE8} & addr, src & byte store \\
+37 & \code{STORE16} & addr, src & 16-bit store \\
+38 & \code{STORE32} & addr, src & 32-bit store \\
+39 & \code{STORE64} & addr, src & 64-bit store \\
+40 & \code{JMP} & target, mix & state transition $t+m-m$ \\
+41 & \code{JCC} & cond, true, false, mix & conditional state transition \\
+42 & \code{RET} & value & return value \\
+43 & \code{TRAP} & -- & clean halt \\
+44 & \code{CALL} & -- & push guest return state and enter callee \\
+45 & \code{REP_MOVS} & -- & copy RCX private-memory elements from RSI to RDI \\
+46 & \code{REP_STOS} & -- & fill RCX private-memory elements at RDI \\
+47 & \code{BSWAP} & dst, width & byte-swap 32/64-bit value \\
+\end{longtable}
+
+Bounds violations, invalid registers, invalid opcodes, invalid shifts after
+masking, and address overflow halt with \code{BadPayload}. The runtime never
+falls through an invalid state or guesses a missing operand.

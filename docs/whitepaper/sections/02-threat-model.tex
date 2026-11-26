@@ -1,0 +1,142 @@
+\section{Threat Model and Security Objectives}
+\label{sec:threat}
+
+\subsection{Assets}
+
+Sirus is intended to protect four classes of assets:
+
+\begin{itemize}
+  \item \textbf{Proprietary integer logic}: license predicates, protocol
+        constants, checksums, and business rules.
+  \item \textbf{Embedded secrets}: salts, derivation keys, and constants that
+        participate in a larger key schedule.
+  \item \textbf{Algorithm structure}: the control flow and arithmetic shape that
+        reveal how a decision is made.
+  \item \textbf{Build geometry}: the per-build ISA assignment, register maps,
+        decode-table key, and payload keys that make one protected image
+        different from another.
+\end{itemize}
+
+The protected function is assumed to be a leaf or a small cluster of directly
+called functions. Its result is consumed by the host as data, not as a single
+boolean that an attacker can patch at the call site without consequence.
+
+\subsection{Adversary capabilities}
+
+We assume an adversary who can:
+
+\begin{itemize}
+  \item read the complete binary, symbol table, section headers, and metadata;
+  \item run disassemblers and decompilers, including Ghidra, IDA, Binary Ninja,
+        radare2, and custom parsers;
+  \item run MBA simplifiers such as GAMBA, SiMBA, and MBA-Blast;
+  \item run symbolic execution and SMT solvers such as angr, KLEE, Triton, and
+        Z3;
+  \item trace execution with Intel PIN, Frida, DynamoRIO, QEMU, gdb, or a
+        hypervisor;
+  \item dump process memory at any time, including during an executing
+        instruction;
+  \item patch file or memory bytes, including the generated entry thunk;
+  \item compare two protected builds of the same source;
+  \item fuzz the VM with malformed, truncated, or mutated payloads;
+  \item use hardware breakpoints and debug registers.
+\end{itemize}
+
+The adversary is \emph{not} assumed to have unlimited CPU time in the intended
+cost model. Sirus is an asymmetry mechanism: the defender pays a bounded
+compile-time and runtime cost, and the attacker is forced through a larger
+search, decoding, and analysis space. An adversary with unlimited time and full
+instrumentation can eventually recover behavior; no claim in this paper
+contradicts that.
+
+\subsection{Security objectives}
+
+Table~\ref{tab:objectives} states the objectives and the controls that address
+them. The evidence column identifies the class of evidence, not a proof of
+absolute security.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{Security objectives and current controls.}
+\label{tab:objectives}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.06\textwidth}>{\raggedright\arraybackslash}p{0.25\textwidth}>{\raggedright\arraybackslash}p{0.35\textwidth}>{\raggedright\arraybackslash}X@{}}
+\toprule
+ID & Objective & Control & Evidence \\
+\midrule
+O1 & Remove readable original logic & Original body scrubbed; bytecode flattened, shuffled, and encrypted & Patch/scrub checks; Ghidra and radare2 output \\
+O2 & Obscure operations & Bounded linear and non-linear MBA; constant blinding; randomized ISA & MBA equivalence tests; external simplifier study \\
+O3 & Make builds independent & New seed changes opcodes, operand order, register maps, state ids, block order, keys, MBA shapes, decoys, and layout & Differential payload and segment equality \\
+O4 & Detect payload tampering & SipHash-derived integrity value mixed into the effective payload key & Tamper experiments produce deterministic wrong output \\
+O5 & Keep the host safe & Safe Rust, checked decode, no heap, fuel bound, private memory, fail-closed status & Kani, Miri, libFuzzer, malformed-payload suite, valgrind \\
+O6 & Resist forced-return bypass & Protected results are data consumed downstream; wrong values change observable output & Forced-return experiment \\
+O7 & Avoid leaked VM strings & Generated engine uses no formatting, panic strings, or libc symbols & Static string scan of the injected segment \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Non-objectives}
+
+The following are explicitly outside the threat model:
+
+\begin{itemize}
+  \item protection against an adversary with unlimited local time and full
+        hardware instrumentation;
+  \item kernel-level anti-debugging or DBI detection in the safe tier;
+  \item hiding the existence of a VM or of the protected entry points;
+  \item preventing a caller-side patch that ignores the protected result;
+  \item a formal cryptographic proof for the custom payload construction;
+  \item whole-program virtualization;
+  \item protecting functions that require external calls, host memory, floating
+        point, or unsupported instructions;
+  \item trusted production signing or an independent audit.
+\end{itemize}
+
+\subsection{Failure policy}
+
+The runtime distinguishes five outcomes: \code{Returned}, \code{BadPayload},
+\code{FuelExhausted}, \code{Trap}, and \code{LoopBound}. A malformed payload,
+an invalid register, an out-of-range memory access, a missing manifest entry, an
+invalid opcode, or an exhausted fuel budget never unwinds and never accesses host
+memory. It returns value zero with the corresponding status. The build-time
+pipeline similarly fails with a typed error and does not write a partial output
+file.
+
+Returning zero is not itself a security guarantee. The intended deployment
+consumes the protected result as data in a downstream computation, so an
+incorrect result causes an observable failure rather than a silent success.
+
+\subsection{Cost model and evidence discipline}
+
+We evaluate the system along three axes: correctness, safety, and recovery cost.
+Correctness is measured by differential execution on real binaries. Safety is
+measured by the Rust type system, bounded proofs, dynamic analysis, and fuzzing.
+Recovery cost is measured by differential builds, external static and symbolic
+tools, MBA simplifiers, and timing measurements. Each result is reported with
+its scope. A Kani harness that proves a bounded memory helper is not presented as
+a proof of the dispatcher; a Ghidra timeout is not presented as a proof that
+decompilation is impossible; a dudect run below the threshold is not presented as
+a formal constant-time proof.
+
+The following terminology is used throughout:
+
+\begin{definition}[Measured equality]
+For two protected images $B'_0$ and $B'_1$ of the same input under different
+seeds, the \emph{equal-byte ratio} of a section is the number of byte positions
+with identical values at the same relative offset, divided by the section length.
+It is a diversity metric, not a semantic security proof.
+\end{definition}
+
+\begin{definition}[Bounded symbolic resistance]
+A symbolic probe is \emph{bounded-resistant} for a time budget $T$ if it does not
+produce a concrete preimage for the requested target within $T$. A timeout is
+evidence of cost, not a proof of unsatisfiability.
+\end{definition}
+
+\begin{definition}[Fixed-pass oblivious execution]
+An execution is \emph{fixed-pass oblivious} with respect to a set of secret
+inputs if, for a fixed program and pass bound $P$, the sequence of decoded basic
+blocks and the sequence of private-memory addresses are independent of those
+inputs, provided the active frontier converges within $P$. Register values and
+branch conditions may still depend on the inputs.
+\end{definition}

@@ -1,0 +1,48 @@
+\section{Verification Matrix}
+\label{app:verification}
+
+Table~\ref{tab:verification} lists the verification activities and their exact
+scope. A result is positive only for the stated scope; it is not a proof of the
+whole product.
+
+\small
+\setlength{\tabcolsep}{3pt}
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{0.17\textwidth}>{\raggedright\arraybackslash}p{0.33\textwidth}>{\raggedright\arraybackslash}p{0.29\textwidth}>{\raggedright\arraybackslash}p{0.15\textwidth}@{}}
+\caption{Verification activities and scope.}\label{tab:verification}\\
+\toprule
+Activity & Scope & Result & Residual \\
+\midrule
+\endfirsthead
+\toprule
+Activity & Scope & Result & Residual \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+Unit/integration tests & Workspace, debug and release modes & 226 passed, 2 ignored & Test adequacy is not a proof \\
+Differential execution & Real C/Rust victims; six-function stress harness & Native equality across tested inputs & Tested inputs only \\
+Kani & 5 core + 4 VM bounded harnesses & 0 failures & Decoder not covered \\
+Miri & VM library tests & 11/11 pass & Full execution suite opt-in \\
+libFuzzer & VM, lifter, ELF, PE targets & 789,455 / 133,973 / 13,516,906 / 26,539,167 runs on final tree & Fixed time budget \\
+Deterministic fuzz & 20,000 random + 10,000 mutated payloads & No panic/hang & Fixed corpus \\
+Malformed payloads & Count, offset, length, opcode, register, trap, fuel & All fail closed & Bounded suite \\
+Valgrind & Protected sample & No runtime memory errors & Dynamic run only \\
+Ghidra 12.2 & 19 scoped functions & 18/19 decompiled; host targets stubs & One internal pcode warning \\
+radare2 5.9.8 & Patched host functions & Jump/goto stubs & Two functions \\
+angr 10.0.7 & 120 s symbolic probe & Five active states, no preimage & Timeout, not unsatisfiability \\
+KLEE 3.3 & Generated VM bitcode, 60 s & 7,234,878 instructions, 8 partial paths, no memory errors & No completed path \\
+Creusot 0.15 & Three boundary models & Proved 3/3 & Model, not interpreter \\
+GAMBA / SiMBA / MBA-Blast & 30 production MBA expressions & Measured reductions and failures & Not irreducibility \\
+dudect-bencher & Cipher and VM timing & Cipher 2.39; CT worst 3.19; normal 204 & Statistical screen \\
+Cachegrind & Branch-only CT leaf & Identical counts across two inputs & One binary/input pair \\
+Wine 11.20 & Win64 leaf fixtures & Normal, CT, hardened, DLL, TLS/resources pass & Not full Win64 \\
+Native Windows CI & Win64 ABI matrix, CFG, DLL, TLS/resources & All jobs pass & Selective subset \\
+MSVC \code{/guard:cf} & Indirect caller fixture & Passes & Tested fixture \\
+Reproducible output & Normal, hardened, CT builds & Identical hashes for fixed input/seed & Pinned toolchain \\
+Coverage & Workspace & 87.07\% tarpaulin / 88.25\% llvm-cov lines & Not 100\% \\
+\bottomrule
+\end{longtable}
+
+The external tools and their outputs are recorded in
+\path{docs/VERIFICATION.md}. The release gate is \path{scripts/verify.sh}; the
+long proof gate is \path{scripts/prove.sh}.

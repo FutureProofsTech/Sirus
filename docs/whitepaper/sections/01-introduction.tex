@@ -1,0 +1,153 @@
+\section{Introduction}
+
+\subsection{Motivation}
+
+Software often contains small functions whose logic is commercially or
+operationally sensitive: license checks, protocol constants, key-derivation
+steps, anti-tamper predicates, and proprietary integer algorithms. The defender
+cannot generally prevent a determined local attacker from observing a program:
+the attacker has the binary, the CPU, the operating system, and arbitrary
+instrumentation. What the defender can do is raise the cost of recovering the
+function's logic and make a recovered artifact specific to one build.
+
+Code virtualization is one of the strongest practical transformations available
+for this problem. Instead of protecting a native instruction stream in place, the
+protector translates the selected function into a private instruction set and
+executes that instruction set with an embedded interpreter. The original
+instructions disappear from the image, the bytecode can be encrypted and
+shuffled, and the interpreter can be diversified per build. The cost is a
+substantial runtime overhead and a strict limit on the code that can be lifted.
+
+Commercial virtualizers such as VMProtect, Code Virtualizer, Themida, and
+Denuvo are mature, closed products with full instruction-set coverage, packing,
+anti-debug, licensing, and multi-platform support. Research systems such as
+Tigress, Obfuscator-LLVM, and MOVfuscator explore complementary points in the
+design space. Sirus occupies a deliberately narrower point: a reproducible,
+source-auditable, zero-dependency implementation for selected x86-64 leaf
+functions, built in safe Rust, with a measured evidence trail rather than
+vendor claims.
+
+\subsection{Problem statement}
+
+Given an ELF64 or PE32+ AMD64 image $B$ and a selected function $f$ that belongs
+to a supported x86-64 subset, Sirus must produce an image $B'$ such that:
+
+\begin{enumerate}
+  \item $B'$ preserves the observable integer behavior of $f$ on supported
+        inputs and the supported ABI;
+  \item the original bytes of $f$ no longer contain a readable native
+        implementation;
+  \item the replacement is not a single fixed interpreter shared by all builds,
+        but a per-build randomized artifact whose opcode assignment, operand
+        layout, register encoding, state identifiers, payload encryption, and
+        code/data placement depend on a 256-bit seed;
+  \item the generated runtime is memory-safe under the Rust type system, uses
+        no heap, no libc, and no host memory, and fails closed on malformed
+        bytecode;
+  \item the result can be reproduced exactly from the input, seed, profile, and
+        pinned toolchain, and the evidence for each security and correctness
+        claim can be re-executed locally.
+\end{enumerate}
+
+The problem is deliberately not "construct an indistinguishability obfuscator."
+Barak \etal{} showed that general-purpose obfuscation with strong
+virtual-black-box properties is impossible for arbitrary programs
+\cite{barak2012}. Practical protectors therefore aim at cost asymmetry,
+build-specific diversity, and resistance to specific automated analyses. Sirus
+follows that realistic objective.
+
+\subsection{Contributions}
+
+This paper makes the following contributions.
+
+\begin{enumerate}
+  \item \textbf{A complete selective virtualizer.} We describe and evaluate an
+        end-to-end pipeline that parses and edits ELF64 and PE32+ images, lifts a
+        strict x86-64 subset into a bounded IR, flattens control flow, rewrites
+        arithmetic, encodes a randomized ISA, synthesizes a freestanding
+        \code{no_std} Rust VM, injects it into a new read-execute segment, and
+        scrubs the original body.
+
+  \item \textbf{A randomized encrypted ISA.} The virtual instruction set has 48
+        semantic operations and four aliases per operation. Each alias has its
+        own operand order, one of two register encoding maps, and an immediate
+        endianness bit. The runtime decode table is itself encrypted and derived
+        from the build seed; the alias layout is not serialized as plaintext in
+        the executable.
+
+  \item \textbf{A layered obfuscation stack.} The pipeline combines CFG
+        flattening with random state identifiers, opaque guards, decoy blocks,
+        bounded linear MBA, a non-linear modular-inverse wrapper, constant
+        blinding, a rolling-key ARX body stream, SipHash-based integrity and key
+        binding, and masked virtual registers and private memory at rest.
+
+  \item \textbf{A fixed-pass oblivious execution mode.} The optional
+        \verb|--constant-time| path executes every manifest block on every pass,
+        carries the active path in frontier masks, predicates register writes,
+        enqueues both branch successors with complementary masks, and scans the
+        whole private stack for loads and stores. We state the exact property it
+        provides, the pass bound it assumes, and the microarchitectural effects it
+        does not model.
+
+  \item \textbf{An evidence-driven evaluation.} We report 226 tests in debug and
+        release modes, Kani and Miri results, more than 40 million recorded
+        libFuzzer executions across VM, lifter, ELF, and PE targets, differential
+        execution against native code, tamper and forced-return experiments,
+        Ghidra and radare2 decompilation, bounded angr and KLEE probes, Creusot
+        boundary proofs, three external MBA simplifiers, dudect-bencher,
+        Cachegrind, Wine, native Windows, and an MSVC \code{/guard:cf} fixture.
+        We also report the negative results: the default branchy profile leaks
+        timing, GAMBA and SiMBA reduce parts of the MBA layer, one Ghidra
+        decompilation exceeds its budget, and the symbolic probes time out rather
+        than prove unsatisfiability.
+
+  \item \textbf{A documented boundary.} We enumerate the supported instruction
+        subset, ABI limits, platform limits, unsupported attacks, and the
+        assumptions behind the integrity binding. The paper does not claim
+        kernel-level anti-debug, trusted signing, a formal Spectre proof, or a
+        proof of obfuscation security.
+\end{enumerate}
+
+\subsection{Artifact and reproducibility}
+
+The artifact is a Cargo workspace with four shipped crates
+(\code{sirus-core}, \code{sirus-vm}, \code{sirus-binfmt},
+\code{sirus-protector}), an excluded fuzzing crate, and external verification
+harnesses under \path{verification/} and \path{scripts/}. The release is
+\code{1.5.9-hardened}. The fast gate is \path{scripts/verify.sh}; the long proof
+and fuzzing gate is \path{scripts/prove.sh}. The public Windows CI workflow
+executes Wine, native Windows, and MSVC \code{/guard:cf} jobs.
+
+A fixed input, seed, profile, and toolchain produce a bit-identical protected
+image. The differential test harness compiles the same C source twice, protects
+selected functions with a fixed seed, and compares native and protected results
+over thousands of random inputs. The measurement scripts and their outputs are
+part of the repository, so a reader can distinguish a reproduced result from a
+quoted one.
+
+\subsection{Non-goals}
+
+Sirus is not a whole-program virtualizer, a packer, a licensing system, or a
+replacement for a formally audited protector. It does not support external
+calls, indirect calls or jumps, writable RIP-relative globals, host pointers,
+floating point, x87, AVX-256, other instruction-set extensions, syscalls,
+atomics, or arbitrary platform ABIs. It does not implement kernel anti-debug or
+guarantee security against an attacker with unlimited local instrumentation. The
+default profile is not constant-time. These are design boundaries, not hidden
+failure modes: unsupported inputs fail the build, and unsupported runtime states
+fail closed with a deterministic status.
+
+\subsection{Organization}
+
+Section~\ref{sec:threat} defines the adversary and objectives.
+Section~\ref{sec:background} reviews obfuscation, virtualization, MBA, binary
+analysis, and timing measurement. Section~\ref{sec:overview} gives the system
+overview. Sections~\ref{sec:frontends}--\ref{sec:runtime} describe the binary
+front ends, lifting, obfuscation, and VM runtime.
+Section~\ref{sec:constant-time} presents the oblivious mode;
+Section~\ref{sec:hardening} describes the optional hardening tier;
+Section~\ref{sec:implementation} covers safety engineering.
+Section~\ref{sec:evaluation} reports the evaluation, and
+Sections~\ref{sec:security}--\ref{sec:conclusion} analyze residual risk and
+conclude. The appendices contain the full virtual ISA, the x86-64 subset, the
+verification matrix, reproduction commands, and a glossary.

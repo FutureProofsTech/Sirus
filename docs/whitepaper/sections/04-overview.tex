@@ -1,0 +1,167 @@
+\section{System Overview}
+\label{sec:overview}
+
+\subsection{Design principles}
+
+The implementation follows six principles.
+
+\begin{description}[leftmargin=1.4em,style=nextline]
+  \item[Fail closed.] The decoder accepts only the documented subset. A branch
+        target outside the function, an overlapping instruction, an unknown flag
+        producer, an unsupported prefix, or a malformed encoding is a build
+        error. The runtime rejects malformed payloads, invalid registers,
+        out-of-range memory, invalid opcodes, and exhausted fuel with a
+        deterministic status. There is no best-effort translation.
+  \item[Zero shipped dependencies.] The compiler core, VM, and binary-format
+        layer depend only on \code{core}. The protector CLI uses \code{std} at
+        the filesystem, process, and error-reporting boundary. No third-party
+        crate is linked into a protected artifact.
+  \item[Memory safety by construction.] The safe tier uses
+        \texttt{\#![forbid(unsafe\_code)]}. The VM has no heap allocation, no
+        unchecked indexing in its public path, no division, no floating point,
+        and no host-memory access. Bounds are checked at every decode and memory
+        operation.
+  \item[Per-build diversity.] A 256-bit seed drives opcode assignment, alias
+        operand order, register-map selection, immediate endianness, manifest
+        endianness, state identifiers, block order, rolling keys, entry shares,
+        MBA shape, decoy placement, semantic-handler order, and code/data
+        offsets. Two builds of the same input differ in every payload byte and
+        in most of the VM segment.
+  \item[Separated unsafe boundary.] Debugger detection, RDTSC/LFENCE, and
+        native text checksums require OS interfaces or instructions that safe
+        Rust cannot express. They are isolated in an opt-in
+        \code{sirus-hardened} crate and generated only with \verb|--hardened|.
+  \item[Evidence rather than assertion.] Every security claim is paired with a
+        script that can be re-executed. The paper reports negative results and
+        tool limitations alongside positive ones.
+\end{description}
+
+\subsection{Build pipeline}
+
+Figure~\ref{fig:pipeline} shows the build pipeline. The input image is parsed and
+validated; one or more selectors resolve functions; the selected ranges are
+decoded and lifted; the resulting CFG is flattened and rewritten; the IR is
+encoded into the randomized ISA; the manifest and bodies are encrypted; a
+freestanding Rust VM is generated and compiled; the resulting blob is validated;
+the blob is injected into a new executable segment; the original entries are
+patched; and the original bodies are scrubbed.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  box/.style={draw, rounded corners=1.5pt, align=center, text width=30mm,
+              minimum height=9mm, font=\small, fill=white},
+  arrow/.style={-{Latex[length=2mm]}, thick, color=sirusblue},
+  node distance=6mm and 7mm
+]
+\matrix (m) [matrix of nodes, nodes={box}, row sep=7mm, column sep=7mm] {
+  Input ELF/PE & Parse and validate & Resolve selectors & Decode \\
+  Lift to IR & Build CFG & Flatten & MBA, decoys, blinding \\
+  Encode randomized ISA & Encrypt manifest/bodies & Synthesize no\_std VM & Compile and validate \\
+  Inject RX segment & Patch entries & Scrub bodies & Protected output \\
+};
+\foreach \i [evaluate=\i as \j using int(\i+1)] in {1,2,3} {
+  \draw[arrow] (m-1-\i) -- (m-1-\j);
+  \draw[arrow] (m-2-\j) -- (m-2-\i);
+  \draw[arrow] (m-3-\i) -- (m-3-\j);
+  \draw[arrow] (m-4-\j) -- (m-4-\i);
+}
+\draw[arrow] (m-1-4) -- (m-2-4);
+\draw[arrow] (m-2-1) -- (m-3-1);
+\draw[arrow] (m-3-4) -- (m-4-4);
+\end{tikzpicture}
+\caption{Build pipeline. The flow snakes through four rows; each stage is
+deterministic for a fixed input, seed, profile, and toolchain.}
+\label{fig:pipeline}
+\end{figure}
+
+The target binary is never relocated. The ELF program-header table is moved to
+an appended read-only page, one new read-only \code{PT_LOAD} maps it, and one
+new read-execute \code{PT_LOAD} maps the VM. The original load segments are
+untouched. The PE backend appends one read-execute section, updates the section
+count and image size, recomputes the checksum, and patches RVA-relative entries.
+
+\subsection{Runtime pipeline}
+
+Figure~\ref{fig:runtime} shows the runtime. A host call reaches a per-function
+ABI shim. The shim preserves the host calling convention, materializes register
+and stack arguments, and calls the generated entry. The entry derives the
+decode tables and payload key from the seed and the integrity value, scans the
+encrypted manifest for the entry state, and enters the dispatcher. The dispatcher
+decrypts one instruction at a time, resolves the alias, executes the semantic
+operation, and transitions to the next state. A return writes the virtual
+\code{RAX} value; an error writes zero and a status.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  box/.style={draw, rounded corners=1.5pt, align=center, text width=34mm,
+              minimum height=9mm, font=\small, fill=white},
+  smallbox/.style={draw, rounded corners=1.5pt, align=center, text width=28mm,
+              minimum height=8mm, font=\small, fill=white},
+  arrow/.style={-{Latex[length=2mm]}, thick, color=sirusblue},
+  node distance=7mm and 12mm
+]
+\node[box] (call) {Host call to patched entry};
+\node[box, below=of call] (shim) {ABI shim: preserve registers, copy arguments};
+\node[box, below=of shim] (init) {Derive decode tables and payload key};
+\node[box, below=of init] (manifest) {Scan encrypted manifest for entry state};
+\node[box, below=of manifest] (decode) {Decrypt and decode one instruction};
+\node[box, below=of decode] (exec) {Execute semantic operation};
+\node[smallbox, right=of exec] (next) {Transition to next state};
+\node[smallbox, above=of next] (ret) {Return virtual RAX};
+\node[smallbox, below=of next] (fail) {BadPayload / Fuel / LoopBound};
+\draw[arrow] (call) -- (shim);
+\draw[arrow] (shim) -- (init);
+\draw[arrow] (init) -- (manifest);
+\draw[arrow] (manifest) -- (decode);
+\draw[arrow] (decode) -- (exec);
+\draw[arrow] (exec) -- (next);
+\draw[arrow] (next) |- (decode);
+\draw[arrow] (next) -- (ret);
+\draw[arrow] (next) -- (fail);
+\end{tikzpicture}
+\caption{Runtime structure. The transition arrow is the dispatcher loop; the
+manifest is scanned once per transition in the normal profile.}
+\label{fig:runtime}
+\end{figure}
+
+\subsection{Crate architecture and trust boundaries}
+
+The workspace separates concerns by trust level:
+
+\begin{itemize}
+  \item \code{sirus-core}: \code{no_std}, no allocation, no unsafe. Decoder,
+        lifter, IR, MBA arena, ISA derivation, payload cipher, program builder.
+  \item \code{sirus-vm}: \code{no_std}, no allocation, no unsafe. Reference
+        engine used by tests and embedded verbatim into generated runtimes.
+  \item \code{sirus-binfmt}: \code{no_std} plus \code{alloc}, no unsafe. ELF and
+        PE parsers, editors, and injection geometry.
+  \item \code{sirus-protector}: \code{std} boundary, safe Rust. Selector
+        resolution, source generation, \code{rustc} invocation, blob validation,
+        injection, patching, and scrubbing.
+  \item \code{sirus-hardened}: opt-in unsafe. Linux and Windows hardening
+        primitives; never linked into the safe default runtime.
+\end{itemize}
+
+The compiler and runtime share the \code{shared} modules verbatim: the ISA
+constants, SipHash, ChaCha20, and decode-table derivation are compiled into both
+the protector and the generated VM. This eliminates a class of encoder/decoder
+divergence bugs and is checked by the build system, which tracks every embedded
+source file and rebuilds the protector when one changes.
+
+The external verification crates (\code{verification/dudect},
+\code{verification/creusot}, and \code{fuzz}) are outside the shipped dependency
+graph. They may use external crates because they are measurement and proof
+tooling, not runtime components.
+
+\subsection{Threat surface}
+
+The protected binary has three relevant surfaces: the host image, the injected
+VM segment, and the runtime entry path. The host image retains its symbol table
+and dynamic metadata; Sirus does not strip the host. The VM segment contains the
+engine, the encrypted payload, the encrypted decode table, and the per-build
+constants. The entry path contains the patched jump and the ABI shim. An
+attacker can read all three, trace them, and patch them. The design assumes this
+and attempts to make the semantic recovery and patch construction expensive, not
+impossible.

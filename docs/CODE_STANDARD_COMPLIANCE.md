@@ -202,11 +202,11 @@ Implemented exactly in the root `Cargo.toml`:
 | `cargo-llvm-cov` | installed | executed; 88.25% lines / 84.09% regions |
 | `cargo-fuzz` | installed | 4,883,875 VM / 405,768 lifter cumulative runs, no crash |
 | Kani 0.68.0 | installed | 5 core + 4 VM harnesses verified |
-| Miri | nightly | 82 core + 10 VM lib + 20 VM execution tests pass (1 ignored under Miri) |
+| Miri | nightly | 11/11 VM library tests on the final tree; full execution/core suites opt-in |
 | valgrind | installed | protected sample clean |
 | gdb/strace/perf | installed | available; no scripted gate yet |
 | cargo-show-asm | installed | used for assembly inspection |
-| Ghidra 12.2 | installed in `/opt/sirus-tools` | 18 scoped functions decompiled; patched targets halt |
+| Ghidra 12.2 | installed in `/opt/sirus-tools` | 19 scoped functions; 18/19 decompiled; patched targets halt; one internal pcode warning |
 | radare2 5.9.8 | installed | patched functions reduce to jump stubs |
 | GAMBA/SiMBA/MBA-Blast | installed under `/opt/sirus-tools` | external corpus executed; see `docs/VERIFICATION.md` |
 | angr 10.0.7 | installed in a Python 3.13 venv | 120 s bounded symbolic timeout |
@@ -222,15 +222,15 @@ Implemented exactly in the root `Cargo.toml`:
    tarpaulin / 88.25% llvm-cov. 100% is not claimed.
 2. The normal branchy VM profile leaks timing (dudect max |t| = 204). The
    explicit `--constant-time` oblivious mode passes straight-line, branch, and
-   loop/memory cases (worst |t| = 3.13) with a fixed pass budget; private memory uses
+   loop/memory cases (worst |t| = 3.19) with a fixed pass budget; private memory uses
    a fixed oblivious stack scan. Unbounded loops are not claimed.
 3. The live memory snapshot diagnostic passes; an instruction-level debugger can
    still observe a transient local, as documented.
 4. Byte-level VM-segment uniqueness is not claimed; handler arms are permuted
-   but full `.sirus` equality remains 2.21%.
-5. Native Windows CI runs the `pe32-native` and `pe32-msvc-cfg` jobs; both pass
-   the Win64 runtime in normal, constant-time, and hardened modes, including
-   `/guard:cf` and the ABI matrix.
+   but full `.sirus` equality remains 2.43%.
+5. Native Windows CI runs the `pe32-wine`, `pe32-native`, and `pe32-msvc-cfg`
+   jobs; all three pass the Win64 runtime in normal, constant-time, and hardened
+   modes, including `/guard:cf` and the ABI matrix.
 
 Commercial/licence-gated tools (IDA/Binary Ninja, Ferrocene, Triton) are external
 evidence gaps, not local gates and not release blockers. All protector modules

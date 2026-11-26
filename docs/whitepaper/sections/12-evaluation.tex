@@ -1,0 +1,328 @@
+\section{Evaluation}
+\label{sec:evaluation}
+
+\subsection{Environment and methodology}
+
+All Linux measurements were performed on an Intel Core i5-14400F with 16 threads,
+running a Fedora-class Linux x86-64 host. The stable toolchain is Rust 1.99.0,
+pinned by \code{rust-toolchain.toml}; Kani is 0.68.0; Miri and libFuzzer use the
+nightly toolchain of the 2026-08 family; Ghidra is 12.2; radare2 is 5.9.8; angr
+is 10.0.7; KLEE is 3.3; Creusot is 0.15; GAMBA, SiMBA, and MBA-Blast are the
+upstream tools described in Section~\ref{sec:background}.
+
+The evaluation distinguishes four kinds of evidence:
+
+\begin{enumerate}
+  \item \textbf{Execution evidence}: a real protected binary produces the same
+        observable output as the native binary on the tested inputs.
+  \item \textbf{Safety evidence}: a bounded proof, dynamic analysis, or fuzz
+        campaign covers a specific component or input class.
+  \item \textbf{Recovery-cost evidence}: an external analysis tool is run for a
+        fixed budget, and the result, including timeouts and failures, is
+        recorded.
+  \item \textbf{Diversity evidence}: two builds are compared bytewise and at the
+        level of program structure.
+\end{enumerate}
+
+No result is extrapolated from a different binary, tool version, or host. The
+commands and outputs are recorded under \path{docs/VERIFICATION.md}; the harness
+sources are in the repository.
+
+\subsection{Functional correctness}
+
+The workspace runs 226 tests in debug mode and 226 tests in release mode, with
+two ignored measurement hooks (MBA corpus emission and statistical timing). The
+release-mode run is intentional: the project's history contains a release-only
+failure in which an unimported semantic constant became a catch-all match binding
+in the generated engine. Release-mode tests and the build-script dependency
+tracking now cover that class of bug.
+
+The end-to-end fixtures compile real C or Rust victims, protect them, execute the
+protected binary, and compare outputs with native:
+
+\begin{itemize}
+  \item a branch/loop/overflow victim;
+  \item a RIP-relative read-only table victim;
+  \item an eight-argument System V stack-argument victim;
+  \item SSE2 move and arithmetic victims;
+  \item a VEX-encoded 128-bit AVX integer victim;
+  \item a repeated-string \code{movs}/\code{stos} victim;
+  \item a byte-swap victim in normal and constant-time modes;
+  \item a direct caller/callee pair and a \verb|--follow-calls| pair;
+  \item an eight-thread concurrent reentrancy victim;
+  \item a SIGALRM handler reentrancy victim;
+  \item a constant-time branch/store victim whose inactive branch must not write
+        memory.
+\end{itemize}
+
+The differential stress harness compiles six functions covering arithmetic,
+direct calls, RIP-relative data, AVX/SSE, and repeated strings. Over 10,000
+iterations in the fast profile and 1,000 iterations in the max profile, the
+protected binary matched the native output exactly. A constant-time build of the
+arithmetic, RIP-data, and SSE functions matched native over 1,000 iterations.
+
+The release mode is also tested with the full workspace suite, not only the
+generated runtime. This is important because the protector itself is a release
+binary in deployment, and its behavior can differ from the debug build.
+
+\subsection{Safety and robustness}
+
+\subsubsection{Bounded proofs}
+
+Kani verifies five core harnesses and four VM harnesses:
+
+\begin{itemize}
+  \item core arithmetic and expression helpers;
+  \item bounded memory load/store helpers;
+  \item masked register round-trip;
+  \item masked memory round-trip.
+\end{itemize}
+
+The decoder is too large for a useful CBMC run on this host; it is covered by an
+opcode/error corpus, property tests, Miri, and libFuzzer. This is a proof-scope
+limitation, not a claim that the decoder is proven.
+
+\subsubsection{Miri}
+
+Miri runs the \code{sirus-vm} library tests: 11/11 pass on the release tree. The
+full VM execution suite and the core suite are opt-in and slow; they were not
+rerun for every release candidate. The library suite checks the Rust abstract
+machine for the engine's memory and arithmetic helpers.
+
+\subsubsection{Fuzzing}
+
+The libFuzzer targets exercise the VM payload decoder, the lifter/compiler, and
+the ELF/PE parsers. Table~\ref{tab:fuzz} reports the final-tree sessions and the
+cumulative totals across recorded sessions.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{libFuzzer coverage on the release tree and cumulative recorded runs.}
+\label{tab:fuzz}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Target & Final-tree runs & Cumulative runs \\
+\midrule
+VM payload & 789,455 & 4,883,875 \\
+Lifter/compiler & 133,973 & 405,768 \\
+ELF parser & 13,516,906 & 33,588,394 \\
+PE parser & 26,539,167 & 55,510,941 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+No crash, panic, out-of-bounds access, or timeout was observed. The VM target
+constructs a valid integrity key for arbitrary payloads, so the decoder body path
+is exercised rather than only the integrity rejection path. The in-tree
+deterministic fuzzer additionally runs 20,000 random payloads and 10,000
+mutations of a valid payload. The malformed-payload suite covers bad counts,
+offsets, lengths, opcodes, registers, traps, and fuel exhaustion.
+
+Valgrind reports no runtime memory errors on the protected sample. The
+\path{scripts/red-team.sh} harness also checks body scrubbing, payload entropy,
+string absence, tamper behavior, and forced-return behavior.
+
+\subsection{Static analysis}
+
+\subsubsection{Ghidra}
+
+Ghidra 12.2 headless analyzed the protected red-team binary. It identified 19
+scoped functions: 17 in the injected \code{.sirus} segment and two patched host
+targets. It completed 18 of 19 decompilations. The two host targets reduce to
+\code{halt_baddata()} after the jump/scrub; the injected segment yields VM
+engine and state machinery. One internal \code{.sirus} function hit a Ghidra
+pcode/unreadable-memory warning and did not complete. This is recorded as a
+decompiler limitation, not as a Sirus correctness claim.
+
+The host binary as a whole retains Rust/std strings and symbol names; the scoped
+\code{.sirus} string scan is clean. Sirus does not strip the host image, and the
+paper does not claim that it does.
+
+\subsubsection{radare2}
+
+radare2 5.9.8 \code{pdc} reduces the two patched host functions to a jump/goto
+stub and a return. No original logic appears in the decompiled output.
+
+\subsection{Symbolic execution}
+
+angr 10.0.7 loads the protected ELF and starts at the patched
+\code{sirus_demo_check} symbol with two symbolic 64-bit arguments. The requested
+target is the reference output for $(7,3)$. Within a 120-second budget the
+manager has five active states and no deadended or errored state; no preimage is
+found. This is a bounded timeout, not a proof of unsatisfiability. Unicorn
+support was unavailable in the Python 3.13 environment, so angr used its VEX
+engine.
+
+KLEE 3.3 runs the generated VM source as LLVM 18 bitcode inside the official
+container. The harness makes two arguments symbolic and calls the entry. The
+final run executed 7,234,878 instructions, completed zero paths, left eight
+partially completed paths, and generated five tests. It reported no memory
+errors. The run is a bounded symbolic probe; the lack of a completed path is not
+a proof that no path exists.
+
+\subsection{MBA simplification}
+
+The external MBA study uses the exact expressions emitted after the production
+MBA pass. Thirty cases are generated. Table~\ref{tab:mba} summarizes the result.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{External MBA simplification results on the production expressions.}
+\label{tab:mba}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{0.30\textwidth}X@{}}
+\toprule
+Tool / corpus & Result \\
+\midrule
+SiMBA, linear baseline & 18/18 verified reductions \\
+GAMBA, linear baseline & 18/18 verified reductions \\
+GAMBA, inverse-only nonlinear corpus & 6/6 timeouts or tool failures at 20 s \\
+GAMBA, variable-shift nonlinear corpus & 6/6 parser failures \\
+SiMBA, inverse-only corpus & 6/6 equivalence-verified reductions (linear simplifier) \\
+MBA-Blast & 3/9 verified; 6 parser/tool failures on its grammar subset \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The linear forms are fully reducible by both general and linear tools. The
+modular-inverse wrapper causes GAMBA to time out; the variable-shift form is
+rejected at parse time. SiMBA still reduces the inverse form because it is a
+linear simplifier operating on the linear subexpression. MBA-Blast handles a
+subset of the shift-free linear cases and rejects the rest. These are measured
+cost asymmetries, not a proof of irreducibility.
+
+\subsection{Timing analysis}
+
+The timing evaluation has two layers: wall-clock distinguishability with
+dudect-bencher and deterministic instruction/address counts with Cachegrind.
+
+The final dudect run uses an opaque key in the two-key cipher benchmark. Without
+that control, the compiler specialized two constant-key paths, and the harness
+measured a code-layout difference of about \code{|t| = 19} rather than cipher
+data timing. With the opaque key the measured values are:
+
+\begin{center}
+\small
+\begin{tabular}{@{}lr@{}}
+\toprule
+Benchmark & \code{max |t|} \\
+\midrule
+Cipher, two opaque keys & 2.39 \\
+Cipher, same key control & 2.05 \\
+Normal branchy VM & 204.39 \\
+Constant-time straight-line & 1.95 \\
+Constant-time branch & 1.67 \\
+Constant-time loop & 3.19 \\
+Constant-time private memory & 2.73 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The four constant-time cases are below the conventional threshold of 5; the
+normal branchy profile is far above it. The result confirms the intended
+distinction: the default profile is performance-oriented and data-dependent,
+while the explicit mode is a fixed-pass oblivious subset.
+
+Cachegrind reports identical counts for the branch-only constant-time leaf across
+two inputs: 14,532,847 instruction references, 5,065,486 data references, 4,869
+D1 misses, 2,812 LLd misses, 1,339,790 branches, and 110,104 mispredicts. These
+counts are deterministic for the tested binary and inputs; they do not cover
+wall-clock effects or other microarchitectural state.
+
+\subsection{Performance}
+
+The benchmark protects the same leaf function with Sirus and, separately, with
+VMProtect 3.11 Linux demo. Each sample measures 1,000 protected calls; seven
+samples are taken and the median is reported. The native and protected checksums
+match. Table~\ref{tab:perf} reproduces the measured values.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{Per-call overhead on the benchmark leaf function (median of seven
+samples; 1,000 calls per sample).}
+\label{tab:perf}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Build & Per call & vs native & vs VMProtect \\
+\midrule
+Native (Sirus build) & 1.2--1.4 ns & 1$\times$ & 0.0002$\times$ \\
+VMProtect 3.11 demo & 8.48 $\mu$s & 4,490$\times$ & 1$\times$ \\
+Sirus fast/minimal & 14.5 $\mu$s & 6,100$\times$ & 1.7$\times$ \\
+Sirus balanced & 53.9 $\mu$s & 30,000$\times$ & 6.7$\times$ \\
+Sirus default & 75.0 $\mu$s & 49,800$\times$ & 9.3$\times$ \\
+Sirus hardened & 78.5 $\mu$s & 40,600$\times$ & 9.0$\times$ \\
+Sirus constant-time & 234 $\mu$s & 101,500$\times$ & 25.2$\times$ \\
+Sirus hardened constant-time & 235 $\mu$s & 111,300$\times$ & 25.5$\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The relative-to-native columns use the native baseline of the corresponding
+build; the two native measurements differ by about 0.5 ns, so the ratios are
+rounded and should be read as engineering estimates, not precise multipliers.
+
+Cold startup is about 0.6 ms for Sirus and about 2.6 s for the packed VMProtect
+demo on the same host. Sirus appends about 30 KiB to the benchmark binary
+(0.7\%); the VMProtect demo packs the 4.4 MiB input to about 1.17 MiB. The
+comparison is deliberately narrow: the VMProtect demo is a real commercial
+virtualizer running the same function, but its packing, anti-debug, and demo
+checks are not equivalent to Sirus's default profile.
+
+\subsection{Coverage}
+
+Two independent coverage tools are used. Tarpaulin reports 87.07\% line coverage
+(7607 of 8737 lines) with the target/bench exclusions. llvm-cov reports 88.25\%
+of lines (1786 missed of 15206), 84.09\% of regions (4449 missed of 27962), and
+73.53\% of functions (292 missed of 1103). The agreed floor is 85\% lines, and
+the proof script enforces it. The uncovered lines are predominantly defensive
+error returns, malformed-binary branches, CLI/pipeline I/O failures, and
+platform-specific code not executed on Linux.
+
+\subsection{Windows evaluation}
+
+The Windows gate has three jobs:
+
+\begin{enumerate}
+  \item \textbf{Wine}: cross-build the protector and fixtures, protect a PE32+
+        leaf function, and execute it under Wine in normal, constant-time, and
+        hardened modes.
+  \item \textbf{Native Windows}: execute the same fixtures on a Windows runner,
+        including the ABI matrix, indirect callers, a 32 KiB stack frame, DLL
+        export loading, TLS callbacks, and \code{RCDATA} resources.
+  \item \textbf{MSVC \code{/guard:cf}}: build with Control Flow Guard, resolve
+        function sizes from the PDB and linker map, protect by explicit range,
+        and execute the CFG binary with indirect callers.
+\end{enumerate}
+
+All three jobs pass on the release tree. The Windows path is a selective leaf
+subset, not full Win64 virtualization. External imports, runtime exception
+propagation, signing, and kernel anti-debug are out of scope.
+
+\subsection{Threats to validity}
+
+\begin{itemize}
+  \item \textbf{Tool scope.} Ghidra, radare2, angr, KLEE, and the MBA tools are
+        run with fixed versions and budgets. A different version or a longer
+        budget can produce different results. A timeout is not a proof of
+        impossibility.
+  \item \textbf{Commercial comparison.} VMProtect is a closed product; the
+        benchmark uses its Linux demo and a single function. Its security
+        profile is not equivalent to Sirus, and the comparison is a performance
+        datapoint, not a security ranking.
+  \item \textbf{Benchmark function.} The performance leaf is small and
+        arithmetic-heavy. Larger functions, memory-heavy loops, or many direct
+        calls have different costs.
+  \item \textbf{Timing host.} dudect and Cachegrind results are specific to the
+        host, compiler, and microarchitecture. The paper reports the measured
+        numbers and the exact harness, not a universal constant-time claim.
+  \item \textbf{Symbolic resistance.} angr and KLEE time out. The paper does not
+        claim that no symbolic path exists.
+  \item \textbf{Formal scope.} Kani, Miri, and Creusot cover bounded components
+        or models, not the entire product. The decoder is too large for a
+        useful CBMC run.
+  \item \textbf{Independent audit.} No external audit has been performed. The
+        evidence is reproducible, but reproducibility is not the same as
+        independent review.
+\end{itemize}

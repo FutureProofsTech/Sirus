@@ -1,0 +1,170 @@
+\section{Constant-Time Oblivious Execution}
+\label{sec:constant-time}
+
+\subsection{Motivation and scope}
+
+The normal profile executes only the blocks on the taken path. That is efficient,
+but it makes the instruction trace and the private-memory access pattern depend on
+secret inputs. For functions whose control flow itself is sensitive, Sirus offers
+an optional fixed-pass oblivious mode selected by \verb|--constant-time|.
+
+The mode targets a specific leakage class: the sequence of decoded blocks and the
+sequence of private-memory addresses. It does not attempt to make every
+microarchitectural effect input-independent. In particular, it does not model
+data-dependent ALU latency, cache-bank conflicts, speculative execution, or
+value-dependent power/EM leakage. It is not a formal Spectre mitigation.
+
+\subsection{Frontier execution}
+
+The manifest is parsed once. On every pass, every manifest block is decoded and
+executed. The active path is carried in a frontier of $(block, mask)$ pairs. A
+register write proposed by a block is applied as
+
+\begin{equation}
+  v_{\text{new}} = (v_{\text{proposed}} \land m) \lor (v_{\text{old}} \land \lnot m),
+  \label{eq:predicated-write}
+\end{equation}
+
+where $m$ is the active mask (all ones or zero for a single path). A conditional
+branch does not choose one successor; it enqueues both successors with masks
+$m \land c$ and $m \land \lnot c$, where $c$ is the condition value. Returns and
+traps are accumulated under the active mask. The loop is shown in
+Algorithm~\ref{alg:ct}.
+
+\begin{algorithm}[htbp]
+\caption{Fixed-pass oblivious execution.}
+\label{alg:ct}
+\begin{algorithmic}[1]
+\REQUIRE manifest $M$, entry state $e$, pass bound $P$
+\ENSURE value and status
+\STATE $F \gets \{(e,\; \text{all-ones})\}$; $R \gets 0$; $T \gets 0$
+\FOR{$p = 1$ \TO $P$}
+  \STATE $N \gets \emptyset$
+  \FORALL{$(b,m) \in F$}
+    \STATE decode and execute every instruction of block $b$ with mask $m$
+    \STATE apply each register write with Eq.~\eqref{eq:predicated-write}
+    \IF{block $b$ ends in a return with value $v$}
+      \STATE $R \gets R \lor (m \land v)$
+    \ELSIF{block $b$ ends in a trap}
+      \STATE $T \gets T \lor m$
+    \ELSIF{block $b$ ends in a conditional transition $(c,a,b',\text{mix})$}
+      \STATE $N \gets N \cup \{(a,\; m \land c),\;(b',\; m \land \lnot c)\}$
+    \ELSIF{block $b$ ends in an unconditional transition to $a$}
+      \STATE $N \gets N \cup \{(a,\; m)\}$
+    \ENDIF
+  \ENDFOR
+  \STATE $F \gets N$
+  \IF{$F = \emptyset$}
+    \STATE \textbf{break}
+  \ENDIF
+\ENDFOR
+\IF{$F \neq \emptyset$}
+  \STATE \RETURN $(0,\textsc{LoopBound})$
+\ENDIF
+\STATE \RETURN $(R,\textsc{Returned})$
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Private-memory oblivious access}
+
+A normal load or store uses the address in a virtual register. In constant-time
+mode, the address is secret. The runtime therefore scans the entire private
+memory for every byte of the access and selects the target with a mask:
+
+\begin{equation}
+  \text{selected} = \bigvee_{j=0}^{|\text{mem}|-1} \left( \text{mem}[j] \land
+  [\,j = a + i\,] \right),
+  \label{eq:oblivious-load}
+\end{equation}
+
+where $[\cdot]$ is the all-ones/all-zero mask of a predicate. A store writes back
+every location: the selected location receives the new byte, and every other
+location receives its old value. An inactive block uses address zero for its load
+and suppresses its store, so a stale address cannot produce \code{BadPayload} or
+corrupt memory. The access pattern is independent of the secret address; the cost
+is proportional to the memory size, not to the number of bytes touched.
+
+\subsection{Pass bound and convergence}
+
+A program with no cycles has a finite maximum block count; the mode uses that
+count as an exact bound. A program containing a loop cannot generally be bounded
+without a loop limit, so the mode uses \verb|--constant-time-passes| (default
+256, maximum 4096). The frontier is required to become empty within the bound. A
+non-empty frontier after the last pass returns \code{LoopBound}. This is a
+deliberate fail-closed behavior: the mode does not silently truncate a loop or
+return a wrong value.
+
+The bound is a compile-time constant in the generated runtime. It is visible to
+an attacker, but it does not depend on the input. Functions with long or
+data-dependent loop counts may require a larger bound or may not be suitable for
+the mode.
+
+\subsection{Property}
+
+\begin{proposition}[Fixed instruction and address stream]
+For a fixed protected program, fixed pass bound $P$, and fixed entry state, if
+the frontier converges within $P$, then the sequence of decoded basic blocks and
+the sequence of private-memory addresses in constant-time mode are independent of
+the function's integer inputs. Register values, branch condition values, and the
+number of passes actually executed before convergence may depend on the inputs.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+The manifest order and the set of blocks are fixed at build time. The algorithm
+executes every block in the frontier on every pass and never follows a single
+branch edge; both successors are enqueued with complementary masks. The memory
+access loop scans every byte position for every access. Therefore the decoded
+block sequence and the address sequence are functions of the program and the pass
+bound, not of the input values. Masked writes change values, not which
+instructions or addresses are visited. If the frontier does not converge within
+$P$, the runtime returns \code{LoopBound} rather than executing a variable number
+of additional passes.
+\end{proof}
+
+The proposition is a source-level statement about the interpreter. It does not
+claim that equal instruction and address streams imply equal execution time:
+value-dependent ALU operations, cache behavior, branch prediction state, and
+speculative execution are outside the model. The measured dudect and Cachegrind
+results below are empirical checks of the source-level property and its practical
+timing behavior on the test host.
+
+\subsection{Measured behavior}
+
+The release tree was measured with dudect-bencher and Cachegrind. On the final
+recorded runs:
+
+\begin{itemize}
+  \item the cipher path measured \code{|t| = 2.39} after the two-key benchmark
+        was changed to pass the key through \code{black_box}; without that
+        control, the compiler specialized two constant-key paths and the
+        benchmark measured code layout rather than cipher data timing;
+  \item the four constant-time VM cases measured worst \code{|t| = 3.19}
+        (straight-line 1.95, branch 1.67, loop 3.19, memory 2.73 in magnitude);
+  \item the normal branchy VM profile measured \code{max |t| = 204}, confirming
+        that the default profile is not constant-time;
+  \item Cachegrind reported identical instruction references, data references,
+        D1 misses, LLd misses, branches, and mispredicts for the branch-only
+        constant-time leaf across two inputs.
+\end{itemize}
+
+The dudect threshold of \code{|t| = 5} is a conventional statistical screen, not
+a proof. The measurements are host- and compiler-dependent and are reported with
+their exact harness and seed.
+
+\subsection{Cost}
+
+The constant-time mode executes every block on every pass and scans the whole
+private stack for each memory byte. On the benchmark leaf function it costs about
+234 $\mu$s per call, compared with about 75 $\mu$s for the
+default profile. The cost is expected: the mode trades data-dependent work for a
+fixed work envelope. It is intended for small, high-value functions where the
+timing property matters more than throughput.
+
+\subsection{Limitations}
+
+The mode is not a general constant-time compiler. It requires a finite pass
+bound, a function that fits the private memory model, and the supported semantic
+subset. It does not provide a proof of architectural timing equivalence, and it
+does not address speculative execution or microarchitectural covert channels.
+The normal profile remains the default for performance-sensitive deployments, and
+its timing leak is documented rather than hidden.

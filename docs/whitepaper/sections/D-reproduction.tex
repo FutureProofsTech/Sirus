@@ -1,0 +1,81 @@
+\section{Reproduction}
+\label{app:reproduction}
+
+\subsection{Environment}
+
+The release is built with the toolchain pinned in \code{rust-toolchain.toml}.
+The Linux release path requires a C compiler, LLD, \code{objcopy}, and
+\code{rustc} at protection time. The Windows cross path requires
+\code{x86_64-w64-mingw32-gcc} and \code{lld-link}. Wine is required only for the
+local Windows gate.
+
+\subsection{Fast gate}
+
+\begin{verbatim}
+cargo build --release -p sirus-protector
+./scripts/verify.sh
+\end{verbatim}
+
+The fast gate runs formatting, Clippy, the workspace tests, rustdoc with denied
+warnings, dependency policy and advisory checks, Kani, the red-team harness, the
+Linux ABI regression, Cachegrind, and release-artifact generation.
+
+\subsection{Proof and fuzzing gate}
+
+\begin{verbatim}
+./scripts/prove.sh
+SIRUS_FULL_MIRI=1 ./scripts/prove.sh
+SIRUS_COVERAGE=1 ./scripts/prove.sh
+\end{verbatim}
+
+The default proof gate runs Kani, Miri on the core and VM unit tests, and a
+libFuzzer session. The environment flags enable the full Miri execution suite,
+coverage, and the external evidence tools.
+
+\subsection{External evidence}
+
+\begin{verbatim}
+SIRUS_GHIDRA=1 SIRUS_RADARE2=1 SIRUS_MBA=1 SIRUS_ANGR=1 \
+SIRUS_KLEE=1 SIRUS_CREUSOT=1 SIRUS_DUDECT=1 \
+SIRUS_CONSTANT_TIME=1 SIRUS_WINDOWS=1 ./scripts/prove.sh
+\end{verbatim}
+
+The individual scripts are:
+\begin{itemize}
+  \item \path{scripts/ghidra-check.sh}
+  \item \path{scripts/radare2-check.sh}
+  \item \path{scripts/mba-check.sh}
+  \item \path{scripts/angr-check.py}
+  \item \path{scripts/klee-check.sh}
+  \item \path{scripts/creusot-check.sh}
+  \item \path{scripts/dudect-external.sh}
+  \item \path{scripts/constant-time-check.sh}
+  \item \path{scripts/windows-wine-check.sh}
+\end{itemize}
+
+\subsection{Deterministic protection}
+
+\begin{verbatim}
+./target/release/sirus protect \
+    --input victim \
+    --output victim.protected \
+    --function license_mix \
+    --seed 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
+\end{verbatim}
+
+A fixed input, seed, profile, and toolchain reproduce the same image. The
+reproducible-output script checks normal, hardened, and constant-time builds.
+
+\subsection{Artifact layout}
+
+The release script emits a binary copy, a deterministic source archive, a
+SHA-256 manifest, a CycloneDX SBOM, and an optional GPG signature when a signing
+key is configured. The source archive includes the docs and the white paper but
+does not include build outputs.
+
+\subsection{Recorded environment}
+
+The Linux measurements in this paper were taken on an Intel Core i5-14400F with
+16 threads, running a Fedora-class Linux x86-64 host. The Windows results come
+from the public CI workflow and the local Wine gate. The exact tool versions are
+listed in Section~\ref{sec:evaluation} and in \path{docs/VERIFICATION.md}.

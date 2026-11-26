@@ -1,0 +1,43 @@
+\section{Glossary}
+\label{app:glossary}
+
+\begin{description}[leftmargin=1.4em,style=nextline]
+  \item[ABI] Application binary interface; the register, stack, and result
+        conventions used to call a function.
+  \item[Basic block] A straight-line instruction sequence with one entry and one
+        terminator.
+  \item[Blinded constant] A constant represented as two random shares combined
+        with XOR so no single instruction contains the plaintext.
+  \item[CFG] Control-flow graph; basic blocks connected by branch, call, return,
+        and trap edges.
+  \item[Constant-time mode] The fixed-pass oblivious execution path selected by
+        \verb|--constant-time|.
+  \item[Decode table] The runtime mapping from opcode bytes to semantic, alias,
+        operand order, register map, and endianness.
+  \item[Differential ratio] The fraction of equal bytes at equal offsets between
+        two protected images built from different seeds.
+  \item[Effective key] The XOR of the key shares, actual payload hash, and
+        expected payload hash used to decrypt the payload.
+  \item[Fuel] A deterministic instruction/step budget that bounds execution.
+  \item[ISA] Instruction set architecture; here, the virtual instruction set.
+  \item[MBA] Mixed Boolean-arithmetic; expressions combining bitwise operations
+        with integer arithmetic.
+  \item[Oblivious execution] Execution whose decoded block sequence and private
+        memory addresses do not depend on secret inputs under a fixed pass bound.
+  \item[Payload] The encrypted manifest and block bodies embedded in the VM
+        segment.
+  \item[Private memory] The VM's 4 KiB byte-addressable stack; no host memory is
+        addressable.
+  \item[Safe tier] The default runtime and compiler path that forbids unsafe Rust
+        and third-party runtime crates.
+  \item[Seed] The 256-bit build value that drives all randomized choices.
+  \item[Semantic] One operation in the virtual ISA; aliases encode the same
+        semantic with different bytes.
+  \item[Shim] The ABI-preserving entry code that saves host registers, copies
+        arguments, and calls the generated VM entry.
+  \item[SipHash-2-4] The keyed short-input PRF used for manifest encryption,
+        integrity, and key derivation.
+  \item[State id] A random 64-bit identifier for a flattened block transition.
+  \item[VM segment] The injected read-execute segment containing the engine,
+        decode table, payload, and entry thunks.
+\end{description}

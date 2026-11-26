@@ -22,7 +22,7 @@ under the safe-Rust/no-unsafe constraint.
 | Asymmetric cost, not unbreakability | implemented as stated | `docs/THREAT_MODEL.md`, red-team report |
 | Defeat static decompilation of protected logic | partial | body scrubbed, flattened, encrypted; Ghidra/radare2 executed; IDA/BN unavailable |
 | Break automated symbolic execution | partial | angr 120 s timeout, KLEE 60 s timeout, no completed symbolic path |
-| Invalidate prior work across builds | partial | payload 0.40% equal, ISA/state randomization, handler/engine/entry layout mutation; full segment 2.21% equal |
+| Invalidate prior work across builds | partial | payload 0.40% equal, ISA/state randomization, handler/engine/entry layout mutation; full segment 2.43% equal |
 | Two components in one workspace | implemented | core/vm/binfmt/protector crates |
 | Zero external libraries | implemented | `cargo tree`, `cargo deny` |
 
@@ -78,7 +78,7 @@ under the safe-Rust/no-unsafe constraint.
 | Rolling bytecode encryption | implemented | per-byte chained cipher |
 | No complete plaintext bytecode in RAM | implemented by design | byte-at-a-time locals; live scan finds transient register values |
 | ISA layout mutation | partial | payload/aliases/maps/states; handler skeleton reused |
-| Handler layout mutation | implemented at arm-order level | `.sirus` similar bytes 2.21% equal |
+| Handler layout mutation | implemented at arm-order level | `.sirus` similar bytes 2.43% equal |
 | Build-specific static data | implemented | seed/payload/hash/entry shares |
 
 ### Stage 6 — VM synthesis and injection
@@ -197,7 +197,7 @@ See `docs/CODE_STANDARD_COMPLIANCE.md` and ADR-001.
 | 6 | No decrypted bytecode in memory | partial | no body cache; VM registers/memory masked at rest; live constant scan passes |
 | 7 | Deep binding / bypass fails | implemented | tamper and forced-return tests |
 | 8 | Hypervisor/debug-register resistance | **not feasible safely** | documented |
-| 9 | Differential builds mutate everything | partial | payload 0.40% equal; full segment 2.21%; handler arms and engine/entry layout mutated per build |
+| 9 | Differential builds mutate everything | partial | payload 0.40% equal; full segment 2.43%; handler arms and engine/entry layout mutated per build |
 | 10 | VM fuzzing no panic/OOB/hang | implemented | in-tree + libFuzzer + Miri + Kani |
 
 ---
@@ -208,7 +208,7 @@ See `docs/CODE_STANDARD_COMPLIANCE.md` and ADR-001.
    execution are covered. Runtime exception propagation through a protected leaf
    remains out of scope; direct calls between selected protected functions are
    now guest-state transitions and are tested, while external calls fail closed.
-2. Byte-level VM-segment indistinguishability beyond the current 2.21% equality;
+2. Byte-level VM-segment indistinguishability beyond the current 2.43% equality;
    handler/engine/entry layout order is already permuted per build.
 3. Optional hardened-tier controls (RDTSC, debug registers, native self-checks,
    LFENCE) are permanently out of scope for the safe tier under ADR-020.

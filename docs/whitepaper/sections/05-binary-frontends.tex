@@ -1,0 +1,155 @@
+\section{Binary Front Ends and Injection}
+\label{sec:frontends}
+
+\subsection{ELF64 parsing and validation}
+
+The ELF front end accepts 64-bit little-endian x86-64 executables and shared
+objects. The parser validates the ELF header, class, data encoding, machine,
+program-header table, section-header table, section bounds, load-segment flags,
+and the presence of an executable range. Extended numbering (\code{PN_XNUM},
+\code{SHN_XINDEX}) and unsupported object types fail closed. Function symbols
+are read from \code{.symtab} or \code{.dynsym}; fully stripped inputs require
+marker or explicit-range selection.
+
+The editor never relocates the target. It appends new bytes and rewrites the
+program-header table in a new read-only page. This avoids moving existing
+segments and preserves the host loader's expectations.
+
+\subsection{Selector resolution}
+
+A protection run resolves one or more functions using one of four selectors:
+
+\begin{itemize}
+  \item an exact symbol name (\verb|--function|);
+  \item a unique symbol substring (\verb|--function-contains|);
+  \item an explicit executable RVA and size (\verb|--range|);
+  \item raw byte markers (\verb|--marker-begin|/\verb|--marker-end|).
+\end{itemize}
+
+The resolved range must lie in an executable segment, must not overlap another
+selected range or an already-patched entry, and must decode completely within the
+supported subset. Marker mode is intentionally raw: the user is responsible for
+placing the markers so that the enclosed bytes form valid machine code.
+
+\subsection{ELF injection geometry}
+
+The appended layout is:
+
+\begin{center}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Region & Mapping & Content \\
+\midrule
+Original bytes & original segments & unchanged host image \\
+Program-header page & \code{R} & relocated \code{PT_PHDR} table \\
+VM segment & \code{R+X} & engine, tables, payload, entry thunks \\
+\code{.shstrtab} & section metadata & regenerated names \\
+Section-header table & section metadata & regenerated entries \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+One new read-only \code{PT_LOAD} maps the relocated program-header table, and one
+new read-execute \code{PT_LOAD} maps the VM. The \code{PT_PHDR} entry is updated
+to the new table. The section-header table and section-name string table are
+regenerated; \code{.sirus} and \code{.sirus.payload} sections are created even
+for inputs that lacked a name table.
+
+The injected VM is linked at a chosen virtual address with a custom linker
+script. The blob is a single read-execute segment with no writable load, no
+relocations, and no undefined symbols. The validator rejects any blob that
+violates these properties, any missing entry symbol, any entry outside the
+segment, and any payload/seed/hash mismatch.
+
+\subsection{Entry patching and body scrubbing}
+
+The patcher writes \code{E9 <rel32>} at the target entry, or immediately after a
+preserved \code{F3 0F 1E FA} (\code{endbr64}) sequence. If the displacement does
+not fit in 32 bits, the build fails. The remainder of the original function body
+is overwritten with deterministic random bytes derived from the build seed,
+unless \verb|--no-scrub| is requested. The output is written to a temporary file
+in the destination directory, permissions are copied from the input, and the file
+is atomically renamed.
+
+Preserving \code{endbr64} keeps the patched entry a valid indirect-branch target
+under Intel CET. The jump itself preserves the host return address: the patched
+function is entered by a normal call, and the VM thunk returns normally.
+
+\subsection{PE32+ backend}
+
+The Windows backend accepts PE32+ AMD64 images. It validates the DOS, COFF, and
+optional headers, the machine type, section alignment, section bounds, RVA to file
+mapping, checksum, and COFF symbol information. Injection appends one
+read-execute \code{.sirus} section, updates the section count and
+\code{SizeOfImage}, recomputes the PE checksum, patches one RVA-relative jump per
+protected function, and overwrites the original body with keyed junk.
+
+The Win64 runtime is cross-compiled with
+\code{rustc --target x86_64-pc-windows-gnu}, linked with \code{lld-link}, and
+embedded as one section. The generated shim includes a guard-page-safe stack
+probe, preserves the Windows calling convention, and translates register and
+stack arguments into the VM's internal array. Linked \code{.pdata} entries are
+rebased into the section and merged into the target exception directory;
+handler-bearing and chained unwind records fail closed.
+
+The tested Windows fixtures cover a normal leaf, constant-time execution, a
+hardened self-code checksum, a \code{/guard:cf} binary with indirect callers, a
+DLL export loaded through \code{LoadLibrary}/\code{GetProcAddress}, and a TLS
+callback plus \code{RCDATA} resource. The native Windows CI job, the Wine job,
+and the MSVC \code{/guard:cf} job all pass on the release tree. Signing,
+arbitrary imports, runtime exception propagation, and kernel anti-debug remain
+out of scope.
+
+\subsection{ABI shims and call semantics}
+
+Table~\ref{tab:abi} summarizes the supported calling conventions.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{Supported integer ABI surface.}
+\label{tab:abi}
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+Property & System V AMD64 & Win64 \\
+\midrule
+Register arguments & 6: RDI, RSI, RDX, RCX, R8, R9 & 4: RCX, RDX, R8, R9 \\
+Stack arguments & 6: 7th--12th & 6: 5th--10th \\
+Integer result & RAX & RAX \\
+Caller-saved GPRs & preserved by shim & preserved by shim \\
+XMM preservation & XMM0--XMM15 saved by shim & XMM0--XMM5 volatile; XMM6--XMM15 callee-saved \\
+Stack alignment & shim aligns before the VM call & guard-page-safe probe \\
+Direct protected calls & bounded guest call stack & bounded guest call stack \\
+External calls & rejected & rejected \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The Linux shim saves the caller-saved GPRs and all sixteen XMM registers, records
+\code{RBP}, aligns the stack defensively, copies stack arguments, and calls the
+generated entry. The frame-pointer restore makes the shim robust when the host
+caller has an unusual stack alignment, a case exposed by an eight-thread pthread
+fixture. The Windows shim preserves the volatile GPRs and \code{XMM0}--\code{XMM5}
+and relies on the callee-saved contract for \code{XMM6}--\code{XMM15}; the ABI
+matrix exercises those registers, indirect callers, and a 32 KiB stack frame.
+
+Direct calls between selected functions execute on a bounded guest call stack.
+The VM validates the target entry state, pushes a return state, and returns to
+the caller state on \code{RET}. Calls to an external or unresolved function fail
+closed. The compiler can automatically lift resolvable direct callees with
+\verb|--follow-calls|; unresolved targets still fail closed.
+
+The VM uses only per-invocation stack state. It has no mutable global engine
+state, so separate host threads do not share virtual registers or private
+memory. An eight-thread regression and a SIGALRM handler reentrancy test exercise
+this property. The payload, decode table, and seed are read-only after
+initialization.
+
+\subsection{Injection failure behavior}
+
+Every front-end operation is transactional. If parsing, selection, lifting,
+encoding, compilation, validation, or patching fails, the protector returns a
+typed error and does not write a partial output. Existing output is replaced
+atomically only after the new image is complete. This matters for build systems:
+a failed protection run cannot leave a half-patched binary that appears valid.

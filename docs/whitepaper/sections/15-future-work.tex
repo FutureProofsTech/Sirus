@@ -1,0 +1,90 @@
+\section{Future Work}
+\label{sec:future}
+
+\subsection{Instruction-set coverage}
+
+The most direct limitation is the x86-64 subset. Future work includes:
+
+\begin{itemize}
+  \item general memory addressing and writable data segments with a private
+        copy and explicit synchronization policy;
+  \item indirect jumps and jump tables with a validated dispatch table;
+  \item AVX2/AVX-256 and selected floating-point operations;
+  \item a broader SSE/AVX semantic set, including shuffles and conversions;
+  \item atomic and fence semantics with a documented memory model.
+\end{itemize}
+
+Each extension must preserve the fail-closed contract: an unsupported form is a
+build error, and a supported form must have an exact semantic model.
+
+\subsection{External calls and language exceptions}
+
+A selective virtualizer that can call external functions needs a host-call stub
+mechanism with an explicit ABI boundary, a return-value marshaling policy, and a
+stack-unwind model. Language exceptions require a native unwind frame or a
+guest-level exception representation. These are substantial design changes, not
+minor decoder additions.
+
+\subsection{Platform coverage}
+
+The Linux path is the primary release gate. Future platform work includes a
+fuller Win64 runtime, Mach-O support, ARM64, and a 32-bit x86 backend. Each
+platform has different unwind metadata, section geometry, ABI details, and
+anti-debug surfaces; a platform port is not a simple recompile.
+
+\subsection{Anti-debug and integrity}
+
+The hardened tier currently provides user-mode tracer detection, PEB checks,
+RDTSC/LFENCE, debug-register reporting, and linked text checksums. Future work
+includes:
+
+\begin{itemize}
+  \item a formally reviewed hardened boundary with a reduced unsafe surface;
+  \item kernel-assisted integrity and anti-debug for deployments that can
+        require it;
+  \item signed artifacts and a verified update chain;
+  \item a memory-encryption or page-protection design that does not rely on
+        unsafe access in the safe tier.
+\end{itemize}
+
+\subsection{Constant-time and side channels}
+
+The fixed-pass mode can be extended with a more precise convergence analysis, a
+smaller memory-scan cost, and a formal model of the source-level property. A
+separate line of work is required for speculative execution, cache-bank
+conflicts, and power/EM leakage. Those are not addressed by branchless bytecode
+alone.
+
+\subsection{MBA and diversity}
+
+The MBA layer can be improved with:
+
+\begin{itemize}
+  \item a larger library of exact non-linear identities;
+  \item equivalence checking over a bounded bit-vector model at build time;
+  \item per-block MBA shape selection rather than one wrapper per function;
+  \item a differential study against newer simplifiers and SMT-based
+        deobfuscators.
+\end{itemize}
+
+Diversity can be improved by mutating the interpreter implementation itself, not
+only its dispatch tables and layout. That requires a careful balance between code
+size, compiler canonicalization, and verification cost.
+
+\subsection{Formal methods}
+
+The current proofs cover bounded helpers and boundary models. A future direction
+is a mechanized model of the virtual ISA and a refinement proof from the lifter
+to the interpreter for the supported subset. The decoder is the largest obstacle:
+a verified decoder for even a small x86 subset is a substantial project. A
+smaller-step approach is to verify the encoder/decoder round-trip for the virtual
+ISA and to keep the native decoder under differential and fuzz testing.
+
+\subsection{Independent evaluation}
+
+The most important non-technical gap is independent review. The repository
+contains reproducible evidence, but the authors are also the implementers. An
+external audit should examine the custom payload construction, the unsafe
+hardened boundary, the decoder's fail-closed behavior, and the Windows unwind
+metadata. A public challenge with a fixed artifact and a time budget would be a
+useful complement to the internal evidence.

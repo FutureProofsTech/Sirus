@@ -1,0 +1,166 @@
+\section{Background and Related Work}
+\label{sec:background}
+
+\subsection{Obfuscation and virtualization}
+
+Software obfuscation is the systematic transformation of a program to make its
+behavior harder to recover while preserving semantics. Collberg, Thomborson, and
+Low classified transformations into layout, data, control, and preventive
+families \cite{collberg1997,collberg2002}. Control-flow flattening replaces a
+structured CFG with a dispatcher over state variables; data transformations
+rewrite expressions and constants; preventive transformations detect or impede
+debuggers and analysis tools. Banescu and Pretschner give a modern tutorial and
+taxonomy \cite{banescu2018}.
+
+Code virtualization is a control transformation in which the protected function
+is translated into a bytecode program for a private interpreter. The interpreter
+and bytecode are embedded in the binary. The original native instructions can be
+removed, and the bytecode can be encrypted, shuffled, and diversified. The
+approach is attractive because it changes the attacker's problem from reading
+native instructions to recovering both the ISA and the program. It is expensive
+because every virtual instruction requires dispatch, decode, and interpretation.
+
+Barak \etal{} proved that general-purpose obfuscation with strong
+virtual-black-box security is impossible for arbitrary programs
+\cite{barak2012}. The result does not rule out practical protection: it rules out
+a universal transformation that hides all properties of every program. Sirus
+therefore targets cost asymmetry and build-specific diversity, not
+indistinguishability.
+
+\subsection{Commercial protectors}
+
+VMProtect is a commercial protector with virtualization, mutation, packing,
+anti-debug, and licensing features \cite{vmprotect}. Code Virtualizer and Themida
+from Oreans provide selective virtualization, multiple VM architectures, packing,
+and anti-debug controls \cite{codevirtualizer,themida}. Denuvo Anti-Tamper is a
+game-oriented product with its own virtual machine and integrity checks
+\cite{denuvo}. These products are mature and support much broader instruction
+sets and platforms than Sirus. Their internals are not public, and their security
+claims are vendor-documented rather than independently reproduced in this work.
+
+The comparison in this paper is deliberately narrow. We use VMProtect 3.11 Linux
+demo as a measured performance peer because it can virtualize the same benchmark
+function on the same host. We do not claim equivalence of security profiles,
+packing, anti-debug, licensing, or platform coverage.
+
+\subsection{Research systems}
+
+Tigress is a source-to-source C transformer with a broad set of diversification
+transformations, including virtualization, superoperators, reentrant interpreters,
+anti-taint, and anti-aliasing passes \cite{tigress}. It is the closest research
+peer in ambition, but it operates at source level and is not a binary protector.
+Obfuscator-LLVM implements control-flow flattening, instruction substitution, and
+bogus control flow at the LLVM IR level \cite{junod2015ollvm}; it is not a
+virtualizer. MOVfuscator compiles programs into `mov'-only code as a research
+demonstration \cite{domas2015movfuscator}; its cost profile is intentionally
+extreme and it is not a selective production protector.
+
+Sirus differs from these systems in three ways: it operates directly on ELF and
+PE binaries, it is implemented in safe Rust with no third-party runtime crates,
+and it ships an evidence harness that executes the protected binaries and the
+external analysis tools. The trade-off is a strict instruction subset and a
+narrow platform scope.
+
+\subsection{Mixed Boolean-arithmetic obfuscation}
+
+Mixed Boolean-arithmetic (MBA) expressions combine bitwise operations with
+integer addition, subtraction, and multiplication. Zhou \etal{} showed that such
+expressions can hide simple arithmetic and proposed rewrite-based
+simplification \cite{zhou2007}. Modern simplifiers exploit the fact that a linear
+MBA expression over $n$ variables is determined by its values on the $2^n$
+Boolean inputs, and use linear algebra over the bit-vector space to recover a
+compact form. GAMBA generalizes the approach to selected non-linear expressions
+\cite{reichenwallner2023gamba}; SiMBA specializes in linear expressions
+\cite{reichenwallner2022simba}; MBA-Blast is another widely used
+simplifier \cite{mba_blast}.
+
+Sirus uses a layered approach. Exact linear identities provide a baseline
+rewrite, and one non-linear wrapper per function adds variable shifts and a
+data-dependent modular inverse. The external simplifier study in
+Section~\ref{sec:evaluation} reports both the reductions and the failures. The
+result is measured cost asymmetry, not a claim that the expressions are
+irreducible.
+
+\subsection{Binary analysis and symbolic execution}
+
+Ghidra \cite{ghidra} and radare2 \cite{radare2} are open reverse-engineering
+frameworks used for static decompilation and disassembly. angr is a Python
+binary-analysis platform with symbolic execution, constraint solving, and data
+flow analysis \cite{shoshitaishvili2016angr}. KLEE is a symbolic execution engine
+for LLVM bitcode that generates high-coverage test inputs and checks memory
+safety \cite{cadar2008klee}. Z3 is the SMT solver commonly used by these tools
+\cite{z3_2008}. PIN and DynamoRIO are dynamic instrumentation frameworks that can
+trace a running process at instruction granularity \cite{pin2005}.
+
+Sirus does not attempt to defeat these tools in the sense of a formal
+impossibility result. It increases the size of the state space through encrypted
+bytecode, randomized state identifiers, flattened control flow, MBA, and a
+bounded fuel budget. The evaluation records what the tools did within fixed
+budgets and treats a timeout as bounded resistance.
+
+\subsection{Constant-time execution and timing measurement}
+
+Timing attacks exploit data-dependent execution time, memory access patterns, or
+microarchitectural state \cite{kocher1996,bernstein2005}. Spectre-class attacks
+exploit speculative execution and are not solved by branchless source code
+alone \cite{kocher2019spectre}. Constant-time programming therefore targets a
+specific class of leakage: the sequence of instructions and memory addresses,
+not every microarchitectural effect.
+
+dudect-bencher is a statistical tool that measures whether two input classes are
+distinguishable by execution time \cite{reparaz2017dudect}. Cachegrind, part of
+Valgrind, provides deterministic instruction and cache-access counts
+\cite{nethercote2007valgrind}. Sirus uses both: dudect for wall-clock
+distinguishability and Cachegrind for input-independent instruction and address
+counts on a controlled leaf function.
+
+\subsection{Rust safety and verification}
+
+Rust's ownership and borrowing rules provide memory and thread safety without a
+garbage collector; RustBelt gives a formal foundation for the safe
+fragment \cite{jung2018rustbelt,rustref}. Sirus additionally enforces
+\code{forbid(unsafe_code)} in the safe tier, forbids heap allocation in the core
+and VM, and uses fixed-capacity data structures. Kani provides bounded model
+checking for Rust \cite{kani}, Miri detects undefined behavior in the Rust
+abstract machine \cite{miri}, and Creusot/Why3 supports deductive verification of
+Rust functions \cite{creusot2022,why3_2013}. These tools cover different scopes;
+the evaluation states each scope explicitly.
+
+\subsection{Positioning}
+
+Table~\ref{tab:related} summarizes the qualitative position. Commercial entries
+are based on public vendor documentation and are marked accordingly; they are not
+independently verified in this work.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{Qualitative positioning. ``Y'' denotes documented or implemented,
+``P'' partial or subset, and ``N'' not supported. Commercial entries are
+vendor-documented capabilities, not independent measurements.}
+\label{tab:related}
+\begin{tabularx}{\textwidth}{@{}lcccccc@{}}
+\toprule
+Capability & Sirus & VMProtect & Code Virtualizer & Themida & Tigress & OLLVM \\
+\midrule
+Selective virtualization & Y & Y & Y & Y & Y & N \\
+Full x86-64 ISA & N & Y & Y & Y & via C & via IR \\
+Linux ELF runtime & Y & Y & Y & N & via C & Y \\
+Windows PE runtime & P & Y & Y & Y & via C & via C \\
+Multiple VM designs & N & Y & Y & Y & Y & N \\
+Packing & N & Y & N & Y & N & N \\
+Anti-debug / anti-VM & P & Y & P & Y & research & N \\
+Runtime integrity & P & Y & P & Y & research & P \\
+Safe Rust runtime & Y & N & N & N & N & N \\
+Zero runtime crates & Y & N & N & N & N & N \\
+Source available & Y & N & N & N & limited & Y \\
+Local evidence harness & Y & N/A & N/A & N/A & papers & public \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Sirus is best described as a reproducible, selective Linux-first virtualizer
+with a Windows leaf-function line, within roughly one order of magnitude of a
+commercial per-call VM on the same benchmark, but without the platform coverage,
+anti-debug, packing, licensing, or maturity of commercial products. It is not a
+replacement for a commercial protector on arbitrary Windows software.

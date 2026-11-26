@@ -199,16 +199,18 @@ cipher path.
 **Executed:** official `dudect-bencher` 0.7.0 (`scripts/dudect-external.sh`):
 
 ```text
-bench crypto      ... : max t = +3.37690
-bench crypto_same ... : max t = -1.01007
-bench vm          ... : max t = -745.81435
+bench crypto      ... : max t = +2.39025
+bench crypto_same ... : max t = -2.05029
+bench vm          ... : max t = -204.39423
 ```
 
-The cipher path is below the conventional |t| = 5 leak threshold; the normal VM
+The two-key cipher benchmark now passes the key through `black_box`, preventing
+the compiler from specializing two constant-key code paths. With that control
+the cipher path is below the conventional |t| = 5 leak threshold; the normal VM
 data-dependent branch is far above it. The `--constant-time` oblivious mode
 executes every block on a fixed pass budget with predicated register writes. The
 final straight-line, branchy, and looping measurements are recorded in
-`docs/VERIFICATION.md`; all three are below |t| = 5. The in-tree Welch harness
+`docs/VERIFICATION.md`; all four are below |t| = 5. The in-tree Welch harness
 measured `crypto_t=-3.794` and `vm_t=-56.685` for the normal profile.
 
 **Residual:** the normal branchy VM profile is not constant-time. The explicit
@@ -242,11 +244,11 @@ MBA shapes, decoys, payload size, and code/data offsets.
 
 ```text
 differential .sirus.payload equal-byte ratio = 0.0040
-differential .sirus segment equal-byte ratio = 0.1101
+differential .sirus segment equal-byte ratio = 0.0243
 payload sizes = 45669 / 45607 bytes
 ```
 
-**Residual:** the interpreter skeleton is reused; 2.21% of the full VM segment
+**Residual:** the interpreter skeleton is reused; 2.43% of the full VM segment
 matches byte-for-byte at equal offsets. Full handler-layout mutation is not
 complete. BinDiff has not been run.
 
@@ -287,7 +289,7 @@ masked shifts, no division, checked memory, deterministic fuel, no panic path.
 | 6 | memory dump | entropy/string pass; masked VM state, live constant not observed |
 | 7 | patch/forced return | pass |
 | 8 | hypervisor | not capable; documented |
-| 9 | differential | payload 0.40% equal; full segment 2.21% equal residual |
+| 9 | differential | payload 0.40% equal; full segment 2.43% equal residual |
 | 10 | fuzzing | pass across in-tree, libFuzzer, Kani, Miri |
 
 No gate in this report is marked “passed” unless its local command was executed.

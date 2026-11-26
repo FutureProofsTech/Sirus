@@ -285,7 +285,7 @@ PASS patch/scrub sirus_demo_loop: changed=138/139
 PASS payload entropy: shannon=7.996 min=7.751 distinct=256
 PASS no obvious strings in injected segment
 PASS differential payload: equal-byte ratio=0.0040 sizes=45669/45607
-PASS differential VM segment: equal-byte ratio=0.1101 sizes=55120/55008
+PASS differential VM segment: equal-byte ratio=0.0243 sizes=58440/58096
 PASS tamper and bypass observably alter results
 PASS valgrind
 == radare2 decompiler smoke test ==
@@ -299,7 +299,7 @@ PASS original body absent from protected file
 
 Additional measured facts:
 
-- full `.sirus` segment equal-byte ratio between the two seeds: **0.1101**;
+- full `.sirus` segment equal-byte ratio between the two seeds: **0.0243**;
 - protected binary preserves native output for branch/loop/overflow cases;
 - original function bodies are gone after the jump;
 - payload tamper yields deterministic wrong output without crash/hang;
@@ -735,7 +735,7 @@ cargo asm -p sirus-core --lib 1
 | live process memory dump scan | pass; masked VM state, constant not observed |
 | Windows PE runtime execution | Wine and native Windows; normal, constant-time, hardened; `/guard:cf`, ABI matrix, unwind lookup, and text-checksum tamper tests pass |
 | Windows unwind metadata | linked `.pdata` merged, shim `.seh` records emitted, handler/chained records fail closed |
-| handler-layout mutation | layout preambles applied; `.sirus` equality 2.21% residual |
+| handler-layout mutation | layout preambles applied; `.sirus` equality 2.43% residual |
 | Linux hardened self-code checksum | implemented; tamper test rejects modified VM text |
 | Linux caller-saved ABI | assembly shim preserves GPRs + XMM0–XMM15; C regression passes |
 | Windows hardening / self-code checksum | debugger/PEB/TSC/LFENCE, debug-register reports, and linked text hash with tamper test |

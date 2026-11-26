@@ -50,7 +50,7 @@ build if libc symbols or writable segments appeared.
 ## ADR-004 — Cache derived alias tables per invocation
 
 **Decision:** Derive every alias order/map/endian once at the start of a VM
-invocation into a fixed 1.2 KiB table, then index that table per instruction.
+invocation into a fixed 2.5 KiB table, then index that table per instruction.
 The table is never serialized into the executable; it is rebuilt from the seed
 for each invocation.
 
@@ -193,8 +193,9 @@ register, or speculative barriers, and a constant-time interpreter would require
 executing both sides of every branch and a fully oblivious memory model.
 
 **Residual:** Official dudect-bencher measured the default VM branch far above the
-conventional threshold of 5 (745.81 in the initial run, 225.24 after the later
-optimizations). The explicit oblivious mode measures worst |t| = 2.82 across straight-line, branch, loop, and memory cases.
+conventional threshold of 5 (204.39 in the final run; earlier sessions measured
+745.81 and 225.24). The explicit oblivious mode measures worst |t| = 3.19
+across straight-line, branch, loop, and memory cases.
 
 ---
 
@@ -300,7 +301,7 @@ code arrangement without changing semantics.
 
 **Boundary:** LLVM may canonicalize switch lowering, and the VM segment still
 contains shared scaffolding and payload machinery. The differential segment
-equality is 2.21%; this is handler-layout mutation, not a claim of fully
+equality is 2.43%; this is handler-layout mutation, not a claim of fully
 distinct handler implementations.
 
 ---

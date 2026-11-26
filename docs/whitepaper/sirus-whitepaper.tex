@@ -1,0 +1,178 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,calc,shapes.geometric,matrix}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{caption}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{sirusblue}{RGB}{20,52,96}
+\definecolor{sirusgray}{RGB}{92,98,108}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=sirusblue,
+  citecolor=sirusblue,
+  urlcolor=sirusblue,
+  pdftitle={Sirus: A Zero-Dependency, Safe-Rust Code Virtualizer for Selective x86-64 Protection},
+  pdfauthor={The Sirus Project},
+  pdfsubject={Software protection, code virtualization, obfuscation, constant-time execution},
+  pdfkeywords={code virtualization, software obfuscation, mixed Boolean-arithmetic, safe Rust, constant-time, binary rewriting}
+}
+
+\titleformat{\section}{\Large\bfseries\color{sirusblue}}{\thesection}{0.8em}{}
+\titleformat{\subsection}{\large\bfseries\color{sirusblue}}{\thesubsection}{0.7em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries}{\thesubsubsection}{0.6em}{}
+\setlength{\parindent}{0.25in}
+\setlength{\parskip}{0.15em}
+\setlength{\emergencystretch}{3em}
+\setlist[itemize]{topsep=0.25em,itemsep=0.1em,parsep=0.1em}
+\setlist[enumerate]{topsep=0.25em,itemsep=0.1em,parsep=0.1em}
+\captionsetup{font=small,labelfont=bf}
+\renewcommand{\arraystretch}{1.08}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\color{sirusgray}Sirus Technical White Paper}
+\fancyhead[R]{\small\color{sirusgray}Version 1.5.9-hardened}
+\fancyfoot[C]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\newcommand{\sys}{\textsc{Sirus}}
+\newcommand{\code}[1]{\texttt{\detokenize{#1}}}
+\newcommand{\etal}{\textit{et al.}}
+\newcommand{\eg}{e.g.,}
+\newcommand{\ie}{i.e.,}
+
+\newtheorem{definition}{Definition}
+\newtheorem{proposition}{Proposition}
+\newtheorem{remark}{Remark}
+
+\begin{document}
+
+\begin{titlepage}
+\centering
+\vspace*{1.2in}
+{\color{sirusblue}\rule{\textwidth}{1.2pt}}\\[0.5em]
+{\Huge\bfseries Sirus\par}
+\vspace{0.35em}
+{\LARGE A Zero-Dependency, Safe-Rust Code Virtualizer\\[0.2em]
+for Selective x86-64 Protection\par}
+\vspace{0.5em}
+{\color{sirusblue}\rule{\textwidth}{1.2pt}}\\[1.5em]
+{\large Technical White Paper\par}
+\vspace{1.2em}
+{\large The Sirus Project\par}
+\vspace{0.4em}
+{\large Version 1.5.9-hardened\par}
+\vspace{0.4em}
+{\large November 2026\par}
+\vfill
+\begin{minipage}{0.82\textwidth}
+\small
+\textbf{Artifact.} The implementation, verification harnesses, recorded results, and
+release scripts are maintained at
+\url{https://github.com/FutureProofsTech/Sirus}. The paper describes the
+\code{1.5.9-hardened} release tree. All quantitative results are taken from
+executions recorded in the repository or from the public Windows CI run for the
+release; no result is inferred from a vendor claim or from an unexecuted tool.
+\end{minipage}
+\vspace{1.0em}
+
+{\small Licensed under GPL-3.0-only.}
+\end{titlepage}
+
+\begin{abstract}
+\noindent
+Selective code virtualization protects small, security-sensitive functions by
+replacing their native instruction streams with an encrypted virtual instruction
+set executed by an interpreter. This paper presents \sys{}, a complete
+binary-level virtualizer for Linux ELF64 and Windows PE32+ that is implemented
+almost entirely in safe Rust and ships without third-party runtime crates. The
+build pipeline lifts a selected x86-64 function into a bounded typed IR, flattens
+its control flow, rewrites arithmetic through exact mixed Boolean-arithmetic
+identities, encodes the result into a per-build randomized ISA with four aliases
+per semantic operation, encrypts the resulting manifest and block bodies, and
+synthesizes a freestanding \code{no_std} VM that is injected into a new
+read-execute segment. The original function body is overwritten and the entry
+point is redirected to an ABI-preserving thunk.
+
+We describe the design in full: the strict x86-64 subset and its fail-closed
+decoder, the register and flag model, the bounded IR and CFG flattening, the
+linear and non-linear MBA layer, the randomized wire format, the rolling-key body
+stream, the SipHash-based integrity binding, the masked at-rest state, the
+constant-time oblivious execution mode, and the optional unsafe hardening tier.
+We then evaluate the artifact with differential execution, 226 tests, Kani,
+Miri, libFuzzer, Ghidra, radare2, angr, KLEE, Creusot, GAMBA, SiMBA, MBA-Blast,
+dudect-bencher, Cachegrind, Wine, native Windows, and MSVC \code{/guard:cf}.
+The measured results show that the protected function preserves native behavior
+across the supported subset, that the generated runtime is memory-safe under the
+tested models, that the constant-time subset is below the conventional
+\code{|t| = 5} timing threshold on the recorded runs, and that the default
+branchy profile remains a measurable timing leak. Coverage is 87.07\% by
+tarpaulin and 88.25\% of lines by llvm-cov.
+
+The paper is explicit about what the system does not prove. \sys{} is an
+asymmetric-cost engineering prototype, not an indistinguishability obfuscator:
+it does not support external calls, host pointers, writable RIP-relative globals,
+indirect jumps, floating point, or the full x86-64 ISA, and it does not provide
+kernel anti-debug, trusted signing, a formal Spectre proof, or a proof of
+obfuscation security. We document those boundaries, the measured residual
+equality between builds, the assumptions behind the integrity binding, and the
+threats to validity of the evaluation.
+\end{abstract}
+
+\vspace{0.5em}
+\noindent\textbf{Keywords:} code virtualization, software obfuscation, mixed
+Boolean-arithmetic, safe Rust, constant-time execution, binary rewriting,
+software protection.
+
+\tableofcontents
+\newpage
+
+\input{sections/01-introduction}
+\input{sections/02-threat-model}
+\input{sections/03-background}
+\input{sections/04-overview}
+\input{sections/05-binary-frontends}
+\input{sections/06-lifting}
+\input{sections/07-obfuscation}
+\input{sections/08-runtime}
+\input{sections/09-constant-time}
+\input{sections/10-hardening}
+\input{sections/11-implementation}
+\input{sections/12-evaluation}
+\input{sections/13-security-analysis}
+\input{sections/14-limitations}
+\input{sections/15-future-work}
+\input{sections/16-conclusion}
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\appendix
+\input{sections/A-isa}
+\input{sections/B-x86-subset}
+\input{sections/C-verification-matrix}
+\input{sections/D-reproduction}
+\input{sections/E-glossary}
+
+\end{document}
